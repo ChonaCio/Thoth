@@ -1,0 +1,205 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Thoth</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <!-- ============ LOGIN VIEW ============ -->
+  <main id="login-view" class="login-view" hidden>
+    <div class="login-card">
+      <div class="brand brand--center">
+        <span class="brand__logo" data-icon="logo"></span>
+        <span class="brand__name">Thoth</span>
+      </div>
+      <h1 class="login-card__title" id="auth-title" data-i18n="login.title">Sign in</h1>
+      <p class="login-card__subtitle" data-i18n="login.subtitle">to continue to Thoth</p>
+
+      <form id="auth-form" class="form" novalidate>
+        <div class="field register-only" hidden>
+          <label for="reg-name" data-i18n="field.displayName">Full name</label>
+          <input id="reg-name" name="displayName" autocomplete="name" />
+        </div>
+        <div class="field register-only" hidden>
+          <label for="reg-email" data-i18n="field.email">Email</label>
+          <input id="reg-email" name="email" type="email" autocomplete="email" />
+        </div>
+        <div class="field">
+          <label for="auth-username" data-i18n="field.username">Username</label>
+          <input id="auth-username" name="username" autocomplete="username" required />
+        </div>
+        <div class="field">
+          <label for="auth-password" data-i18n="field.password">Password</label>
+          <div class="input-with-action">
+            <input id="auth-password" name="password" type="password" autocomplete="current-password" required />
+            <button type="button" class="icon-btn icon-btn--sm" id="toggle-password" data-icon="visibility" aria-label="Show password"></button>
+          </div>
+        </div>
+
+        <p class="form__error" id="auth-error" role="alert" hidden></p>
+
+        <div class="form__actions">
+          <button type="button" class="btn btn--text" id="auth-switch" data-i18n="login.createAccount">Create account</button>
+          <button type="submit" class="btn btn--primary" id="auth-submit" data-i18n="login.signIn">Sign in</button>
+        </div>
+      </form>
+
+      <p class="login-card__hint" data-i18n="login.demoHint">Demo account: demo / demo123</p>
+    </div>
+
+    <div class="login-footer">
+      <select id="login-lang" class="select select--ghost" aria-label="Language"></select>
+    </div>
+  </main>
+
+  <!-- ============ APP VIEW ============ -->
+  <div id="app-view" class="app" hidden>
+    <header class="topbar">
+      <div class="topbar__left">
+        <button class="icon-btn" id="menu-toggle" data-icon="menu" aria-label="Toggle menu"></button>
+        <a href="#home" class="brand">
+          <span class="brand__logo" data-icon="logo"></span>
+          <span class="brand__name">Thoth</span>
+        </a>
+      </div>
+
+      <div class="topbar__search">
+        <span class="topbar__search-icon" data-icon="search"></span>
+        <input type="search" id="search" data-i18n-placeholder="top.search" placeholder="Search" />
+      </div>
+
+      <div class="topbar__right">
+        <button class="icon-btn" data-icon="help" data-i18n-title="top.help" title="Help"></button>
+        <button class="icon-btn" data-icon="apps" data-i18n-title="top.apps" title="Apps"></button>
+        <div class="account">
+          <button class="avatar-btn" id="account-btn" aria-haspopup="true" aria-expanded="false">
+            <span class="avatar avatar--sm" id="topbar-avatar"></span>
+          </button>
+
+          <!-- Account dropdown -->
+          <div class="account-menu" id="account-menu" role="menu" hidden>
+            <!-- main panel -->
+            <section class="account-menu__panel" data-panel="main">
+              <div class="account-menu__header">
+                <p class="account-menu__email" id="menu-email"></p>
+                <div class="avatar-wrap">
+                  <span class="avatar avatar--lg" id="menu-avatar"></span>
+                  <button class="avatar-wrap__edit" id="menu-avatar-edit" data-icon="camera" data-i18n-title="menu.editProfile" title="Edit profile"></button>
+                </div>
+                <p class="account-menu__greeting" id="menu-greeting"></p>
+                <p class="account-menu__username" id="menu-username"></p>
+                <button class="btn btn--outline btn--pill" id="menu-edit-profile" data-i18n="menu.editProfile">Edit profile</button>
+              </div>
+              <div class="account-menu__list">
+                <button class="menu-item" data-goto="appearance" role="menuitem">
+                  <span data-icon="palette"></span>
+                  <span class="menu-item__label" data-i18n="menu.appearance">Appearance</span>
+                  <span class="menu-item__value" id="menu-theme-value"></span>
+                  <span data-icon="chevron_right"></span>
+                </button>
+                <button class="menu-item" data-goto="language" role="menuitem">
+                  <span data-icon="translate"></span>
+                  <span class="menu-item__label" data-i18n="menu.language">Language</span>
+                  <span class="menu-item__value" id="menu-lang-value"></span>
+                  <span data-icon="chevron_right"></span>
+                </button>
+                <button class="menu-item" id="menu-settings" role="menuitem">
+                  <span data-icon="settings"></span>
+                  <span class="menu-item__label" data-i18n="nav.settings">Settings</span>
+                </button>
+                <hr class="divider" />
+                <button class="menu-item" id="menu-logout" role="menuitem">
+                  <span data-icon="logout"></span>
+                  <span class="menu-item__label" data-i18n="menu.signOut">Sign out</span>
+                </button>
+              </div>
+              <p class="account-menu__footer" data-i18n="menu.footer">Privacy Policy · Terms of Service</p>
+            </section>
+
+            <!-- appearance panel -->
+            <section class="account-menu__panel" data-panel="appearance" hidden>
+              <div class="account-menu__subhead">
+                <button class="icon-btn icon-btn--sm" data-goto="main" data-icon="arrow_back" aria-label="Back"></button>
+                <span data-i18n="menu.appearance">Appearance</span>
+              </div>
+              <p class="account-menu__note" data-i18n="menu.appearanceNote">Setting applies to this account on this browser</p>
+              <div class="account-menu__list" id="theme-options"></div>
+            </section>
+
+            <!-- language panel -->
+            <section class="account-menu__panel" data-panel="language" hidden>
+              <div class="account-menu__subhead">
+                <button class="icon-btn icon-btn--sm" data-goto="main" data-icon="arrow_back" aria-label="Back"></button>
+                <span data-i18n="menu.chooseLanguage">Choose your language</span>
+              </div>
+              <div class="account-menu__list" id="lang-options"></div>
+            </section>
+          </div>
+        </div>
+      </div>
+    </header>
+
+    <nav class="sidebar" id="sidebar" aria-label="Main">
+      <ul class="sidebar__list" id="sidebar-list"></ul>
+    </nav>
+    <div class="scrim" id="scrim" hidden></div>
+
+    <main class="content" id="content"></main>
+  </div>
+
+  <!-- ============ EDIT PROFILE DIALOG ============ -->
+  <dialog id="profile-dialog" class="dialog">
+    <form method="dialog" id="profile-form" class="form">
+      <h2 class="dialog__title" data-i18n="profile.title">Edit profile</h2>
+
+      <div class="profile-photo">
+        <span class="avatar avatar--xl" id="profile-avatar"></span>
+        <div class="profile-photo__actions">
+          <label class="btn btn--outline btn--pill">
+            <span data-i18n="profile.changePhoto">Change photo</span>
+            <input type="file" id="profile-photo-input" accept="image/*" hidden />
+          </label>
+          <button type="button" class="btn btn--text" id="profile-photo-remove" data-i18n="profile.removePhoto">Remove photo</button>
+          <div class="swatches" id="profile-swatches" aria-label="Avatar color"></div>
+        </div>
+      </div>
+
+      <div class="field">
+        <label for="profile-name" data-i18n="field.displayName">Full name</label>
+        <input id="profile-name" name="displayName" required />
+      </div>
+      <div class="field">
+        <label for="profile-username" data-i18n="field.username">Username</label>
+        <input id="profile-username" name="username" disabled />
+        <small class="field__help" data-i18n="profile.usernameHelp">Your username can't be changed.</small>
+      </div>
+      <div class="field">
+        <label for="profile-email" data-i18n="field.email">Email</label>
+        <input id="profile-email" name="email" type="email" />
+      </div>
+      <div class="field">
+        <label for="profile-bio" data-i18n="field.bio">About you</label>
+        <textarea id="profile-bio" name="bio" rows="3"></textarea>
+      </div>
+
+      <p class="form__error" id="profile-error" role="alert" hidden></p>
+
+      <div class="form__actions">
+        <button type="button" class="btn btn--text" id="profile-cancel" data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="btn btn--primary" data-i18n="common.save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" hidden></div>
+
+  <script src="js/icons.js"></script>
+  <script src="js/i18n.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
