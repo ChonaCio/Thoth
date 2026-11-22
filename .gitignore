@@ -1,0 +1,4 @@
+node_modules/
+.updates/
+.update-state.json
+.env

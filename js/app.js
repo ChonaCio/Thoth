@@ -11,6 +11,7 @@
     { id: 'messages', icon: 'mail', key: 'nav.messages' },
     { id: 'calendar', icon: 'calendar', key: 'nav.calendar' },
     { divider: true },
+    { id: 'updates', icon: 'update', key: 'nav.updates' },
     { id: 'settings', icon: 'settings', key: 'nav.settings' }
   ];
   var THEMES = [
@@ -19,7 +20,10 @@
     { id: 'dark', icon: 'dark_mode', key: 'theme.dark' }
   ];
 
-  var state = { user: null, lang: 'en', theme: 'system', registerMode: false, pendingAvatar: undefined, pendingColor: null };
+  var state = {
+    user: null, lang: 'en', theme: 'system', registerMode: false, pendingAvatar: undefined, pendingColor: null,
+    updates: { current: null, currentError: null, release: {}, push: {}, installing: null, done: null, installError: null }
+  };
 
   /* ---------------- i18n ---------------- */
   function t(key, vars) {
@@ -97,6 +101,7 @@
     if (!location.hash) history.replaceState(null, '', '#home');
     applyTranslations();
     renderAll();
+    if (currentRoute() === 'updates') loadCurrentVersion();
   }
 
   function renderAll() {
@@ -352,6 +357,8 @@
           '</select></div>' +
           '<button class="btn btn--outline btn--pill" data-action="edit-profile">' + esc(t('menu.editProfile')) + '</button>' +
         '</section></div>';
+    } else if (route === 'updates') {
+      html = renderUpdatesPage();
     } else {
       html =
         '<h1 class="page-title">' + esc(t(nav.key)) + '</h1>' +
@@ -362,6 +369,174 @@
     if (ha) paintAvatar(ha, u);
     renderIcons($('#content'));
     document.title = t(nav.key) + ' – Thoth';
+  }
+
+  /* ---------------- updates ---------------- */
+  function apiError(err) {
+    if (!err) return '';
+    if (err.code === 'offline') return t('upd.err.offline');
+    var key = 'upd.err.' + err.code;
+    var msg = t(key);
+    return msg !== key ? msg : t('upd.err.generic', { message: err.message || err.code });
+  }
+
+  async function api(method, url, body) {
+    var res;
+    try {
+      res = await fetch(url, {
+        method: method,
+        headers: body ? { 'Content-Type': 'application/json' } : {},
+        body: body ? JSON.stringify(body) : undefined
+      });
+    } catch (e) {
+      throw { code: 'offline' };
+    }
+    var data = null;
+    try { data = await res.json(); } catch (e) { /* non-JSON */ }
+    if (!res.ok || !data) throw { code: (data && data.error) || (res.status === 404 ? 'offline' : 'internal'), message: data && data.message };
+    return data;
+  }
+
+  async function loadCurrentVersion() {
+    try {
+      state.updates.current = await api('GET', '/api/version');
+      state.updates.currentError = null;
+    } catch (e) {
+      state.updates.currentError = e;
+    }
+    if (currentRoute() === 'updates') renderPage();
+  }
+
+  async function checkUpdates(channel) {
+    var u = state.updates;
+    u[channel] = { loading: true };
+    u.done = null; u.installError = null;
+    renderPage();
+    try {
+      var result = await api('GET', '/api/updates/check?channel=' + channel);
+      u[channel] = { result: result };
+      u.current = result.current;
+    } catch (e) {
+      u[channel] = { error: e };
+    }
+    if (currentRoute() === 'updates') renderPage();
+  }
+
+  async function installUpdate(channel, tag) {
+    if (!window.confirm(t('upd.confirm', { tag: tag }))) return;
+    var u = state.updates;
+    u.installing = tag; u.done = null; u.installError = null;
+    renderPage();
+    try {
+      var result = await api('POST', '/api/updates/install', { channel: channel, tag: tag });
+      u.done = result;
+      u.current = result.current;
+      u.release = {}; u.push = {};
+      toast(t('upd.success', { tag: tag }));
+      if (result.autoRestart) waitForRestartThenReload();
+    } catch (e) {
+      u.installError = e;
+    }
+    u.installing = null;
+    if (currentRoute() === 'updates') renderPage();
+  }
+
+  // The server restarts itself after a server-code update (systemd); reload once it's back.
+  async function waitForRestartThenReload() {
+    await new Promise(function (r) { setTimeout(r, 1500); });
+    for (var i = 0; i < 40; i++) {
+      try {
+        var res = await fetch('/api/version', { cache: 'no-store' });
+        if (res.ok) { location.reload(); return; }
+      } catch (e) { /* still restarting */ }
+      await new Promise(function (r) { setTimeout(r, 1000); });
+    }
+    state.updates.done.autoRestart = false;
+    state.updates.done.restartRequired = true;
+    if (currentRoute() === 'updates') renderPage();
+  }
+
+  function fmtDate(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString(state.lang, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
+
+  function renderChannelCard(channel) {
+    var u = state.updates, c = u[channel] || {};
+    var isRel = channel === 'release';
+    var html =
+      '<section class="card update-card">' +
+        '<div class="update-card__head">' +
+          '<h2 class="card__title">' + esc(t(isRel ? 'upd.releasesTitle' : 'upd.pushesTitle')) + '</h2>' +
+          '<p class="muted">' + esc(t(isRel ? 'upd.releasesDesc' : 'upd.pushesDesc')) + '</p>' +
+        '</div>' +
+        '<button class="btn btn--outline btn--pill" data-action="check" data-channel="' + channel + '"' + (c.loading || u.installing ? ' disabled' : '') + '>' +
+          '<span data-icon="update"></span>' + esc(c.loading ? t('upd.checking') : t(isRel ? 'upd.checkReleases' : 'upd.checkPushes')) +
+        '</button>';
+
+    if (c.error) {
+      html += '<p class="notice notice--error">' + esc(apiError(c.error)) + '</p>';
+    } else if (c.result) {
+      var r = c.result;
+      if (!r.latest) {
+        html += '<p class="notice">' + esc(t(isRel ? 'upd.noReleases' : 'upd.noPushes')) + '</p>';
+      } else if (!r.updateAvailable) {
+        html += '<p class="notice notice--ok"><span data-icon="check"></span>' + esc(t('upd.upToDate')) + ' ' + esc(t('upd.latest', { tag: r.latest.tag })) + '</p>';
+      } else {
+        html += '<p class="notice notice--info">' + esc(r.newer.length === 1 ? t('upd.availableOne') : t('upd.availableMany', { count: r.newer.length })) + '</p>';
+        html += '<ul class="update-list">' + r.newer.map(function (item, i) {
+          var badge = isRel
+            ? (item.prerelease ? '<span class="badge">' + esc(t('upd.prerelease')) + '</span>' : '')
+            : '<span class="badge' + (item.released ? ' badge--ok' : '') + '">' + esc(t(item.released ? 'upd.released' : 'upd.unreleased')) + '</span>';
+          return '<li class="update-item">' +
+            '<div class="update-item__info">' +
+              '<span class="update-item__tag">' + esc(item.tag) + '</span>' + badge +
+              (item.date ? '<span class="muted small">' + esc(fmtDate(item.date)) + '</span>' : '') +
+              '<a class="small" href="' + esc(item.url) + '" target="_blank" rel="noopener">' + esc(t('upd.view')) + '</a>' +
+            '</div>' +
+            '<button class="btn ' + (i === 0 ? 'btn--primary' : 'btn--text') + '" data-action="install" data-channel="' + channel + '" data-tag="' + esc(item.tag) + '"' + (u.installing ? ' disabled' : '') + '>' +
+              '<span data-icon="download"></span>' + esc(u.installing === item.tag ? t('upd.installing', { tag: item.tag }) : t('upd.install')) +
+            '</button>' +
+          '</li>';
+        }).join('') + '</ul>';
+      }
+      html += '<p class="muted small">' + esc(t('upd.lastChecked', { time: fmtDate(r.checkedAt) })) + '</p>';
+    }
+    return html + '</section>';
+  }
+
+  function renderUpdatesPage() {
+    var u = state.updates, cur = u.current;
+    var repo = cur ? cur.repo : 'ChonaCio/Thoth';
+    var html =
+      '<h1 class="page-title">' + esc(t('upd.title')) + '</h1>' +
+      '<p class="page-lead">' + esc(t('upd.intro', { repo: 'github.com/' + repo })) + '</p>';
+
+    if (u.done) {
+      html += '<div class="banner banner--ok"><div><strong>' + esc(t('upd.success', { tag: u.done.installed })) + '</strong>' +
+        (u.done.autoRestart ? '<p>' + esc(t('upd.restarting')) + '</p>'
+          : u.done.restartRequired ? '<p>' + esc(t('upd.restart')) + '</p>' : '') +
+        '<p class="small">' + esc(t('upd.backup', { path: u.done.backup })) + '</p></div>' +
+        '<button class="btn btn--primary" data-action="reload">' + esc(t('upd.reload')) + '</button></div>';
+    }
+    if (u.installError) html += '<div class="banner banner--error">' + esc(apiError(u.installError)) + '</div>';
+
+    html += '<div class="cards">' +
+      '<section class="card">' +
+        '<h2 class="card__title">' + esc(t('upd.current')) + '</h2>' +
+        (u.currentError
+          ? '<p class="notice notice--error">' + esc(apiError(u.currentError)) + '</p>'
+          : '<dl class="pref-list">' +
+              '<dt>' + esc(t('upd.release')) + '</dt><dd>' + esc(cur ? (cur.release || t('upd.none')) : '…') + '</dd>' +
+              '<dt>' + esc(t('upd.push')) + '</dt><dd>' + esc(cur ? (cur.push != null ? 'p' + cur.push : t('upd.none')) : '…') + '</dd>' +
+              '<dt>' + esc(t('upd.source')) + '</dt><dd><a href="https://github.com/' + esc(repo) + '" target="_blank" rel="noopener">' + esc(repo) + '</a></dd>' +
+              (cur && cur.installedAt ? '<dt>' + esc(t('upd.installedAt')) + '</dt><dd>' + esc(fmtDate(cur.installedAt)) + '</dd>' : '') +
+            '</dl>') +
+      '</section>' +
+      renderChannelCard('release') +
+      renderChannelCard('push') +
+    '</div>';
+    return html;
   }
 
   /* ---------------- toast ---------------- */
@@ -418,7 +593,13 @@
 
     $('#content').addEventListener('click', function (e) {
       if (e.target.closest('[data-action="edit-profile"]')) openProfile();
+      var chk = e.target.closest('[data-action="check"]');
+      if (chk) checkUpdates(chk.dataset.channel);
+      var ins = e.target.closest('[data-action="install"]');
+      if (ins) installUpdate(ins.dataset.channel, ins.dataset.tag);
+      if (e.target.closest('[data-action="reload"]')) location.reload();
     });
+    $('#menu-updates').addEventListener('click', function () { toggleAccountMenu(false); location.hash = '#updates'; });
     $('#content').addEventListener('change', function (e) {
       if (e.target.id === 'set-theme') { setPref('theme', e.target.value); toast(t('toast.theme')); }
       if (e.target.id === 'set-lang') { setPref('lang', e.target.value); toast(t('toast.lang')); }
@@ -437,7 +618,11 @@
       refreshProfilePreview();
     });
 
-    window.addEventListener('hashchange', function () { if (state.user) { renderSidebar(); renderPage(); applyTranslations(); } });
+    window.addEventListener('hashchange', function () {
+      if (!state.user) return;
+      renderSidebar(); renderPage(); applyTranslations();
+      if (currentRoute() === 'updates') loadCurrentVersion();
+    });
     window.matchMedia('(max-width: 768px)').addEventListener('change', function () {
       $('#app-view').classList.remove('sidebar-open');
       $('#scrim').hidden = true;

@@ -1,0 +1,43 @@
+# systemd unit for Thoth. Installed by deploy/install.sh, which fills in the @PLACEHOLDERS@.
+# Manual install: replace the placeholders, copy to /etc/systemd/system/thoth.service, then
+#   sudo systemctl daemon-reload && sudo systemctl enable --now thoth
+[Unit]
+Description=Thoth web app
+Documentation=https://github.com/ChonaCio/Thoth
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@USER@
+WorkingDirectory=@DIR@
+EnvironmentFile=/etc/thoth/thoth.env
+Environment=NODE_ENV=production
+# After an update changes server code, the app exits and systemd starts the new version.
+Environment=THOTH_SELF_RESTART=1
+ExecStart=@NODE@ @DIR@/server.js
+Restart=always
+RestartSec=3
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+# Hardening: the app may only write to its own folder (needed to install updates).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=@DIR@
+ProtectHome=@PROTECT_HOME@
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+LockPersonality=true
+# Lets PORT be below 1024 (e.g. 80) without running as root.
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
