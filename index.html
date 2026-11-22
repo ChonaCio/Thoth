@@ -265,6 +265,16 @@
         <span data-i18n="field.active">Account active</span>
       </label>
 
+      <fieldset class="fieldset">
+        <legend data-i18n="users.libraryAccess">Library access</legend>
+        <p class="field__help" id="access-admin-note" data-i18n="users.accessAdmin" hidden></p>
+        <div id="access-options">
+          <label class="checkbox"><input type="radio" name="access" id="access-all" /><span data-i18n="users.accessAll">All libraries</span></label>
+          <label class="checkbox"><input type="radio" name="access" id="access-some" /><span data-i18n="users.accessSome">Only these libraries:</span></label>
+          <div class="access-list" id="access-list"></div>
+        </div>
+      </fieldset>
+
       <p class="form__error" id="user-error" role="alert" hidden></p>
 
       <div class="form__actions">
@@ -274,11 +284,50 @@
     </form>
   </dialog>
 
+  <!-- ============ GENERIC FORM DIALOG (libraries, metadata, collections, read lists) ============ -->
+  <dialog id="form-dialog" class="dialog">
+    <form method="dialog" id="form-dialog-form" class="form" novalidate>
+      <h2 class="dialog__title" id="form-dialog-title"></h2>
+      <div class="form" id="form-dialog-fields"></div>
+      <p class="form__error" id="form-dialog-error" role="alert" hidden></p>
+      <div class="form__actions">
+        <button type="button" class="btn btn--text" id="form-dialog-cancel" data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="btn btn--primary" id="form-dialog-submit" data-i18n="common.save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ READER ============ -->
+  <div class="reader" id="reader" hidden>
+    <div class="reader__stage" id="reader-stage"></div>
+    <header class="reader__bar reader__bar--top" id="reader-top">
+      <button class="icon-btn reader__btn" id="reader-close" data-icon="arrow_back" data-i18n-title="reader.close"></button>
+      <div class="reader__titles">
+        <div class="reader__title" id="reader-title"></div>
+        <div class="reader__subtitle" id="reader-subtitle"></div>
+      </div>
+      <span class="reader__count" id="reader-count"></span>
+      <button class="icon-btn reader__btn" id="reader-settings-btn" data-icon="tune" data-i18n-title="reader.settings"></button>
+      <button class="icon-btn reader__btn" id="reader-fullscreen" data-icon="fullscreen" data-i18n-title="reader.fullscreen"></button>
+    </header>
+    <footer class="reader__bar reader__bar--bottom" id="reader-bottom">
+      <button class="icon-btn reader__btn" id="reader-left" data-icon="chevron_left"></button>
+      <input type="range" class="reader__slider" id="reader-slider" min="1" max="1" value="1" />
+      <button class="icon-btn reader__btn" id="reader-right" data-icon="chevron_right"></button>
+    </footer>
+    <div class="reader__panel" id="reader-settings" hidden></div>
+    <div class="reader__end" id="reader-end" hidden></div>
+    <div class="reader__message" id="reader-message" hidden></div>
+  </div>
+
   <div class="toast" id="toast" role="status" hidden></div>
 
   <script src="js/icons.js"></script>
   <script src="js/i18n.js"></script>
+  <script src="js/i18n-library.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/library.js"></script>
+  <script src="js/reader.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

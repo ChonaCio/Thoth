@@ -4,17 +4,15 @@
   var $ = function (sel, root) { return (root || document).querySelector(sel); };
   var $$ = function (sel, root) { return Array.from((root || document).querySelectorAll(sel)); };
 
-  var NAV = [
-    { id: 'home', icon: 'home', key: 'nav.home' },
-    { id: 'dashboard', icon: 'dashboard', key: 'nav.dashboard' },
-    { id: 'projects', icon: 'folder', key: 'nav.projects' },
-    { id: 'messages', icon: 'mail', key: 'nav.messages' },
-    { id: 'calendar', icon: 'calendar', key: 'nav.calendar' },
-    { divider: true },
-    { id: 'users', icon: 'group', key: 'nav.users', adminOnly: true },
-    { id: 'updates', icon: 'update', key: 'nav.updates', adminOnly: true },
-    { id: 'settings', icon: 'settings', key: 'nav.settings' }
-  ];
+  // Every page the app knows. Library pages are rendered by js/library.js, the reader by js/reader.js.
+  var ROUTES = {
+    home: {}, library: {}, series: {}, book: {}, search: {}, read: {},
+    collections: {}, collection: {}, readlists: {}, readlist: {},
+    settings: { key: 'nav.settings' },
+    'manage-libraries': { adminOnly: true },
+    users: { adminOnly: true, key: 'nav.users' },
+    updates: { adminOnly: true, key: 'nav.updates' }
+  };
   var THEMES = [
     { id: 'system', icon: 'contrast', key: 'theme.system' },
     { id: 'light', icon: 'light_mode', key: 'theme.light' },
@@ -27,6 +25,7 @@
     authMode: 'login', signupAllowed: false,
     pendingAvatar: undefined, pendingColor: null,
     editingUser: null,
+    libraries: [],
     users: { list: null, error: null, query: '', settings: null },
     updates: { current: null, currentError: null, release: {}, push: {}, installing: null, done: null, installError: null }
   };
@@ -125,6 +124,18 @@
     applyTranslations();
     renderAll();
     onRouteEnter();
+    refreshLibraries();
+  }
+
+  // Libraries shown in the sidebar (only the ones this user may see)
+  async function refreshLibraries() {
+    try {
+      state.libraries = (await Store.libraries()).libraries;
+    } catch (e) {
+      state.libraries = [];
+    }
+    if (state.user) { renderSidebar(); applyTranslations(); }
+    return state.libraries;
   }
 
   function renderAll() {
@@ -204,27 +215,67 @@
   }
 
   /* ---------------- routing & sidebar ---------------- */
-  function visibleNav() {
-    return NAV.filter(function (n) { return !n.adminOnly || isAdmin(); });
+  // "#series/abc?page=2" → { name: 'series', param: 'abc', query: URLSearchParams, hash }
+  function parseRoute() {
+    var hash = (location.hash || '#home').slice(1);
+    var qi = hash.indexOf('?');
+    var pathPart = qi === -1 ? hash : hash.slice(0, qi);
+    var parts = pathPart.split('/');
+    var name = parts[0] || 'home';
+    var route = ROUTES[name];
+    if (!route || (route.adminOnly && !isAdmin())) name = 'home';
+    return {
+      name: name,
+      param: parts[1] ? decodeURIComponent(parts[1]) : '',
+      query: new URLSearchParams(qi === -1 ? '' : hash.slice(qi + 1)),
+      hash: '#' + hash
+    };
   }
-  function currentRoute() {
-    var id = (location.hash || '#home').slice(1);
-    return visibleNav().some(function (n) { return n.id === id; }) ? id : 'home';
-  }
+  function currentRoute() { return parseRoute().name; }
+
   function onRouteEnter() {
-    var route = currentRoute();
-    if (route === 'updates') loadCurrentVersion();
-    if (route === 'users') loadUsers();
+    var route = parseRoute();
+    if (route.name === 'updates') loadCurrentVersion();
+    if (route.name === 'users') loadUsers();
+    if (window.LibraryPages && LibraryPages[route.name] && LibraryPages[route.name].enter) LibraryPages[route.name].enter(route);
+    if (window.Reader) {
+      if (route.name === 'read') Reader.open(route); else Reader.close();
+    }
+    var search = $('#search');
+    if (search && route.name === 'search') search.value = route.query.get('q') || '';
+  }
+
+  // Sidebar: Home, each library, collections, read lists, then admin pages and settings
+  function navItems() {
+    var items = [{ href: '#home', icon: 'home', key: 'nav.home' }];
+    if (state.libraries.length) {
+      items.push({ header: 'nav.libraries' });
+      if (state.libraries.length > 1) items.push({ href: '#library/all', icon: 'library', key: 'nav.allLibraries' });
+      state.libraries.forEach(function (l) { items.push({ href: '#library/' + l.id, icon: 'library', label: l.name }); });
+    }
+    items.push({ href: '#collections', icon: 'collections', key: 'nav.collections', match: ['collections', 'collection'] });
+    items.push({ href: '#readlists', icon: 'readlist', key: 'nav.readlists', match: ['readlists', 'readlist'] });
+    items.push({ divider: true });
+    if (isAdmin()) {
+      items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
+      items.push({ href: '#users', icon: 'group', key: 'nav.users' });
+      items.push({ href: '#updates', icon: 'update', key: 'nav.updates' });
+    }
+    items.push({ href: '#settings', icon: 'settings', key: 'nav.settings' });
+    return items;
   }
 
   function renderSidebar() {
-    var route = currentRoute();
-    var items = visibleNav();
-    $('#sidebar-list').innerHTML = items.map(function (n) {
+    var route = parseRoute();
+    var current = '#' + route.name + (route.param ? '/' + route.param : '');
+    $('#sidebar-list').innerHTML = navItems().map(function (n) {
       if (n.divider) return '<li><hr class="divider" /></li>';
-      return '<li><a href="#' + n.id + '" class="nav-item' + (n.id === route ? ' is-active' : '') + '"' +
-        (n.id === route ? ' aria-current="page"' : '') + '>' +
-        '<span data-icon="' + n.icon + '"></span><span class="nav-item__label" data-i18n="' + n.key + '"></span></a></li>';
+      if (n.header) return '<li class="nav-header" data-i18n="' + n.header + '"></li>';
+      var active = n.href === current || (n.match && n.match.indexOf(route.name) !== -1);
+      var label = n.key ? '<span class="nav-item__label" data-i18n="' + n.key + '"></span>' : '<span class="nav-item__label">' + esc(n.label) + '</span>';
+      return '<li><a href="' + n.href + '" class="nav-item' + (active ? ' is-active' : '') + '"' +
+        (active ? ' aria-current="page"' : '') + ' title="' + esc(n.label || t(n.key)) + '">' +
+        '<span data-icon="' + n.icon + '"></span>' + label + '</a></li>';
     }).join('');
     renderIcons($('#sidebar'));
   }
@@ -301,6 +352,9 @@
 
   async function signOut(silentMessage) {
     toggleAccountMenu(false);
+    if (window.Reader) Reader.close();
+    if (window.LibraryPages && LibraryPages.reset) LibraryPages.reset();
+    state.libraries = [];
     try { await Store.logout(); } catch (e) { /* already signed out */ }
     history.replaceState(null, '', location.pathname);
     var s = await Store.session().catch(function () { return {}; });
@@ -412,36 +466,14 @@
 
   /* ---------------- pages ---------------- */
   function renderPage() {
-    var route = currentRoute();
-    var nav = NAV.filter(function (n) { return n.id === route; })[0];
+    var info = parseRoute();
+    var route = info.name;
     var u = state.user;
-    var html;
-    if (route === 'home') {
-      var since = new Date(u.createdAt).toLocaleDateString(state.lang, { year: 'numeric', month: 'long', day: 'numeric' });
-      html =
-        '<h1 class="page-title">' + esc(t('page.welcome', { name: u.displayName.split(' ')[0] })) + '</h1>' +
-        '<p class="page-lead">' + esc(t('page.homeIntro')) + '</p>' +
-        '<div class="cards">' +
-          '<section class="card">' +
-            '<h2 class="card__title">' + esc(t('page.profileCard')) + '</h2>' +
-            '<div class="profile-summary">' +
-              '<span class="avatar avatar--lg" id="home-avatar"></span>' +
-              '<div><p class="profile-summary__name">' + esc(u.displayName) + '</p>' +
-              '<p class="muted">@' + esc(u.username) + (u.email ? ' · ' + esc(u.email) : '') + '</p>' +
-              '<p class="muted small">' + esc(t('page.memberSince', { date: since })) + '</p></div>' +
-            '</div>' +
-            (u.bio ? '<p class="profile-summary__bio">' + esc(u.bio) + '</p>' : '') +
-            '<button class="btn btn--outline btn--pill" data-action="edit-profile">' + esc(t('menu.editProfile')) + '</button>' +
-          '</section>' +
-          '<section class="card">' +
-            '<h2 class="card__title">' + esc(t('page.preferences')) + '</h2>' +
-            '<dl class="pref-list">' +
-              '<dt>' + esc(t('field.role')) + '</dt><dd>' + esc(t('role.' + u.role)) + '</dd>' +
-              '<dt>' + esc(t('menu.appearance')) + '</dt><dd>' + esc(t('theme.' + state.theme)) + '</dd>' +
-              '<dt>' + esc(t('menu.language')) + '</dt><dd>' + esc(LANGUAGES[state.lang]) + '</dd>' +
-            '</dl>' +
-          '</section>' +
-        '</div>';
+    var html, title;
+    var libPage = window.LibraryPages && LibraryPages[route];
+    if (libPage) {
+      html = libPage.render(info);
+      title = libPage.title ? libPage.title(info) : '';
     } else if (route === 'settings') {
       html =
         '<h1 class="page-title">' + esc(t('nav.settings')) + '</h1>' +
@@ -458,17 +490,13 @@
       html = renderUpdatesPage();
     } else if (route === 'users') {
       html = renderUsersPage();
-    } else {
-      html =
-        '<h1 class="page-title">' + esc(t(nav.key)) + '</h1>' +
-        '<div class="empty-state"><span data-icon="' + nav.icon + '"></span><p>' + esc(t('page.placeholder')) + '</p></div>';
     }
-    $('#content').innerHTML = html;
-    var ha = $('#home-avatar');
-    if (ha) paintAvatar(ha, u);
+    if (!title && ROUTES[route] && ROUTES[route].key) title = t(ROUTES[route].key);
+    $('#content').innerHTML = html || '';
     if (route === 'users') renderUsersTable();
+    if (libPage && libPage.mount) libPage.mount($('#content'), info);
     renderIcons($('#content'));
-    document.title = t(nav.key) + ' – Thoth';
+    document.title = (title ? title + ' – ' : '') + 'Thoth';
   }
 
   /* ---------------- user management ---------------- */
@@ -587,9 +615,35 @@
     $('#user-active').checked = editing ? !user.disabled : true;
     $('#user-active').disabled = self;
     $('#user-error').hidden = true;
+    renderLibraryAccess(editing ? user.libraries : null);
     applyTranslations();
     $('#user-dialog').showModal();
-    (editing ? $('#user-name') : $('#user-name')).focus();
+    $('#user-name').focus();
+  }
+
+  // "All libraries" or a checklist of libraries; hidden for administrators (they see everything)
+  function renderLibraryAccess(selected) {
+    var all = !Array.isArray(selected);
+    $('#access-all').checked = all;
+    $('#access-some').checked = !all;
+    var libs = state.libraries;
+    $('#access-list').innerHTML = libs.length
+      ? libs.map(function (l) {
+          var on = !all && selected.indexOf(l.id) !== -1;
+          return '<label class="checkbox"><input type="checkbox" value="' + esc(l.id) + '"' + (on ? ' checked' : '') + ' /><span>' + esc(l.name) + '</span></label>';
+        }).join('')
+      : '<p class="muted small" data-i18n="users.noLibraries"></p>';
+    syncLibraryAccess();
+  }
+  function syncLibraryAccess() {
+    var admin = $('#user-role').value === 'admin';
+    $('#access-admin-note').hidden = !admin;
+    $('#access-options').hidden = admin;
+    $$('#access-list input').forEach(function (i) { i.disabled = $('#access-all').checked; });
+  }
+  function libraryAccessValue() {
+    if ($('#user-role').value === 'admin' || $('#access-all').checked) return null;
+    return $$('#access-list input:checked').map(function (i) { return i.value; });
   }
 
   function userError(msg) {
@@ -616,6 +670,7 @@
         if (!$('#user-role').disabled) patch.role = $('#user-role').value;
         if (!$('#user-active').disabled) patch.disabled = !$('#user-active').checked;
         if (password) patch.password = password;
+        patch.libraries = libraryAccessValue();
         res = await Store.users.update(editing.username, patch);
         if (res.user.username.toLowerCase() === state.user.username.toLowerCase()) {
           state.user = res.user;
@@ -625,7 +680,7 @@
       } else {
         res = await Store.users.create({
           displayName: name, username: $('#user-username').value.trim(), email: $('#user-email').value.trim(),
-          role: $('#user-role').value, password: password
+          role: $('#user-role').value, password: password, libraries: libraryAccessValue()
         });
         toast(t('users.created', { username: res.user.username }));
       }
@@ -904,6 +959,16 @@
 
     $('#user-form').addEventListener('submit', onUserSave);
     $('#user-cancel').addEventListener('click', function () { $('#user-dialog').close(); });
+    $('#user-role').addEventListener('change', syncLibraryAccess);
+    $('#access-all').addEventListener('change', syncLibraryAccess);
+    $('#access-some').addEventListener('change', syncLibraryAccess);
+
+    // Top bar search: Enter opens the results page
+    $('#search').addEventListener('keydown', function (e) {
+      if (e.key !== 'Enter') return;
+      var q = this.value.trim();
+      if (q) location.hash = '#search?q=' + encodeURIComponent(q);
+    });
 
     window.addEventListener('hashchange', function () {
       if (!state.user) return;
@@ -951,6 +1016,15 @@
     if (session.user) showApp(session.user);
     else showLogin(session.setupRequired ? 'setup' : 'login');
   }
+
+  // Shared with js/library.js and js/reader.js
+  window.App = {
+    state: state, t: t, esc: esc, errMsg: errMsg, toast: toast, fmtDate: fmtDate,
+    isAdmin: isAdmin, parseRoute: parseRoute, renderPage: renderPage, refreshLibraries: refreshLibraries,
+    applyTranslations: applyTranslations,
+    // Re-render only if the user is still on the page that asked for it
+    rerenderIf: function (hash) { if (state.user && location.hash === hash) { renderPage(); applyTranslations(); } }
+  };
 
   init();
 })();

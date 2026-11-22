@@ -1,9 +1,33 @@
 # Thoth
 
-A web app shell with a login screen, a collapsible left sidebar and a Google-style top bar
-with an account menu (user info, edit profile, appearance, language, sign out).
+A self-hosted comic and manga server. Point it at folders of `.cbz`, `.zip` or `.pdf` files and
+read them in the browser on any device, with reading progress kept per user.
 
-No dependencies — plain HTML/CSS/JS plus a tiny Node static server.
+No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
+
+## Features
+
+- **Libraries**: each library is a folder on the server. Every folder inside it that contains books
+  becomes a **series**; each file is a **book**. Scanned when the server starts, on a schedule
+  (default hourly) and on demand; only new or changed files are analyzed again.
+- **Metadata** from `ComicInfo.xml` inside CBZ files (title, number, summary, authors, publisher,
+  genres, release date, manga reading direction, webtoon format). Administrators can override any of it;
+  their edits survive rescans.
+- **Browse**: Home (*Keep reading*, *On deck* = next book in series you've started, recently added),
+  per-library series grids with filter, sort and read-status filters, series and book pages, global search
+  (series, books, authors, tags, collections, read lists).
+- **Reader**: left-to-right, right-to-left (manga) and vertical scroll (webtoon); fit to screen, width,
+  height or original size; keyboard, tap zones, swipe and a page slider; preloads upcoming pages; saves
+  your page as you read and offers the next book at the end. Settings are remembered per series.
+- **Progress**: per user; mark books or whole series as read/unread.
+- **Collections** (groups of series) and **read lists** (books from any series, in reading order).
+  Administrators create and edit them; everyone sees the parts they have access to.
+- **Users**: per-user library access (all libraries, or only some). Downloads of the original files.
+
+**Formats:** CBZ/ZIP (JPEG, PNG, WebP, GIF, AVIF, BMP pages) and PDF. CBR/RAR, CB7 and EPUB are
+skipped and counted in the scan report. PDFs are drawn with pdf.js, which the browser downloads from
+cdnjs the first time a PDF is opened (if that's blocked, the PDF can still be opened in the browser's
+own viewer). Covers are the first page of each book at full size, cached by the browser.
 
 ```
 npm start      # prints the addresses to open, e.g. http://192.168.1.20:3000
@@ -30,13 +54,31 @@ Accounts are stored on the server, so the same account works from every device.
 - Disabling a user, deleting them or resetting their password signs them out everywhere right away.
   Changing your own password signs you out on your other devices.
 
+### Adding comics
+
+Sign in as an administrator → **Manage libraries** → **Add library**, give it a name and a folder
+(type the path or use **Browse** to pick it on the server). A layout like this works well:
+
+```
+/srv/comics/                 ← library folder
+  Saga/                      ← series
+    Saga 001.cbz             ← books (sorted naturally: 2 before 10)
+    Saga 002.cbz
+  One Piece/
+    Volume 01.cbz
+```
+
+The library page shows scan results: new/changed/removed books, files skipped for unsupported formats,
+and books that couldn't be opened. Removing a library from Thoth never deletes files.
+
 **Locked out?** If no administrator can sign in, stop the server, delete `data/users.json` (this removes
 all accounts) and start it again to get the *Create the first user* screen back.
 
 ### Where data is stored
 
-`data/` (or `THOTH_DATA_DIR`) holds `users.json` (password hashes use scrypt), `sessions.json` and
-`settings.json`. Back this folder up. It's never served to browsers, never committed to git, never
+`data/` (or `THOTH_DATA_DIR`) holds `users.json` (password hashes use scrypt), `sessions.json`,
+`settings.json`, `library.json` (libraries, series, books, metadata edits, collections, read lists) and
+`progress.json` (reading progress). Back this folder up; your comic files are never stored there. It's never served to browsers, never committed to git, never
 copied into the container image, and never touched by updates. Sessions are HttpOnly cookies that last
 30 days. After 10 failed sign-ins from one address, sign-in is blocked for that address for 15 minutes.
 
@@ -47,11 +89,13 @@ Needs Docker with the Compose plugin. Docker restarts the container on server bo
 
 ```bash
 git clone https://github.com/ChonaCio/Thoth.git && cd Thoth
-cp .env.example .env          # optional: THOTH_PORT if 3000 is taken, GITHUB_TOKEN
+cp .env.example .env          # set THOTH_MEDIA_DIR to your comics folder, e.g. /srv/comics
 docker compose up -d --build
 ```
 
-Then open `http://<server-ip>:3000` from any device and create the first user. The address the container prints in its log
+Then open `http://<server-ip>:3000` from any device, create the first user, and add a library with the
+folder **`/media`** (your `THOTH_MEDIA_DIR`, mounted read-only) or a subfolder of it. To use several
+folders, mount more volumes in `docker-compose.yml` (e.g. `- /mnt/manga:/manga:ro`) and add each as a library. The address the container prints in its log
 is its internal Docker IP; use the server's own IP instead (`hostname -I`).
 
 | Task | Command |
@@ -72,21 +116,25 @@ Without Compose:
 
 ```bash
 docker build -t thoth .
-docker run -d --name thoth --restart unless-stopped -p 3000:3000 -v thoth-app:/app thoth
+docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
+  -v thoth-app:/app -v /srv/comics:/media:ro thoth
 ```
 
 ## Structure
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | Markup for sign-in/setup view, app shell, account menu, profile and user dialogs |
-| `css/styles.css` | Theme tokens (light/dark), layout, components, responsive rules |
-| `js/store.js` | API client for the server (session, profile, users, settings) |
-| `js/i18n.js` | Languages and translation strings (en, es, fr, de, pt) |
+| `index.html` | Markup for sign-in/setup view, app shell, account menu, dialogs, reader |
+| `css/styles.css` | Theme tokens (light/dark), layout, components, cards, reader, responsive rules |
+| `js/store.js` | API client for the server |
+| `js/i18n.js`, `js/i18n-library.js` | Translation strings (en, es, fr, de, pt) |
 | `js/icons.js` | Inline SVG icon set |
-| `js/app.js` | Routing (`#home`, `#users`, …), sidebar, account menu, profile, user management, updates |
-| `server.js` | Zero-dependency web server: static files, accounts API, update API |
-| `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, user management |
+| `js/app.js` | Routing (`#home`, `#series/<id>`, …), sidebar, account menu, profile, users, updates |
+| `js/library.js` | Home, libraries, series, books, search, collections, read lists, library management |
+| `js/reader.js` | The reader |
+| `server.js` | Zero-dependency web server: page + CSS/JS, accounts API, library API, update API |
+| `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, library access |
+| `library/` | `zip.js` (CBZ reader), `scanner.js` (folder scanning, ComicInfo.xml), `db.js` (storage), `api.js` (routes) |
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |
@@ -145,7 +193,11 @@ The script:
 5. Prints the addresses other devices can use, warns if a firewall (ufw/firewalld) needs the port opened,
    and reminds you to create the first user.
 
-Accounts are stored in `/opt/thoth/data/`.
+Accounts, libraries and reading progress are stored in `/opt/thoth/data/`.
+
+**Comic folders:** the service runs as the `thoth` user, which needs read access to your library
+folders. For example: `sudo setfacl -R -m u:thoth:rX /srv/comics` (or add `thoth` to a group that can read
+them). Folders under `/home` work too; the service can read them but never write to them.
 
 Options: `--dir /opt/thoth`, `--user thoth`, `--port 3000`, `--host 0.0.0.0`, `--no-start`.
 Running it again updates the app and unit but keeps your settings, installed-version record and backups.

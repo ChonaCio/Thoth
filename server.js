@@ -6,6 +6,12 @@ const os = require('os');
 const path = require('path');
 const auth = require('./auth');
 const updater = require('./updater');
+const library = require('./library/api');
+const libraryStore = require('./library/db');
+const scanner = require('./library/scanner');
+
+// Deleting a user also deletes their reading progress
+auth.hooks.userDeleted.push(username => libraryStore.removeUser(username));
 
 const PORT = Number(process.env.PORT) || 3000;
 // 0.0.0.0 = reachable from other devices (needed in containers/headless servers).
@@ -22,8 +28,11 @@ const TYPES = {
   '.png': 'image/png',
   '.ico': 'image/x-icon'
 };
-// Never served as static files
-const HIDDEN = new Set(['.git', '.updates', '.update-state.json', '.build-info.json', 'node_modules', '.env', '.claude', 'data', 'deploy', 'scripts']);
+// The only static files ever served: the page itself and its CSS/JS. Everything else in the app folder
+// (data, server code, and any comics someone keeps inside it) is only reachable through the signed-in API.
+const PUBLIC_FILES = new Set(['index.html']);
+const PUBLIC_DIRS = new Set(['css', 'js']);
+const PUBLIC_EXT = new Set(['.html', '.css', '.js', '.svg', '.png', '.ico']);
 const MAX_BODY = 1024 * 1024;
 
 function sendJson(res, status, body, headers) {
@@ -96,9 +105,18 @@ async function handleApi(req, res, url) {
       }
       return;
     }
+
+    // ---- libraries, series, books, reading (signed-in users) ----
+    const { user } = auth.requireUser(req);
+    const handled = await library.handle({
+      method, pathname: url.pathname, query: url.searchParams, body, req, res, user,
+      send: (status, data) => { sendJson(res, status, data); return true; }
+    });
+    if (handled) return;
     return sendJson(res, 404, { error: 'notFound' });
   } catch (e) {
     if (!e.status || e.status >= 500) console.error('[api]', e.message);
+    if (res.headersSent) return res.destroy();
     return sendJson(res, e.status || 500, { error: e.code || 'internal', message: e.message });
   }
 }
@@ -110,8 +128,10 @@ const server = http.createServer((req, res) => {
   let urlPath;
   try { urlPath = decodeURIComponent(url.pathname); } catch { res.writeHead(400); return res.end('Bad request'); }
   const file = path.normalize(path.join(ROOT, urlPath === '/' ? 'index.html' : urlPath));
-  const top = path.relative(ROOT, file).split(path.sep)[0];
-  if (!file.startsWith(ROOT + path.sep) || HIDDEN.has(top)) {
+  const parts = path.relative(ROOT, file).split(path.sep);
+  const allowed = file.startsWith(ROOT + path.sep) && PUBLIC_EXT.has(path.extname(file).toLowerCase()) &&
+    (parts.length === 1 ? PUBLIC_FILES.has(parts[0]) : PUBLIC_DIRS.has(parts[0]));
+  if (!allowed) {
     res.writeHead(403); return res.end('Forbidden');
   }
   fs.readFile(file, (err, data) => {
@@ -147,6 +167,11 @@ server.listen(PORT, HOST, () => {
     console.log('No users yet: open the app and create the first user (it becomes the administrator).');
   }
   updater.resolveVersion().then(v => console.log(`Version: ${describeVersion(v)}`), () => {});
+  // Pick up changes made while the server was off, then rescan on the configured interval
+  const libs = Object.keys(libraryStore.db.libraries).length;
+  console.log(`Libraries: ${libs}${libs ? ' (scanning for changes)' : ' (add one on the Libraries page)'}`);
+  scanner.scanAll();
+  scanner.startSchedule();
 });
 
 function describeVersion(v) {

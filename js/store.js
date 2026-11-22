@@ -57,6 +57,18 @@
       update: function (patch) { return request('PATCH', '/api/settings', patch); }
     },
 
+    // Libraries, series, books, reading
+    libraries: function () { return request('GET', '/api/libraries'); },
+    qs: function (params) {
+      return Object.keys(params).filter(function (k) { return params[k] !== '' && params[k] != null; })
+        .map(function (k) { return encodeURIComponent(k) + '=' + encodeURIComponent(params[k]); }).join('&');
+    },
+    setProgress: function (bookId, page, completed) {
+      var body = { page: page };
+      if (completed != null) body.completed = completed;
+      return request('PUT', '/api/books/' + bookId + '/progress', body);
+    },
+
     // Theme/language for the sign-in screen (before anyone is signed in)
     prefs: function () { return Object.assign({ theme: 'system', lang: null }, readPrefs()); },
     savePrefs: function (p) {

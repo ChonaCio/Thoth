@@ -1,7 +1,8 @@
 # Run on a headless server:
-#   cp .env.example .env        # optional: change the port or add a GITHUB_TOKEN
+#   cp .env.example .env        # set THOTH_MEDIA_DIR to your comics folder
 #   docker compose up -d --build
-# Open http://<server-ip>:3000 from any device on the network and create the first user.
+# Open http://<server-ip>:3000 from any device on the network and create the first user,
+# then add a library pointing at /media (or a folder inside it).
 # Starts again automatically when the server reboots (as long as Docker itself starts on boot).
 services:
   thoth:
@@ -18,6 +19,8 @@ services:
       # Holds the app files and the data/ folder (users, sessions, settings),
       # so accounts and updates installed from the Updates page persist
       - thoth-app:/app
+      # Your comics/manga, read-only: inside the app, add a library with the folder /media
+      - ${THOTH_MEDIA_DIR:-./media}:/media:ro
 
 volumes:
   thoth-app:

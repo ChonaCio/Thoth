@@ -22,7 +22,9 @@ RestartSec=3
 KillSignal=SIGTERM
 TimeoutStopSec=15
 
-# Hardening: the app may only write to its own folder (needed to install updates).
+# Hardening: the app may only write to its own folder (needed to install updates and save data).
+# It can read the rest of the system (and /home, read-only), so libraries can be anywhere the
+# service user has read permission, e.g. /srv/comics, /mnt/nas/manga or /home/you/Comics.
 NoNewPrivileges=true
 ProtectSystem=strict
 ReadWritePaths=@DIR@

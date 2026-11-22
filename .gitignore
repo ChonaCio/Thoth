@@ -2,6 +2,8 @@ node_modules/
 .updates/
 .update-state.json
 .build-info.json
-# Accounts, sessions and settings (contains password hashes)
+# Accounts, sessions, settings, libraries and reading progress (contains password hashes)
 data/
+# Default Docker media folder (your comics are not part of the app)
+media/
 .env

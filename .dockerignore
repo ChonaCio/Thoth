@@ -9,6 +9,7 @@
 .update-state.json
 .build-info.json
 data
+media
 node_modules
 Dockerfile
 docker-compose.yml

@@ -141,6 +141,19 @@ function requireAdmin(req) {
   return s;
 }
 
+/* ---------------- library access ----------------
+ * user.libraries: null/absent = every library; array of library ids = only those.
+ * Administrators always see every library.
+ */
+function parseLibraryAccess(v) {
+  if (v === null || v === 'all') return null;
+  if (!Array.isArray(v)) throw httpError(400, 'invalid', 'libraries must be null or a list of library ids.');
+  return [...new Set(v.map(String).filter(id => /^[\w-]{1,40}$/.test(id)))].slice(0, 500);
+}
+
+// Other modules can react to account changes (e.g. delete a user's reading progress)
+const hooks = { userDeleted: [] };
+
 /* ---------------- validation ---------------- */
 function cleanText(v, max) { return String(v == null ? '' : v).trim().slice(0, max); }
 
@@ -302,7 +315,9 @@ async function handle({ method, pathname, body, req }) {
   if (method === 'POST' && pathname === '/api/users') {
     const { user: admin } = requireAdmin(req);
     const role = ROLES.includes(body.role) ? body.role : 'user';
+    const libraries = 'libraries' in body ? parseLibraryAccess(body.libraries) : null;
     const user = await createUser(body, role);
+    if (libraries) { user.libraries = libraries; saveUsers(); }
     console.log(`[auth] ${admin.username} created user "${user.username}" (${role})`);
     return { status: 201, body: { user: publicUser(user) } };
   }
@@ -322,6 +337,7 @@ async function handle({ method, pathname, body, req }) {
       delete db.users[key];
       saveUsers();
       endSessionsFor(key);
+      for (const fn of hooks.userDeleted) { try { fn(key); } catch (e) { console.error('[auth] userDeleted hook:', e.message); } }
       console.log(`[auth] ${admin.username} deleted user "${target.username}"`);
       return { status: 200, body: { ok: true } };
     }
@@ -331,6 +347,7 @@ async function handle({ method, pathname, body, req }) {
     if ('displayName' in body) profile.displayName = body.displayName;
     if ('email' in body) profile.email = body.email;
     applyProfile(draft, profile);
+    if ('libraries' in body) draft.libraries = parseLibraryAccess(body.libraries);
     if ('role' in body) {
       if (!ROLES.includes(body.role)) throw httpError(400, 'invalid', 'Invalid role.');
       if (body.role !== target.role && (self || isLastAdmin)) throw httpError(400, self ? 'cannotChangeSelf' : 'lastAdmin');
@@ -365,4 +382,4 @@ async function handle({ method, pathname, body, req }) {
   return null;
 }
 
-module.exports = { handle, requireUser, requireAdmin, httpError, DATA_DIR, COLORS, setupRequired: () => userCount() === 0 };
+module.exports = { handle, requireUser, requireAdmin, httpError, hooks, DATA_DIR, COLORS, setupRequired: () => userCount() === 0 };

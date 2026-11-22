@@ -48,13 +48,13 @@ NODE_BIN="$(readlink -f "$NODE_BIN")"
 "$NODE_BIN" -e 'process.exit(Number(process.versions.node.split(".")[0]) >= 18 ? 0 : 1)' \
   || fail "Node.js 18 or newer is required (found $("$NODE_BIN" --version))."
 
-PROTECT_HOME=true
+# /home is readable (not writable) so libraries can live in e.g. /home/you/Comics
+PROTECT_HOME=read-only
 case "$NODE_BIN" in
   /root/*)
     fail "Node.js is installed under /root ($NODE_BIN), which the service user can't read. Install Node.js system-wide (e.g. your distro's package or NodeSource)." ;;
   /home/*)
-    warn "Node.js is installed under /home ($NODE_BIN), e.g. via nvm. The service will get read-only access to /home. A system-wide Node.js is recommended."
-    PROTECT_HOME=read-only ;;
+    warn "Node.js is installed under /home ($NODE_BIN), e.g. via nvm. A system-wide Node.js is recommended." ;;
 esac
 
 SRC_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
