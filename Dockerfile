@@ -2,6 +2,14 @@
 #   docker build -t thoth .
 #   docker run -d --name thoth --restart unless-stopped -p 3000:3000 -v thoth-app:/app thoth
 # Or use docker-compose.yml.
+
+# Stage 1: record which commit is being built (needs .git), then drop .git
+FROM node:22-alpine AS source
+WORKDIR /src
+COPY . .
+RUN node scripts/stamp-build.js && rm -rf .git
+
+# Stage 2: the runtime image (no .git inside)
 FROM node:22-alpine
 
 ENV NODE_ENV=production \
@@ -12,15 +20,15 @@ ENV NODE_ENV=production \
 WORKDIR /app
 # The app must own its folder so it can install updates; run as the image's unprivileged "node" user.
 RUN chown node:node /app
-COPY --chown=node:node . .
+COPY --from=source --chown=node:node /src/ /app/
 USER node
 
 EXPOSE 3000
-# /app is a volume so installed updates survive container re-creation (see README).
+# /app is a volume so accounts and installed updates survive container re-creation (see README).
 VOLUME ["/app"]
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
-  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/version').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
+  CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/session').then(r=>process.exit(r.ok?0:1),()=>process.exit(1))"
 
 # node runs as PID 1: it handles SIGTERM itself (graceful stop) and exits after a server-code
 # update, which the restart policy turns into a restart with the new code.

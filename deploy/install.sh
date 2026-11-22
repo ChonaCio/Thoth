@@ -74,9 +74,11 @@ mkdir -p "$INSTALL_DIR"
 if [[ "$(readlink -f "$SRC_DIR")" != "$(readlink -f "$INSTALL_DIR")" ]]; then
   info "Copying app to $INSTALL_DIR"
   tar -C "$SRC_DIR" \
-      --exclude=./.git --exclude=./.updates --exclude=./.update-state.json \
-      --exclude=./node_modules --exclude=./.env \
+      --exclude=./.git --exclude=./.updates --exclude=./.update-state.json --exclude=./data \
+      --exclude=./node_modules --exclude=./.env --exclude=./.build-info.json \
       -cf - . | tar -C "$INSTALL_DIR" -xf -
+  # Record which commit was installed (the copy has no .git), so the app can show its version
+  "$NODE_BIN" "$SRC_DIR/scripts/stamp-build.js" --out "$INSTALL_DIR/.build-info.json" || warn "Couldn't record the installed version"
 else
   info "Installing in place ($INSTALL_DIR)"
 fi
@@ -136,7 +138,7 @@ CHECK_HOST="${CFG_HOST:-127.0.0.1}"
 URL="http://$CHECK_HOST:$CFG_PORT"
 
 for _ in $(seq 1 15); do
-  if "$NODE_BIN" -e "fetch('$URL/api/version').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))" 2>/dev/null; then
+  if "$NODE_BIN" -e "fetch('$URL/api/session').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))" 2>/dev/null; then
     info "Thoth is running"
     if [[ -z "$CFG_HOST" || "$CFG_HOST" == "0.0.0.0" || "$CFG_HOST" == "::" ]]; then
       echo "  Open it from any device on the network:"
@@ -152,9 +154,10 @@ for _ in $(seq 1 15); do
       echo "  Listening on $URL"
       [[ "$CFG_HOST" == "127.0.0.1" ]] && echo "  Only reachable from this machine. Set HOST=0.0.0.0 in $ENV_FILE for network access."
     fi
-    if ! grep -qE '^THOTH_ADMIN_PASSWORD=.+' "$ENV_FILE"; then
-      warn "No update password set: anyone who can reach the server can install updates."
-      echo "  Set THOTH_ADMIN_PASSWORD in $ENV_FILE, then: sudo systemctl restart $SERVICE"
+    if [[ ! -s "$INSTALL_DIR/data/users.json" ]]; then
+      echo
+      echo "  Next: open the app and create the first user. It becomes the administrator."
+      echo "  Do this right away: until then, anyone who can reach the server can claim it."
     fi
     echo
     echo "  Status:   systemctl status $SERVICE"

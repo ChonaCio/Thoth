@@ -1,7 +1,7 @@
 # Run on a headless server:
-#   cp .env.example .env        # then set THOTH_ADMIN_PASSWORD
+#   cp .env.example .env        # optional: change the port or add a GITHUB_TOKEN
 #   docker compose up -d --build
-# Open http://<server-ip>:3000 from any device on the network.
+# Open http://<server-ip>:3000 from any device on the network and create the first user.
 # Starts again automatically when the server reboots (as long as Docker itself starts on boot).
 services:
   thoth:
@@ -12,11 +12,11 @@ services:
     ports:
       - "${THOTH_PORT:-3000}:3000"
     environment:
-      THOTH_ADMIN_PASSWORD: ${THOTH_ADMIN_PASSWORD:-}
       THOTH_UPDATE_REPO: ${THOTH_UPDATE_REPO:-ChonaCio/Thoth}
       GITHUB_TOKEN: ${GITHUB_TOKEN:-}
     volumes:
-      # Holds the app files, so updates installed from the Updates page persist
+      # Holds the app files and the data/ folder (users, sessions, settings),
+      # so accounts and updates installed from the Updates page persist
       - thoth-app:/app
 
 volumes:

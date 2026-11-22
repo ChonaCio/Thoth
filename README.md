@@ -12,10 +12,33 @@ npm start      # prints the addresses to open, e.g. http://192.168.1.20:3000
 The server listens on all network interfaces, so any device on the network can open it at
 `http://<server-ip>:3000`. Set `HOST=127.0.0.1` to allow only the machine itself.
 
-Demo account: `demo` / `demo123` (or click **Create account**).
+## First run and users
 
-> **Accounts are stored per browser.** Sign-in is handled in the browser (localStorage), so each
-> device has its own accounts and the demo account; they aren't shared between devices.
+There is no default account. The first time anyone opens the app, it shows **Create the first user**,
+and that account becomes the **administrator**. Do this right after installing: until then, anyone
+who can reach the server could claim it.
+
+Accounts are stored on the server, so the same account works from every device.
+
+- **Administrators** see **Users** in the sidebar (or account menu → *Manage users*), where they can
+  add users, edit names and emails, change roles, reset passwords, turn accounts on or off, and delete them.
+  They're also the only ones who can see the **Updates** page.
+- **Users** can edit their own profile, photo, appearance and language, and change their own password.
+- There must always be at least one active administrator, and nobody can delete, disable or demote themselves.
+- **Sign-up** is off by default. An administrator can turn on *Let people create their own accounts*
+  on the Users page; new accounts get the User role.
+- Disabling a user, deleting them or resetting their password signs them out everywhere right away.
+  Changing your own password signs you out on your other devices.
+
+**Locked out?** If no administrator can sign in, stop the server, delete `data/users.json` (this removes
+all accounts) and start it again to get the *Create the first user* screen back.
+
+### Where data is stored
+
+`data/` (or `THOTH_DATA_DIR`) holds `users.json` (password hashes use scrypt), `sessions.json` and
+`settings.json`. Back this folder up. It's never served to browsers, never committed to git, never
+copied into the container image, and never touched by updates. Sessions are HttpOnly cookies that last
+30 days. After 10 failed sign-ins from one address, sign-in is blocked for that address for 15 minutes.
 
 ## Run in a container (recommended for headless servers)
 
@@ -24,11 +47,11 @@ Needs Docker with the Compose plugin. Docker restarts the container on server bo
 
 ```bash
 git clone https://github.com/ChonaCio/Thoth.git && cd Thoth
-cp .env.example .env          # set THOTH_ADMIN_PASSWORD (and THOTH_PORT if 3000 is taken)
+cp .env.example .env          # optional: THOTH_PORT if 3000 is taken, GITHUB_TOKEN
 docker compose up -d --build
 ```
 
-Then open `http://<server-ip>:3000` from any device. The address the container prints in its log
+Then open `http://<server-ip>:3000` from any device and create the first user. The address the container prints in its log
 is its internal Docker IP; use the server's own IP instead (`hostname -I`).
 
 | Task | Command |
@@ -37,32 +60,33 @@ is its internal Docker IP; use the server's own IP instead (`hostname -I`).
 | Status / health | `docker compose ps` |
 | Restart (after editing `.env`) | `docker compose up -d` |
 | Stop | `docker compose down` |
-| Reset to the image's code (drops installed updates) | `docker compose down -v && docker compose up -d --build` |
+| Back up accounts | `docker compose cp thoth:/app/data ./thoth-data-backup` |
+| Reset everything (drops installed updates **and all accounts**) | `docker compose down -v && docker compose up -d --build` |
 
-The app files live in the `thoth-app` volume, so updates installed from the Updates page survive
-restarts and container re-creation. When an update changes the server code, the app exits and Docker's
+The app files and the `data/` folder live in the `thoth-app` volume, so accounts and updates installed
+from the Updates page survive restarts and container re-creation. When an update changes the server code, the app exits and Docker's
 restart policy starts it again with the new code. Because the volume keeps the files, rebuilding the
-image alone does not change the running code; use the reset command above for that.
+image alone does not change the running code; install updates from the Updates page instead.
 
 Without Compose:
 
 ```bash
 docker build -t thoth .
-docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
-  -e THOTH_ADMIN_PASSWORD='choose-a-password' -v thoth-app:/app thoth
+docker run -d --name thoth --restart unless-stopped -p 3000:3000 -v thoth-app:/app thoth
 ```
 
 ## Structure
 
 | File | Purpose |
 | --- | --- |
-| `index.html` | Markup for login view, app shell, account menu, profile dialog |
+| `index.html` | Markup for sign-in/setup view, app shell, account menu, profile and user dialogs |
 | `css/styles.css` | Theme tokens (light/dark), layout, components, responsive rules |
-| `js/store.js` | Users, session and preferences (localStorage) — **replace with API calls when you add a backend** |
+| `js/store.js` | API client for the server (session, profile, users, settings) |
 | `js/i18n.js` | Languages and translation strings (en, es, fr, de, pt) |
 | `js/icons.js` | Inline SVG icon set |
-| `js/app.js` | Routing (`#home`, `#settings`, …), sidebar, account menu, profile editing |
-| `server.js` | Zero-dependency static server + update API |
+| `js/app.js` | Routing (`#home`, `#users`, …), sidebar, account menu, profile, user management, updates |
+| `server.js` | Zero-dependency web server: static files, accounts API, update API |
+| `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, user management |
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |
@@ -82,17 +106,25 @@ For a push build, tag it `p1`, `p2`, … (`git tag p4 && git push origin p4`).
 
 **Installing** is done by the Node server (`updater.js`): it downloads the tag's source,
 copies the files over the app folder, and backs up every replaced file to `.updates/backup-<time>/`.
-Files that no longer exist in the new version are left in place. `.git`, `.claude`, `.env`,
+Files that no longer exist in the new version are left in place. `data/`, `.git`, `.claude`, `.env`,
 `node_modules` and `.updates` are never touched. If `server.js`, `updater.js` or `package.json`
 changed, restart the server to finish.
 
-- The installed version is stored in `.update-state.json` (fallback: `version.json`).
+- **How the app knows its version.** The version isn't written in a file; the app works out which commit it's
+  running, then names it after the repository's tags. *Release* is the highest `vX.Y.Z` release that commit
+  contains, and *Push* is the highest `pN` tag it contains. If the code is past a tag, it shows e.g. `p3 +2 commits`.
+  The commit comes from whichever changed most recently:
+  - a **git checkout**: `.git` is read directly (no git binary needed), so `git pull` updates the version;
+  - an **update installed from the Updates page** (recorded in `.update-state.json`);
+  - a **container build or `deploy/install.sh` install**: `scripts/stamp-build.js` records the commit in
+    `.build-info.json`, because those copies have no `.git` folder.
+
+  Lookups are cached for 10 minutes, and *Check for releases/pushes* always refreshes. The server also prints
+  its version when it starts. A copy downloaded as a ZIP (no `.git`, no build info) shows *Unknown* until
+  its first update.
 - Change the source repo with `thoth.updateRepo` in `package.json` or the `THOTH_UPDATE_REPO` env var.
 - Set `GITHUB_TOKEN` to raise GitHub's limit of 60 unauthenticated requests per hour, or to use a private repo.
-- **Set `THOTH_ADMIN_PASSWORD`.** The app is reachable from the network, so without it anyone who can
-  reach the server can install updates. With it, the Updates page asks for the password before installing.
-  Checking for updates stays open to everyone.
-- Cross-site requests to the update API are rejected.
+- Only administrators can check for or install updates. Cross-site requests are rejected.
 
 ## Run as a Linux service (start on boot)
 
@@ -108,10 +140,12 @@ The script:
 
 1. Creates a `thoth` system user (no login shell).
 2. Copies the app to `/opt/thoth`, owned by that user, so it can install updates.
-3. Creates the settings file `/etc/thoth/thoth.env` (port, listen address, update password, optional `GITHUB_TOKEN`).
+3. Creates the settings file `/etc/thoth/thoth.env` (port, listen address, optional `GITHUB_TOKEN`).
 4. Installs `/etc/systemd/system/thoth.service`, enables it on boot, starts it and checks that it responds.
-5. Prints the addresses other devices can use, and warns if a firewall (ufw/firewalld) needs the port opened
-   or no update password is set.
+5. Prints the addresses other devices can use, warns if a firewall (ufw/firewalld) needs the port opened,
+   and reminds you to create the first user.
+
+Accounts are stored in `/opt/thoth/data/`.
 
 Options: `--dir /opt/thoth`, `--user thoth`, `--port 3000`, `--host 0.0.0.0`, `--no-start`.
 Running it again updates the app and unit but keeps your settings, installed-version record and backups.
@@ -126,8 +160,7 @@ Running it again updates the app and unit but keeps your settings, installed-ver
 | Remove everything | `sudo bash deploy/uninstall.sh --purge` |
 
 **Network access.** The service listens on all interfaces (`HOST=0.0.0.0`), so devices connect to
-`http://<server-ip>:3000`. Open the port in the firewall if one is active, and set
-`THOTH_ADMIN_PASSWORD` in `/etc/thoth/thoth.env`. For HTTPS or port 80, put nginx in front
+`http://<server-ip>:3000`. Open the port in the firewall if one is active. For HTTPS or port 80, put nginx in front
 (see [deploy/nginx-thoth.conf](deploy/nginx-thoth.conf)) and set `HOST=127.0.0.1`.
 
 **Updates under systemd.** When an installed update changes the server code, the app restarts itself
@@ -138,7 +171,7 @@ Running it again updates the app and unit but keeps your settings, installed-ver
 
 ## Notes
 
-- Authentication is client-side only (salted SHA-256 in localStorage). It's fine for prototyping,
-  not for production — move auth to a server before real users sign in.
+- Over plain `http://`, passwords and session cookies travel unencrypted on the network. Use HTTPS
+  (nginx + certbot, see `deploy/nginx-thoth.conf`) if the network isn't trusted.
 - Add a sidebar page: add an entry to `NAV` in `js/app.js` and a `nav.<id>` string in each language.
 - Add a language: add it to `LANGUAGES` and a matching block in `TRANSLATIONS`.

@@ -1,4 +1,4 @@
-.git
+# .git is NOT ignored: the build's first stage reads it to record the version, and the final image doesn't contain it.
 .gitattributes
 .gitignore
 .claude
@@ -7,6 +7,8 @@
 !.env.example
 .updates
 .update-state.json
+.build-info.json
+data
 node_modules
 Dockerfile
 docker-compose.yml

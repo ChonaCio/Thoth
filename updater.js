@@ -15,7 +15,7 @@ const REPO = process.env.THOTH_UPDATE_REPO || (PKG.thoth && PKG.thoth.updateRepo
 const STATE_FILE = path.join(ROOT, '.update-state.json');
 const WORK_DIR = path.join(ROOT, '.updates');
 // Never overwritten by an update (local config, data, history)
-const PROTECTED = new Set(['.git', 'node_modules', '.updates', '.update-state.json', '.claude', '.env']);
+const PROTECTED = new Set(['.git', 'node_modules', '.updates', '.update-state.json', '.build-info.json', '.claude', '.env', 'data']);
 
 const RELEASE_RE = /^v(\d+)\.(\d+)\.(\d+)$/;
 const PUSH_RE = /^p(\d+)$/;
@@ -44,30 +44,178 @@ function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; }
 }
 
-function currentVersion() {
-  const shipped = readJson(path.join(ROOT, 'version.json'), {});
+/* ---------------- which commit is running? ----------------
+ * Up to three sources; the most recently changed one wins:
+ *   git    a .git folder: HEAD read directly (no git binary needed), dated by when the branch last moved
+ *   update .update-state.json, written when an update is installed from the Updates page
+ *   build  .build-info.json, written by scripts/stamp-build.js (Docker build, deploy/install.sh)
+ * So `git pull` after an update makes git win again, and installing an update in a checkout wins over git.
+ */
+const SHA_RE = /^[0-9a-f]{40}$/;
+const BUILD_FILE = path.join(ROOT, '.build-info.json');
+
+function readGitHead(root = ROOT) {
+  try {
+    let dir = path.join(root, '.git');
+    if (fs.statSync(dir).isFile()) { // worktree/submodule: ".git" file pointing elsewhere
+      const m = /gitdir:\s*(.+)/.exec(fs.readFileSync(dir, 'utf8'));
+      if (!m) return null;
+      dir = path.resolve(root, m[1].trim());
+    }
+    const head = fs.readFileSync(path.join(dir, 'HEAD'), 'utf8').trim();
+    if (SHA_RE.test(head)) { // detached HEAD
+      let at = null;
+      try { at = fs.statSync(path.join(dir, 'HEAD')).mtime.toISOString(); } catch { /* ignore */ }
+      return { commit: head, branch: null, at };
+    }
+    const ref = (/^ref:\s*(.+)$/.exec(head) || [])[1];
+    if (!ref) return null;
+    const branch = ref.replace(/^refs\/heads\//, '');
+    // When the branch last moved (commit, pull, checkout): ref file or packed-refs modification time
+    const movedAt = file => { try { return fs.statSync(file).mtime.toISOString(); } catch { return null; } };
+    // Linked worktrees keep shared refs in the "commondir"
+    let common = dir;
+    try { common = path.resolve(dir, fs.readFileSync(path.join(dir, 'commondir'), 'utf8').trim()); } catch { /* not a worktree */ }
+    for (const base of [dir, common]) {
+      try {
+        const sha = fs.readFileSync(path.join(base, ref), 'utf8').trim();
+        if (SHA_RE.test(sha)) return { commit: sha, branch, at: movedAt(path.join(base, ref)) };
+      } catch { /* not a loose ref */ }
+      try {
+        for (const line of fs.readFileSync(path.join(base, 'packed-refs'), 'utf8').split('\n')) {
+          const [sha, name] = line.trim().split(' ');
+          if (name === ref && SHA_RE.test(sha)) return { commit: sha, branch, at: movedAt(path.join(base, 'packed-refs')) };
+        }
+      } catch { /* no packed-refs */ }
+    }
+  } catch { /* no .git */ }
+  return null;
+}
+
+function runningCommit() {
+  const git = readGitHead();
   const state = readJson(STATE_FILE, {});
-  return {
-    release: state.release || shipped.release || null,
-    push: state.push != null ? state.push : (shipped.push != null ? shipped.push : null),
-    commit: state.commit || null,
-    channel: state.channel || null,
-    installedAt: state.installedAt || null,
-    repo: REPO
-  };
+  const build = readJson(BUILD_FILE, {});
+  const sources = [
+    git && { commit: git.commit, branch: git.branch, origin: 'git', at: git.at },
+    SHA_RE.test(state.commit || '') && { commit: state.commit, branch: null, origin: 'update', at: state.installedAt },
+    SHA_RE.test(build.commit || '') && { commit: build.commit, branch: build.branch || null, origin: 'build', at: build.builtAt }
+  ].filter(Boolean);
+  if (!sources.length) return { commit: null, branch: null, origin: null, at: null };
+  const time = s => Date.parse(s.at || 0) || 0;
+  return sources.reduce((best, s) => (time(s) > time(best) ? s : best));
 }
 
 /* ---------------- GitHub ---------------- */
-async function gh(apiPath) {
+async function gh(apiPath, { allow404 = false } = {}) {
   const headers = { 'User-Agent': 'thoth-updater', Accept: 'application/vnd.github+json' };
   if (process.env.GITHUB_TOKEN) headers.Authorization = `Bearer ${process.env.GITHUB_TOKEN}`;
   const res = await fetch(`https://api.github.com${apiPath}`, { headers });
   if (res.status === 403 || res.status === 429) {
     throw httpError(503, 'rateLimited', 'GitHub rate limit reached. Try again later or set GITHUB_TOKEN.');
   }
-  if (res.status === 404) throw httpError(502, 'repoNotFound', `Repository ${REPO} not found.`);
+  if (res.status === 404) {
+    if (allow404) return null;
+    throw httpError(502, 'repoNotFound', `Repository ${REPO} not found.`);
+  }
   if (!res.ok) throw httpError(502, 'githubError', `GitHub responded ${res.status}.`);
   return res.json();
+}
+
+// Tags + releases, fetched together and reused for 60 s (a check and a version lookup share one fetch)
+let repoMemo = null;
+async function repoInfo() {
+  if (repoMemo && Date.now() - repoMemo.at < 60 * 1000) return repoMemo.data;
+  const [tags, releases] = await Promise.all([ghAll(`/repos/${REPO}/tags`), ghAll(`/repos/${REPO}/releases`)]);
+  repoMemo = { at: Date.now(), data: { tags, releases } };
+  return repoMemo.data;
+}
+
+/* ---------------- naming the running commit ----------------
+ * The running release = the highest vX.Y.Z release whose commit is the running commit or one of its
+ * ancestors; same for pN tags. "ahead" = how many commits the running code is past that tag.
+ */
+const CACHE_FILE = path.join(WORK_DIR, 'version-cache.json');
+const CACHE_TTL = 10 * 60 * 1000;
+const MAX_COMPARES = 25;
+
+// Is `tagSha` the running commit or an ancestor of it? Returns commits ahead, or -1 if not.
+async function aheadOf(tagSha, headSha) {
+  if (tagSha === headSha) return 0;
+  const cmp = await gh(`/repos/${REPO}/compare/${tagSha}...${headSha}`, { allow404: true });
+  if (!cmp) throw httpError(404, 'commitNotPublished', 'The running commit is not on GitHub.');
+  if (cmp.status === 'identical') return 0;
+  if (cmp.status === 'ahead') return cmp.ahead_by;
+  return -1; // "behind" (tag is newer) or "diverged" (other branch)
+}
+
+async function nearestTag(candidates, headSha) {
+  // candidates: [{ tag, commit }] sorted newest first
+  const exact = candidates.find(c => c.commit === headSha);
+  let compares = 0;
+  for (const c of candidates) {
+    if (exact && c === exact) return { tag: c.tag, ahead: 0 };
+    if (!c.commit) continue;
+    if (++compares > MAX_COMPARES) break;
+    const ahead = await aheadOf(c.commit, headSha);
+    if (ahead >= 0) return { tag: c.tag, ahead };
+  }
+  return exact ? { tag: exact.tag, ahead: 0 } : null;
+}
+
+async function resolveVersion({ force = false } = {}) {
+  const run = runningCommit();
+  const state = readJson(STATE_FILE, {});
+  const base = {
+    repo: REPO,
+    commit: run.commit,
+    branch: run.branch || null,
+    origin: run.origin,            // 'git' | 'update' | 'build' | null
+    installedAt: run.origin === 'update' ? state.installedAt || null : null,
+    release: null, releaseAhead: null,
+    push: null, pushAhead: null,
+    published: null,               // false = running commit isn't on GitHub
+    resolved: false
+  };
+  // Fallback when the commit is unknown or can't be looked up: what the last install recorded
+  const fallback = extra => Object.assign(base, {
+    release: run.origin === 'update' ? state.release || null : null,
+    push: run.origin === 'update' && state.push != null ? state.push : null
+  }, extra);
+
+  if (!run.commit) return fallback({});
+
+  const cache = readJson(CACHE_FILE, {});
+  const hit = cache[run.commit];
+  if (hit && !force && Date.now() - hit.resolvedAt < CACHE_TTL) return Object.assign(base, hit.version, { resolved: true });
+
+  try {
+    const { tags, releases } = await repoInfo();
+    const tagSha = new Map(tags.map(t => [t.name, t.commit && t.commit.sha]));
+    const releaseCands = releases
+      .filter(r => !r.draft && parseRelease(r.tag_name) && r.tag_name.trim() === String(r.name || '').trim())
+      .map(r => ({ tag: r.tag_name, commit: tagSha.get(r.tag_name) }))
+      .sort((a, b) => compareRelease(b.tag, a.tag));
+    const pushCands = tags
+      .filter(t => parsePush(t.name) != null)
+      .map(t => ({ tag: t.name, commit: t.commit && t.commit.sha }))
+      .sort((a, b) => parsePush(b.tag) - parsePush(a.tag));
+
+    const rel = await nearestTag(releaseCands, run.commit);
+    const push = await nearestTag(pushCands, run.commit);
+    const version = {
+      release: rel ? rel.tag : null, releaseAhead: rel ? rel.ahead : null,
+      push: push ? parsePush(push.tag) : null, pushAhead: push ? push.ahead : null,
+      published: true
+    };
+    cache[run.commit] = { resolvedAt: Date.now(), version };
+    try { fs.mkdirSync(WORK_DIR, { recursive: true }); fs.writeFileSync(CACHE_FILE, JSON.stringify(cache, null, 2)); } catch { /* read-only is fine */ }
+    return Object.assign(base, version, { resolved: true });
+  } catch (e) {
+    if (e.code === 'commitNotPublished') return fallback({ published: false });
+    if (hit) return Object.assign(base, hit.version, { resolved: true, stale: true });
+    return fallback({ error: e.code || 'githubError' });
+  }
 }
 
 async function ghAll(apiPath) {
@@ -82,7 +230,7 @@ async function ghAll(apiPath) {
 }
 
 async function listReleases() {
-  const releases = await ghAll(`/repos/${REPO}/releases`);
+  const { releases } = await repoInfo();
   return releases
     .filter(r => !r.draft && parseRelease(r.tag_name) && parseRelease(r.name) && r.tag_name.trim() === r.name.trim())
     .map(r => ({
@@ -97,10 +245,7 @@ async function listReleases() {
 }
 
 async function listPushes() {
-  const [tags, releases] = await Promise.all([
-    ghAll(`/repos/${REPO}/tags`),
-    ghAll(`/repos/${REPO}/releases`).catch(() => [])
-  ]);
+  const { tags, releases } = await repoInfo();
   const released = new Set(releases.filter(r => !r.draft).map(r => r.tag_name));
   return tags
     .filter(t => parsePush(t.name) != null)
@@ -116,7 +261,9 @@ async function listPushes() {
 }
 
 async function check(channel) {
-  const current = currentVersion();
+  if (channel !== 'release' && channel !== 'push') throw httpError(400, 'badChannel', 'Unknown channel.');
+  repoMemo = null; // always look at the repository fresh when someone clicks "Check"
+  const current = await resolveVersion({ force: true });
   let items, newer;
   if (channel === 'release') {
     items = await listReleases();
@@ -255,25 +402,21 @@ async function install(channel, tag) {
       fs.copyFileSync(src, dst);
     }
 
-    // Record what is installed. Fill in the other channel's version if a tag shares this commit.
-    const prev = currentVersion();
-    const next = { release: prev.release, push: prev.push, channel, tag, installedAt: new Date().toISOString() };
-    if (channel === 'release') {
-      next.release = tag;
-      const pushes = await listPushes().catch(() => []);
-      const commit = (await gh(`/repos/${REPO}/commits/${encodeURIComponent(tag)}`).catch(() => ({}))).sha;
-      next.commit = commit || null;
-      const same = pushes.find(p => p.commit && p.commit === commit);
-      if (same) next.push = same.number;
-    } else {
-      next.push = item.number;
-      next.commit = item.commit || null;
-      const rel = (await listReleases().catch(() => [])).find(r => r.tag === tag);
-      if (rel) next.release = rel.tag;
-    }
+    // Record the installed commit; the release/push names are worked out from it (see resolveVersion)
+    const { tags } = await repoInfo();
+    const tagged = tags.find(t => t.name === tag);
+    let commit = tagged && tagged.commit && tagged.commit.sha;
+    if (!SHA_RE.test(commit || '')) commit = ((await gh(`/repos/${REPO}/commits/${encodeURIComponent(tag)}`).catch(() => null)) || {}).sha || null;
+    const next = {
+      channel, tag, commit,
+      // Hints used only if GitHub can't be reached later
+      release: channel === 'release' ? tag : null,
+      push: channel === 'push' ? parsePush(tag) : null,
+      installedAt: new Date().toISOString()
+    };
     fs.writeFileSync(STATE_FILE, JSON.stringify(next, null, 2));
 
-    return { installed: tag, channel, files: incoming.length, backup: path.relative(ROOT, backup), restartRequired: serverChanged, current: currentVersion() };
+    return { installed: tag, channel, files: incoming.length, backup: path.relative(ROOT, backup), restartRequired: serverChanged, current: await resolveVersion() };
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
     installing = false;
@@ -287,4 +430,4 @@ function httpError(status, code, message) {
   return e;
 }
 
-module.exports = { currentVersion, check, install, extractTarGz, compareRelease, parsePush, REPO };
+module.exports = { resolveVersion, runningCommit, readGitHead, check, install, extractTarGz, compareRelease, parsePush, REPO };

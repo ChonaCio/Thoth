@@ -17,20 +17,22 @@
         <span class="brand__name">Thoth</span>
       </div>
       <h1 class="login-card__title" id="auth-title" data-i18n="login.title">Sign in</h1>
-      <p class="login-card__subtitle" data-i18n="login.subtitle">to continue to Thoth</p>
+      <p class="login-card__subtitle" id="auth-subtitle" data-i18n="login.subtitle">to continue to Thoth</p>
+      <p class="login-card__hint login-card__hint--top" id="setup-hint" data-i18n="login.setupHint" hidden></p>
 
       <form id="auth-form" class="form" novalidate>
-        <div class="field register-only" hidden>
+        <div class="field new-account-only" hidden>
           <label for="reg-name" data-i18n="field.displayName">Full name</label>
-          <input id="reg-name" name="displayName" autocomplete="name" />
+          <input id="reg-name" name="displayName" autocomplete="name" maxlength="80" />
         </div>
-        <div class="field register-only" hidden>
+        <div class="field new-account-only" hidden>
           <label for="reg-email" data-i18n="field.email">Email</label>
           <input id="reg-email" name="email" type="email" autocomplete="email" />
         </div>
         <div class="field">
           <label for="auth-username" data-i18n="field.username">Username</label>
-          <input id="auth-username" name="username" autocomplete="username" required />
+          <input id="auth-username" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required />
+          <small class="field__help new-account-only" data-i18n="field.usernameHelp" hidden></small>
         </div>
         <div class="field">
           <label for="auth-password" data-i18n="field.password">Password</label>
@@ -38,17 +40,21 @@
             <input id="auth-password" name="password" type="password" autocomplete="current-password" required />
             <button type="button" class="icon-btn icon-btn--sm" id="toggle-password" data-icon="visibility" aria-label="Show password"></button>
           </div>
+          <small class="field__help new-account-only" data-i18n="field.passwordHelp" hidden></small>
+        </div>
+        <div class="field new-account-only" hidden>
+          <label for="auth-password2" data-i18n="field.confirmPassword">Confirm password</label>
+          <input id="auth-password2" type="password" autocomplete="new-password" />
         </div>
 
         <p class="form__error" id="auth-error" role="alert" hidden></p>
 
         <div class="form__actions">
-          <button type="button" class="btn btn--text" id="auth-switch" data-i18n="login.createAccount">Create account</button>
+          <button type="button" class="btn btn--text" id="auth-switch" data-i18n="login.createAccount" hidden>Create account</button>
+          <span class="form__spacer"></span>
           <button type="submit" class="btn btn--primary" id="auth-submit" data-i18n="login.signIn">Sign in</button>
         </div>
       </form>
-
-      <p class="login-card__hint" data-i18n="login.demoHint">Demo account: demo / demo123</p>
     </div>
 
     <div class="login-footer">
@@ -91,7 +97,7 @@
                   <button class="avatar-wrap__edit" id="menu-avatar-edit" data-icon="camera" data-i18n-title="menu.editProfile" title="Edit profile"></button>
                 </div>
                 <p class="account-menu__greeting" id="menu-greeting"></p>
-                <p class="account-menu__username" id="menu-username"></p>
+                <p class="account-menu__username"><span id="menu-username"></span> <span class="badge" id="menu-role"></span></p>
                 <button class="btn btn--outline btn--pill" id="menu-edit-profile" data-i18n="menu.editProfile">Edit profile</button>
               </div>
               <div class="account-menu__list">
@@ -107,7 +113,11 @@
                   <span class="menu-item__value" id="menu-lang-value"></span>
                   <span data-icon="chevron_right"></span>
                 </button>
-                <button class="menu-item" id="menu-updates" role="menuitem">
+                <button class="menu-item admin-only" id="menu-users" role="menuitem">
+                  <span data-icon="group"></span>
+                  <span class="menu-item__label" data-i18n="menu.manageUsers">Manage users</span>
+                </button>
+                <button class="menu-item admin-only" id="menu-updates" role="menuitem">
                   <span data-icon="update"></span>
                   <span class="menu-item__label" data-i18n="menu.updates">Check for updates</span>
                 </button>
@@ -187,14 +197,79 @@
       </div>
       <div class="field">
         <label for="profile-bio" data-i18n="field.bio">About you</label>
-        <textarea id="profile-bio" name="bio" rows="3"></textarea>
+        <textarea id="profile-bio" name="bio" rows="3" maxlength="500"></textarea>
       </div>
+
+      <details class="collapsible" id="password-section">
+        <summary data-i18n="profile.passwordSection">Change password</summary>
+        <div class="collapsible__body">
+          <div class="field">
+            <label for="pw-current" data-i18n="field.currentPassword">Current password</label>
+            <input id="pw-current" type="password" autocomplete="current-password" />
+          </div>
+          <div class="field">
+            <label for="pw-new" data-i18n="field.newPassword">New password</label>
+            <input id="pw-new" type="password" autocomplete="new-password" />
+            <small class="field__help" data-i18n="field.passwordHelp"></small>
+          </div>
+          <div class="field">
+            <label for="pw-confirm" data-i18n="field.confirmPassword">Confirm password</label>
+            <input id="pw-confirm" type="password" autocomplete="new-password" />
+          </div>
+          <p class="field__help" data-i18n="profile.passwordNote"></p>
+        </div>
+      </details>
 
       <p class="form__error" id="profile-error" role="alert" hidden></p>
 
       <div class="form__actions">
         <button type="button" class="btn btn--text" id="profile-cancel" data-i18n="common.cancel">Cancel</button>
-        <button type="submit" class="btn btn--primary" data-i18n="common.save">Save</button>
+        <button type="submit" class="btn btn--primary" id="profile-save" data-i18n="common.save">Save</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ ADD / EDIT USER DIALOG (admins) ============ -->
+  <dialog id="user-dialog" class="dialog">
+    <form method="dialog" id="user-form" class="form" novalidate>
+      <h2 class="dialog__title" id="user-dialog-title" data-i18n="users.newTitle">Add user</h2>
+
+      <div class="field">
+        <label for="user-name" data-i18n="field.displayName">Full name</label>
+        <input id="user-name" maxlength="80" required />
+      </div>
+      <div class="field">
+        <label for="user-username" data-i18n="field.username">Username</label>
+        <input id="user-username" autocapitalize="none" spellcheck="false" autocomplete="off" required />
+        <small class="field__help" id="user-username-help" data-i18n="field.usernameHelp"></small>
+      </div>
+      <div class="field">
+        <label for="user-email" data-i18n="field.email">Email</label>
+        <input id="user-email" type="email" autocomplete="off" />
+      </div>
+      <div class="field">
+        <label for="user-role" data-i18n="field.role">Role</label>
+        <select id="user-role" class="select">
+          <option value="user" data-i18n="role.user">User</option>
+          <option value="admin" data-i18n="role.admin">Administrator</option>
+        </select>
+        <small class="field__help" data-i18n="users.roleHelp"></small>
+      </div>
+      <div class="field">
+        <label for="user-password" id="user-password-label" data-i18n="field.password">Password</label>
+        <input id="user-password" type="password" autocomplete="new-password" />
+        <small class="field__help" id="user-password-help" data-i18n="field.passwordHelp"></small>
+      </div>
+      <label class="checkbox" id="user-active-row">
+        <input type="checkbox" id="user-active" />
+        <span data-i18n="field.active">Account active</span>
+      </label>
+
+      <p class="form__error" id="user-error" role="alert" hidden></p>
+
+      <div class="form__actions">
+        <button type="button" class="btn btn--text" id="user-cancel" data-i18n="common.cancel">Cancel</button>
+        <button type="submit" class="btn btn--primary" id="user-save" data-i18n="common.save">Save</button>
       </div>
     </form>
   </dialog>

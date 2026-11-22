@@ -11,7 +11,8 @@
     { id: 'messages', icon: 'mail', key: 'nav.messages' },
     { id: 'calendar', icon: 'calendar', key: 'nav.calendar' },
     { divider: true },
-    { id: 'updates', icon: 'update', key: 'nav.updates' },
+    { id: 'users', icon: 'group', key: 'nav.users', adminOnly: true },
+    { id: 'updates', icon: 'update', key: 'nav.updates', adminOnly: true },
     { id: 'settings', icon: 'settings', key: 'nav.settings' }
   ];
   var THEMES = [
@@ -19,9 +20,14 @@
     { id: 'light', icon: 'light_mode', key: 'theme.light' },
     { id: 'dark', icon: 'dark_mode', key: 'theme.dark' }
   ];
+  var MIN_PASSWORD = 8;
 
   var state = {
-    user: null, lang: 'en', theme: 'system', registerMode: false, pendingAvatar: undefined, pendingColor: null,
+    user: null, lang: 'en', theme: 'system',
+    authMode: 'login', signupAllowed: false,
+    pendingAvatar: undefined, pendingColor: null,
+    editingUser: null,
+    users: { list: null, error: null, query: '', settings: null },
     updates: { current: null, currentError: null, release: {}, push: {}, installing: null, done: null, installError: null }
   };
 
@@ -32,15 +38,24 @@
     if (vars) Object.keys(vars).forEach(function (k) { str = str.split('{' + k + '}').join(vars[k]); });
     return str;
   }
+  function has(key) { return TRANSLATIONS.en[key] != null; }
   function applyTranslations() {
     document.documentElement.lang = state.lang;
-    $$('[data-i18n]').forEach(function (el) { el.textContent = t(el.dataset.i18n); });
+    $$('[data-i18n]').forEach(function (el) { el.textContent = t(el.dataset.i18n, el.dataset.i18nVars ? JSON.parse(el.dataset.i18nVars) : null); });
     $$('[data-i18n-placeholder]').forEach(function (el) { el.placeholder = t(el.dataset.i18nPlaceholder); });
     $$('[data-i18n-title]').forEach(function (el) { el.title = t(el.dataset.i18nTitle); el.setAttribute('aria-label', el.title); });
   }
   function detectLang() {
     var nav = (navigator.language || 'en').slice(0, 2).toLowerCase();
     return LANGUAGES[nav] ? nav : 'en';
+  }
+  // Turns an API error ({ code, message }) into a translated sentence
+  function errMsg(err) {
+    if (!err) return '';
+    var code = err.code || 'internal';
+    if (has('err.' + code)) return t('err.' + code, { min: MIN_PASSWORD });
+    if (has('upd.err.' + code)) return t('upd.err.' + code);
+    return t('upd.err.generic', { message: err.message || code });
   }
 
   /* ---------------- theme ---------------- */
@@ -52,9 +67,12 @@
   function setPref(kind, value) {
     state[kind] = value;
     var patch = {}; patch[kind] = value;
-    if (state.user) state.user = Store.updateUser(state.user.username, patch);
     Store.savePrefs(patch);
     if (kind === 'theme') applyTheme(); else applyTranslations();
+    if (state.user) {
+      state.user[kind] = value;
+      Store.updateMe(patch).then(function (r) { state.user = r.user; }).catch(function (e) { toast(errMsg(e)); });
+    }
     renderAll();
   }
 
@@ -74,9 +92,12 @@
     }
   }
 
+  function isAdmin() { return Boolean(state.user && state.user.role === 'admin'); }
+
   /* ---------------- views ---------------- */
-  function showLogin() {
+  function showLogin(mode) {
     state.user = null;
+    state.users = { list: null, error: null, query: '', settings: null };
     var prefs = Store.prefs();
     state.theme = prefs.theme || 'system';
     state.lang = prefs.lang || detectLang();
@@ -84,16 +105,18 @@
     document.title = 'Thoth';
     $('#app-view').hidden = true;
     $('#login-view').hidden = false;
-    setRegisterMode(false);
+    $('#auth-form').reset();
+    setAuthMode(mode || 'login');
     renderLoginLang();
     applyTranslations();
-    $('#auth-username').focus();
+    (mode === 'setup' || mode === 'signup' ? $('#reg-name') : $('#auth-username')).focus();
   }
 
   function showApp(user) {
     state.user = user;
     state.theme = user.theme || 'system';
     state.lang = user.lang || state.lang;
+    Store.savePrefs({ theme: state.theme, lang: state.lang });
     applyTheme();
     $('#login-view').hidden = true;
     $('#app-view').hidden = false;
@@ -101,7 +124,7 @@
     if (!location.hash) history.replaceState(null, '', '#home');
     applyTranslations();
     renderAll();
-    if (currentRoute() === 'updates') loadCurrentVersion();
+    onRouteEnter();
   }
 
   function renderAll() {
@@ -113,64 +136,91 @@
     applyTranslations();
   }
 
-  /* ---------------- login ---------------- */
-  function setRegisterMode(on) {
-    state.registerMode = on;
-    $$('.register-only').forEach(function (el) { el.hidden = !on; });
-    var title = $('#auth-title'), submit = $('#auth-submit'), sw = $('#auth-switch');
-    title.dataset.i18n = on ? 'login.registerTitle' : 'login.title';
-    submit.dataset.i18n = on ? 'login.register' : 'login.signIn';
-    sw.dataset.i18n = on ? 'login.haveAccount' : 'login.createAccount';
-    $('#auth-password').autocomplete = on ? 'new-password' : 'current-password';
+  /* ---------------- login / first-user setup / sign-up ---------------- */
+  function setAuthMode(mode) {
+    state.authMode = mode;
+    var newAccount = mode !== 'login';
+    $$('.new-account-only').forEach(function (el) { el.hidden = !newAccount; });
+    $('#auth-title').dataset.i18n = { login: 'login.title', setup: 'login.setupTitle', signup: 'login.registerTitle' }[mode];
+    $('#auth-subtitle').dataset.i18n = mode === 'setup' ? 'login.setupSubtitle' : 'login.subtitle';
+    $('#auth-submit').dataset.i18n = { login: 'login.signIn', setup: 'login.setupSubmit', signup: 'login.register' }[mode];
+    $('#setup-hint').hidden = mode !== 'setup';
+    var sw = $('#auth-switch');
+    sw.hidden = mode === 'setup' || (mode === 'login' && !state.signupAllowed);
+    sw.dataset.i18n = mode === 'signup' ? 'login.haveAccount' : 'login.createAccount';
+    $('#auth-password').autocomplete = newAccount ? 'new-password' : 'current-password';
     $('#auth-error').hidden = true;
     applyTranslations();
   }
 
   function renderLoginLang() {
-    var sel = $('#login-lang');
-    sel.innerHTML = Object.keys(LANGUAGES).map(function (code) {
+    $('#login-lang').innerHTML = Object.keys(LANGUAGES).map(function (code) {
       return '<option value="' + code + '"' + (code === state.lang ? ' selected' : '') + '>' + LANGUAGES[code] + '</option>';
     }).join('');
   }
 
+  function showAuthError(msg) {
+    $('#auth-error').textContent = msg;
+    $('#auth-error').hidden = false;
+  }
+
   async function onAuthSubmit(e) {
     e.preventDefault();
-    var err = $('#auth-error');
-    err.hidden = true;
+    $('#auth-error').hidden = true;
+    var submit = $('#auth-submit');
     var username = $('#auth-username').value.trim();
     var password = $('#auth-password').value;
+    if (!username || !password) return showAuthError(t('login.required'));
+
+    var mode = state.authMode;
+    if (mode !== 'login') {
+      if (password.length < MIN_PASSWORD) return showAuthError(errMsg({ code: 'passwordTooShort' }));
+      if (password !== $('#auth-password2').value) return showAuthError(errMsg({ code: 'passwordMismatch' }));
+    }
+
+    submit.disabled = true;
     try {
-      if (!username || !password) throw new Error('login.required');
-      var user;
-      if (state.registerMode) {
-        if (password.length < 6) throw new Error('login.shortPassword');
-        user = await Store.auth.register({
-          username: username,
-          password: password,
-          displayName: $('#reg-name').value.trim(),
-          email: $('#reg-email').value.trim(),
-          theme: state.theme,
-          lang: state.lang
-        });
+      var res;
+      if (mode === 'login') {
+        res = await Store.login(username, password);
       } else {
-        user = await Store.auth.login(username, password);
+        var data = {
+          username: username, password: password,
+          displayName: $('#reg-name').value.trim(), email: $('#reg-email').value.trim(),
+          theme: state.theme, lang: state.lang
+        };
+        res = mode === 'setup' ? await Store.setup(data) : await Store.signup(data);
       }
-      showApp(user);
-    } catch (ex) {
-      err.textContent = t(ex.message);
-      err.hidden = false;
+      showApp(res.user);
+      if (mode === 'setup') toast(t('login.setupDone'));
+    } catch (err) {
+      if (err.code === 'setupDone') { setAuthMode('login'); }
+      if (err.code === 'setupRequired') { setAuthMode('setup'); }
+      if (err.code === 'signupDisabled') { state.signupAllowed = false; setAuthMode('login'); }
+      showAuthError(errMsg(err));
+    } finally {
+      submit.disabled = false;
     }
   }
 
-  /* ---------------- sidebar ---------------- */
+  /* ---------------- routing & sidebar ---------------- */
+  function visibleNav() {
+    return NAV.filter(function (n) { return !n.adminOnly || isAdmin(); });
+  }
   function currentRoute() {
     var id = (location.hash || '#home').slice(1);
-    return NAV.some(function (n) { return n.id === id; }) ? id : 'home';
+    return visibleNav().some(function (n) { return n.id === id; }) ? id : 'home';
+  }
+  function onRouteEnter() {
+    var route = currentRoute();
+    if (route === 'updates') loadCurrentVersion();
+    if (route === 'users') loadUsers();
   }
 
   function renderSidebar() {
     var route = currentRoute();
-    $('#sidebar-list').innerHTML = NAV.map(function (n) {
+    var items = visibleNav();
+    $('#sidebar-list').innerHTML = items.map(function (n) {
       if (n.divider) return '<li><hr class="divider" /></li>';
       return '<li><a href="#' + n.id + '" class="nav-item' + (n.id === route ? ' is-active' : '') + '"' +
         (n.id === route ? ' aria-current="page"' : '') + '>' +
@@ -205,6 +255,9 @@
     $('#menu-email').hidden = !u.email;
     $('#menu-greeting').textContent = t('menu.greeting', { name: u.displayName.split(' ')[0] });
     $('#menu-username').textContent = '@' + u.username;
+    $('#menu-role').dataset.i18n = 'role.' + u.role;
+    $('#menu-role').className = 'badge' + (u.role === 'admin' ? ' badge--primary' : '');
+    $$('.admin-only').forEach(function (el) { el.hidden = !isAdmin(); });
   }
 
   function renderMenuOptions() {
@@ -239,6 +292,21 @@
     if (open) showPanel('main');
   }
 
+  function go(hash) {
+    toggleAccountMenu(false);
+    if (location.hash === hash) { renderPage(); onRouteEnter(); } else location.hash = hash;
+  }
+
+  async function signOut(silentMessage) {
+    toggleAccountMenu(false);
+    try { await Store.logout(); } catch (e) { /* already signed out */ }
+    history.replaceState(null, '', location.pathname);
+    var s = await Store.session().catch(function () { return {}; });
+    state.signupAllowed = Boolean(s.signupAllowed);
+    showLogin('login');
+    toast(silentMessage || t('toast.signedOut'));
+  }
+
   /* ---------------- profile dialog ---------------- */
   function openProfile() {
     toggleAccountMenu(false);
@@ -249,6 +317,8 @@
     $('#profile-username').value = u.username;
     $('#profile-email').value = u.email || '';
     $('#profile-bio').value = u.bio || '';
+    $('#pw-current').value = $('#pw-new').value = $('#pw-confirm').value = '';
+    $('#password-section').open = false;
     $('#profile-error').hidden = true;
     renderSwatches();
     paintAvatar($('#profile-avatar'), u);
@@ -268,16 +338,17 @@
     paintAvatar($('#profile-avatar'), preview, state.pendingAvatar, state.pendingColor);
   }
 
+  function profileError(msg) {
+    $('#profile-error').textContent = msg;
+    $('#profile-error').hidden = false;
+  }
+
   function onPhotoChosen(e) {
     var file = e.target.files[0];
     e.target.value = '';
     if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      $('#profile-error').textContent = t('profile.imageTooLarge');
-      $('#profile-error').hidden = false;
-      return;
-    }
-    // Downscale to 256px so it fits comfortably in localStorage
+    if (file.size > 2 * 1024 * 1024) return profileError(t('profile.imageTooLarge'));
+    // Crop to a square and downscale to 256px before uploading
     var img = new Image();
     var reader = new FileReader();
     reader.onload = function () { img.src = reader.result; };
@@ -293,28 +364,51 @@
     reader.readAsDataURL(file);
   }
 
-  function onProfileSave(e) {
+  async function onProfileSave(e) {
     e.preventDefault();
+    $('#profile-error').hidden = true;
     var name = $('#profile-name').value.trim();
-    if (!name) {
-      $('#profile-error').textContent = t('login.required');
-      $('#profile-error').hidden = false;
-      return;
+    if (!name) return profileError(errMsg({ code: 'displayNameRequired' }));
+
+    var current = $('#pw-current').value, next = $('#pw-new').value, confirm = $('#pw-confirm').value;
+    var changingPassword = Boolean(current || next || confirm);
+    if (changingPassword) {
+      if (!current) return profileError(errMsg({ code: 'wrongPassword' }));
+      if (next.length < MIN_PASSWORD) return profileError(errMsg({ code: 'passwordTooShort' }));
+      if (next !== confirm) return profileError(errMsg({ code: 'passwordMismatch' }));
     }
+
     var patch = { displayName: name, email: $('#profile-email').value.trim(), bio: $('#profile-bio').value.trim() };
     if (state.pendingAvatar !== undefined) patch.avatar = state.pendingAvatar;
     if (state.pendingColor) patch.color = state.pendingColor;
-    state.user = Store.updateUser(state.user.username, patch);
-    $('#profile-dialog').close();
-    renderAll();
-    toast(t('profile.saved'));
+
+    var btn = $('#profile-save');
+    btn.disabled = true;
+    try {
+      if (changingPassword) await Store.changePassword(current, next);
+      var res = await Store.updateMe(patch);
+      state.user = res.user;
+      $('#profile-dialog').close();
+      renderAll();
+      toast(changingPassword ? t('profile.passwordChanged') : t('profile.saved'));
+    } catch (err) {
+      if (err.code === 'wrongPassword') $('#password-section').open = true;
+      profileError(errMsg(err));
+    } finally {
+      btn.disabled = false;
+    }
   }
 
-  /* ---------------- pages ---------------- */
+  /* ---------------- helpers ---------------- */
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; });
   }
+  function fmtDate(iso) {
+    if (!iso) return '';
+    return new Date(iso).toLocaleString(state.lang, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  }
 
+  /* ---------------- pages ---------------- */
   function renderPage() {
     var route = currentRoute();
     var nav = NAV.filter(function (n) { return n.id === route; })[0];
@@ -340,6 +434,7 @@
           '<section class="card">' +
             '<h2 class="card__title">' + esc(t('page.preferences')) + '</h2>' +
             '<dl class="pref-list">' +
+              '<dt>' + esc(t('field.role')) + '</dt><dd>' + esc(t('role.' + u.role)) + '</dd>' +
               '<dt>' + esc(t('menu.appearance')) + '</dt><dd>' + esc(t('theme.' + state.theme)) + '</dd>' +
               '<dt>' + esc(t('menu.language')) + '</dt><dd>' + esc(LANGUAGES[state.lang]) + '</dd>' +
             '</dl>' +
@@ -359,6 +454,8 @@
         '</section></div>';
     } else if (route === 'updates') {
       html = renderUpdatesPage();
+    } else if (route === 'users') {
+      html = renderUsersPage();
     } else {
       html =
         '<h1 class="page-title">' + esc(t(nav.key)) + '</h1>' +
@@ -367,40 +464,205 @@
     $('#content').innerHTML = html;
     var ha = $('#home-avatar');
     if (ha) paintAvatar(ha, u);
+    if (route === 'users') renderUsersTable();
     renderIcons($('#content'));
     document.title = t(nav.key) + ' – Thoth';
   }
 
-  /* ---------------- updates ---------------- */
-  function apiError(err) {
-    if (!err) return '';
-    if (err.code === 'offline') return t('upd.err.offline');
-    var key = 'upd.err.' + err.code;
-    var msg = t(key);
-    return msg !== key ? msg : t('upd.err.generic', { message: err.message || err.code });
-  }
-
-  async function api(method, url, body, extraHeaders) {
-    var res;
+  /* ---------------- user management ---------------- */
+  async function loadUsers() {
     try {
-      res = await fetch(url, {
-        method: method,
-        headers: Object.assign(body ? { 'Content-Type': 'application/json' } : {}, extraHeaders || {}),
-        body: body ? JSON.stringify(body) : undefined
-      });
+      var results = await Promise.all([Store.users.list(), Store.settings.get()]);
+      state.users.list = results[0].users;
+      state.users.settings = results[1];
+      state.users.error = null;
     } catch (e) {
-      throw { code: 'offline' };
+      state.users.error = e;
     }
-    var data = null;
-    try { data = await res.json(); } catch (e) { /* non-JSON */ }
-    if (!res.ok || !data) throw { code: (data && data.error) || (res.status === 404 ? 'offline' : 'internal'), message: data && data.message };
-    return data;
+    if (currentRoute() === 'users') renderPage();
   }
 
+  function renderUsersPage() {
+    var s = state.users;
+    var html =
+      '<h1 class="page-title">' + esc(t('users.title')) + '</h1>' +
+      '<p class="page-lead">' + esc(t('users.intro')) + '</p>';
+    if (s.error) return html + '<div class="banner banner--error">' + esc(errMsg(s.error)) + '</div>';
+
+    html +=
+      '<div class="toolbar">' +
+        '<label class="search-field">' +
+          '<span data-icon="search"></span>' +
+          '<input type="search" id="users-search" placeholder="' + esc(t('users.search')) + '" value="' + esc(s.query) + '" />' +
+        '</label>' +
+        '<button class="btn btn--primary" data-action="add-user"><span data-icon="person_add"></span>' + esc(t('users.add')) + '</button>' +
+      '</div>' +
+      '<section class="card card--wide card--flush">' +
+        '<div class="table-wrap" id="users-table"></div>' +
+      '</section>' +
+      '<section class="card card--wide">' +
+        '<h2 class="card__title">' + esc(t('users.signupTitle')) + '</h2>' +
+        '<label class="switch-row">' +
+          '<input type="checkbox" id="signup-toggle"' + (s.settings && s.settings.signupAllowed ? ' checked' : '') + (s.settings ? '' : ' disabled') + ' />' +
+          '<span><strong>' + esc(t('users.signupLabel')) + '</strong><br><span class="muted small">' + esc(t('users.signupHelp')) + '</span></span>' +
+        '</label>' +
+      '</section>';
+    return html;
+  }
+
+  function renderUsersTable() {
+    var wrap = $('#users-table');
+    if (!wrap) return;
+    var list = state.users.list;
+    if (!list) { wrap.innerHTML = '<p class="muted table-empty">…</p>'; return; }
+    var q = state.users.query.trim().toLowerCase();
+    var rows = list.filter(function (u) {
+      return !q || [u.displayName, u.username, u.email, t('role.' + u.role)].join(' ').toLowerCase().indexOf(q) !== -1;
+    });
+    var me = state.user.username.toLowerCase();
+    var html =
+      '<table class="table">' +
+        '<caption class="table-caption">' + esc(t('users.count', { count: rows.length })) + '</caption>' +
+        '<thead><tr>' +
+          '<th>' + esc(t('users.colUser')) + '</th>' +
+          '<th class="col-email">' + esc(t('users.colEmail')) + '</th>' +
+          '<th>' + esc(t('users.colRole')) + '</th>' +
+          '<th>' + esc(t('users.colStatus')) + '</th>' +
+          '<th class="col-last">' + esc(t('users.colLastLogin')) + '</th>' +
+          '<th class="col-actions"><span class="visually-hidden">' + esc(t('users.actions')) + '</span></th>' +
+        '</tr></thead><tbody>';
+    if (!rows.length) {
+      html += '<tr><td colspan="6" class="table-empty">' + esc(t('users.empty')) + '</td></tr>';
+    }
+    rows.forEach(function (u) {
+      var self = u.username.toLowerCase() === me;
+      html +=
+        '<tr' + (u.disabled ? ' class="is-disabled"' : '') + '>' +
+          '<td><div class="user-cell">' +
+            '<span class="avatar avatar--sm" data-avatar-for="' + esc(u.username) + '"></span>' +
+            '<div class="user-cell__text"><div class="user-cell__name">' + esc(u.displayName) +
+              (self ? ' <span class="badge">' + esc(t('users.you')) + '</span>' : '') + '</div>' +
+              '<div class="muted small">@' + esc(u.username) + '</div></div>' +
+          '</div></td>' +
+          '<td class="col-email">' + (u.email ? esc(u.email) : '<span class="muted">—</span>') + '</td>' +
+          '<td><span class="badge' + (u.role === 'admin' ? ' badge--primary' : '') + '">' + esc(t('role.' + u.role)) + '</span></td>' +
+          '<td><span class="badge' + (u.disabled ? ' badge--danger' : ' badge--ok') + '">' + esc(t(u.disabled ? 'users.disabled' : 'users.active')) + '</span></td>' +
+          '<td class="col-last">' + (u.lastLoginAt ? esc(fmtDate(u.lastLoginAt)) : '<span class="muted">' + esc(t('users.never')) + '</span>') + '</td>' +
+          '<td class="col-actions">' +
+            '<button class="icon-btn icon-btn--sm" data-action="edit-user" data-username="' + esc(u.username) + '" data-icon="edit" title="' + esc(t('users.edit')) + '" aria-label="' + esc(t('users.edit') + ' ' + u.username) + '"></button>' +
+            (self ? '' : '<button class="icon-btn icon-btn--sm icon-btn--danger" data-action="delete-user" data-username="' + esc(u.username) + '" data-icon="delete" title="' + esc(t('users.delete')) + '" aria-label="' + esc(t('users.delete') + ' ' + u.username) + '"></button>') +
+          '</td>' +
+        '</tr>';
+    });
+    wrap.innerHTML = html + '</tbody></table>';
+    $$('[data-avatar-for]', wrap).forEach(function (el) {
+      var u = list.filter(function (x) { return x.username === el.dataset.avatarFor; })[0];
+      if (u) paintAvatar(el, u);
+    });
+    renderIcons(wrap);
+  }
+
+  function findUser(username) {
+    return (state.users.list || []).filter(function (u) { return u.username === username; })[0] || null;
+  }
+
+  function openUserDialog(user) {
+    state.editingUser = user;
+    var editing = Boolean(user);
+    var self = editing && user.username.toLowerCase() === state.user.username.toLowerCase();
+    $('#user-dialog-title').dataset.i18n = editing ? 'users.editTitle' : 'users.newTitle';
+    $('#user-name').value = editing ? user.displayName : '';
+    $('#user-username').value = editing ? user.username : '';
+    $('#user-username').disabled = editing;
+    $('#user-username-help').dataset.i18n = editing ? 'profile.usernameHelp' : 'field.usernameHelp';
+    $('#user-email').value = editing ? (user.email || '') : '';
+    $('#user-role').value = editing ? user.role : 'user';
+    $('#user-role').disabled = self;
+    $('#user-password').value = '';
+    $('#user-password-label').dataset.i18n = editing ? 'field.newPassword' : 'field.password';
+    $('#user-password-help').dataset.i18n = editing ? 'users.passwordKeep' : 'field.passwordHelp';
+    $('#user-active-row').hidden = !editing;
+    $('#user-active').checked = editing ? !user.disabled : true;
+    $('#user-active').disabled = self;
+    $('#user-error').hidden = true;
+    applyTranslations();
+    $('#user-dialog').showModal();
+    (editing ? $('#user-name') : $('#user-name')).focus();
+  }
+
+  function userError(msg) {
+    $('#user-error').textContent = msg;
+    $('#user-error').hidden = false;
+  }
+
+  async function onUserSave(e) {
+    e.preventDefault();
+    $('#user-error').hidden = true;
+    var editing = state.editingUser;
+    var name = $('#user-name').value.trim();
+    var password = $('#user-password').value;
+    if (!name) return userError(errMsg({ code: 'displayNameRequired' }));
+    if (!editing && !$('#user-username').value.trim()) return userError(t('login.required'));
+    if ((!editing || password) && password.length < MIN_PASSWORD) return userError(errMsg({ code: 'passwordTooShort' }));
+
+    var btn = $('#user-save');
+    btn.disabled = true;
+    try {
+      var res;
+      if (editing) {
+        var patch = { displayName: name, email: $('#user-email').value.trim() };
+        if (!$('#user-role').disabled) patch.role = $('#user-role').value;
+        if (!$('#user-active').disabled) patch.disabled = !$('#user-active').checked;
+        if (password) patch.password = password;
+        res = await Store.users.update(editing.username, patch);
+        if (res.user.username.toLowerCase() === state.user.username.toLowerCase()) {
+          state.user = res.user;
+          renderUserInfo();
+        }
+        toast(t('users.saved'));
+      } else {
+        res = await Store.users.create({
+          displayName: name, username: $('#user-username').value.trim(), email: $('#user-email').value.trim(),
+          role: $('#user-role').value, password: password
+        });
+        toast(t('users.created', { username: res.user.username }));
+      }
+      $('#user-dialog').close();
+      await loadUsers();
+    } catch (err) {
+      userError(errMsg(err));
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function deleteUser(username) {
+    var u = findUser(username);
+    if (!u) return;
+    if (!window.confirm(t('users.confirmDelete', { name: u.displayName, username: u.username }))) return;
+    try {
+      await Store.users.remove(u.username);
+      toast(t('users.deleted'));
+      await loadUsers();
+    } catch (err) {
+      toast(errMsg(err));
+    }
+  }
+
+  async function onSignupToggle(input) {
+    try {
+      state.users.settings = await Store.settings.update({ signupAllowed: input.checked });
+      toast(t(input.checked ? 'users.signupOn' : 'users.signupOff'));
+    } catch (err) {
+      input.checked = !input.checked;
+      toast(errMsg(err));
+    }
+  }
+
+  /* ---------------- updates ---------------- */
   async function loadCurrentVersion() {
     try {
-      state.updates.current = await api('GET', '/api/version');
-      state.updates.adminRequired = Boolean(state.updates.current.adminRequired);
+      state.updates.current = await Store.request('GET', '/api/version');
       state.updates.currentError = null;
     } catch (e) {
       state.updates.currentError = e;
@@ -414,7 +676,7 @@
     u.done = null; u.installError = null;
     renderPage();
     try {
-      var result = await api('GET', '/api/updates/check?channel=' + channel);
+      var result = await Store.request('GET', '/api/updates/check?channel=' + channel);
       u[channel] = { result: result };
       u.current = result.current;
     } catch (e) {
@@ -426,16 +688,10 @@
   async function installUpdate(channel, tag) {
     if (!window.confirm(t('upd.confirm', { tag: tag }))) return;
     var u = state.updates;
-    var headers = {};
-    if (u.adminRequired) {
-      var pw = window.prompt(t('upd.adminPrompt'));
-      if (pw == null) return;
-      headers['X-Thoth-Admin'] = encodeURIComponent(pw);
-    }
     u.installing = tag; u.done = null; u.installError = null;
     renderPage();
     try {
-      var result = await api('POST', '/api/updates/install', { channel: channel, tag: tag }, headers);
+      var result = await Store.request('POST', '/api/updates/install', { channel: channel, tag: tag });
       u.done = result;
       u.current = result.current;
       u.release = {}; u.push = {};
@@ -443,18 +699,17 @@
       if (result.autoRestart) waitForRestartThenReload();
     } catch (e) {
       u.installError = e;
-      if (e.code === 'adminRequired') u.adminRequired = true;
     }
     u.installing = null;
     if (currentRoute() === 'updates') renderPage();
   }
 
-  // The server restarts itself after a server-code update (systemd); reload once it's back.
+  // The server restarts itself after a server-code update (systemd/Docker); reload once it's back.
   async function waitForRestartThenReload() {
     await new Promise(function (r) { setTimeout(r, 1500); });
     for (var i = 0; i < 40; i++) {
       try {
-        var res = await fetch('/api/version', { cache: 'no-store' });
+        var res = await fetch('/api/session', { cache: 'no-store' });
         if (res.ok) { location.reload(); return; }
       } catch (e) { /* still restarting */ }
       await new Promise(function (r) { setTimeout(r, 1000); });
@@ -462,11 +717,6 @@
     state.updates.done.autoRestart = false;
     state.updates.done.restartRequired = true;
     if (currentRoute() === 'updates') renderPage();
-  }
-
-  function fmtDate(iso) {
-    if (!iso) return '';
-    return new Date(iso).toLocaleString(state.lang, { year: 'numeric', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
   }
 
   function renderChannelCard(channel) {
@@ -483,7 +733,7 @@
         '</button>';
 
     if (c.error) {
-      html += '<p class="notice notice--error">' + esc(apiError(c.error)) + '</p>';
+      html += '<p class="notice notice--error">' + esc(errMsg(c.error)) + '</p>';
     } else if (c.result) {
       var r = c.result;
       if (!r.latest) {
@@ -513,6 +763,34 @@
     return html + '</section>';
   }
 
+  // "p2" or "p2 +3 commits": a tag plus how far the running code is past it
+  function versionLabel(tag, ahead) {
+    var html = esc(tag);
+    if (ahead > 0) html += ' <span class="muted small">' + esc(ahead === 1 ? t('upd.aheadOne') : t('upd.ahead', { count: ahead })) + '</span>';
+    return html;
+  }
+
+  function renderVersionInfo(cur, repo) {
+    if (!cur) return '<p class="muted">…</p>';
+    var none = '<span class="muted">' + esc(t('upd.none')) + '</span>';
+    var commitLink = cur.commit
+      ? '<a href="https://github.com/' + esc(repo) + '/commit/' + esc(cur.commit) + '" target="_blank" rel="noopener"><code>' + esc(cur.commit.slice(0, 7)) + '</code></a>' +
+        (cur.branch ? ' <span class="muted small">' + esc(cur.branch) + '</span>' : '')
+      : '<span class="muted">' + esc(t('upd.unknown')) + '</span>';
+    var html = '<dl class="pref-list">' +
+      '<dt>' + esc(t('upd.release')) + '</dt><dd>' + (cur.release ? versionLabel(cur.release, cur.releaseAhead) : none) + '</dd>' +
+      '<dt>' + esc(t('upd.push')) + '</dt><dd>' + (cur.push != null ? versionLabel('p' + cur.push, cur.pushAhead) : none) + '</dd>' +
+      '<dt>' + esc(t('upd.commit')) + '</dt><dd>' + commitLink + '</dd>' +
+      (cur.origin ? '<dt>' + esc(t('upd.origin')) + '</dt><dd>' + esc(t('upd.origin.' + cur.origin)) + '</dd>' : '') +
+      (cur.installedAt ? '<dt>' + esc(t('upd.installedAt')) + '</dt><dd>' + esc(fmtDate(cur.installedAt)) + '</dd>' : '') +
+      '<dt>' + esc(t('upd.source')) + '</dt><dd><a href="https://github.com/' + esc(repo) + '" target="_blank" rel="noopener">' + esc(repo) + '</a></dd>' +
+    '</dl>';
+    if (!cur.commit) html += '<p class="notice">' + esc(t('upd.unknownVersion')) + '</p>';
+    else if (cur.published === false) html += '<p class="notice notice--info">' + esc(t('upd.unpublished')) + '</p>';
+    else if (cur.error) html += '<p class="notice notice--error">' + esc(t('upd.versionOffline')) + '</p>';
+    return html;
+  }
+
   function renderUpdatesPage() {
     var u = state.updates, cur = u.current;
     var repo = cur ? cur.repo : 'ChonaCio/Thoth';
@@ -527,19 +805,14 @@
         '<p class="small">' + esc(t('upd.backup', { path: u.done.backup })) + '</p></div>' +
         '<button class="btn btn--primary" data-action="reload">' + esc(t('upd.reload')) + '</button></div>';
     }
-    if (u.installError) html += '<div class="banner banner--error">' + esc(apiError(u.installError)) + '</div>';
+    if (u.installError) html += '<div class="banner banner--error">' + esc(errMsg(u.installError)) + '</div>';
 
     html += '<div class="cards">' +
       '<section class="card">' +
         '<h2 class="card__title">' + esc(t('upd.current')) + '</h2>' +
         (u.currentError
-          ? '<p class="notice notice--error">' + esc(apiError(u.currentError)) + '</p>'
-          : '<dl class="pref-list">' +
-              '<dt>' + esc(t('upd.release')) + '</dt><dd>' + esc(cur ? (cur.release || t('upd.none')) : '…') + '</dd>' +
-              '<dt>' + esc(t('upd.push')) + '</dt><dd>' + esc(cur ? (cur.push != null ? 'p' + cur.push : t('upd.none')) : '…') + '</dd>' +
-              '<dt>' + esc(t('upd.source')) + '</dt><dd><a href="https://github.com/' + esc(repo) + '" target="_blank" rel="noopener">' + esc(repo) + '</a></dd>' +
-              (cur && cur.installedAt ? '<dt>' + esc(t('upd.installedAt')) + '</dt><dd>' + esc(fmtDate(cur.installedAt)) + '</dd>' : '') +
-            '</dl>') +
+          ? '<p class="notice notice--error">' + esc(errMsg(u.currentError)) + '</p>'
+          : renderVersionInfo(cur, repo)) +
       '</section>' +
       renderChannelCard('release') +
       renderChannelCard('push') +
@@ -554,13 +827,13 @@
     el.textContent = msg;
     el.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(function () { el.hidden = true; }, 2800);
+    toastTimer = setTimeout(function () { el.hidden = true; }, 3200);
   }
 
   /* ---------------- wire up ---------------- */
   function bind() {
     $('#auth-form').addEventListener('submit', onAuthSubmit);
-    $('#auth-switch').addEventListener('click', function () { setRegisterMode(!state.registerMode); });
+    $('#auth-switch').addEventListener('click', function () { setAuthMode(state.authMode === 'signup' ? 'login' : 'signup'); });
     $('#toggle-password').addEventListener('click', function () {
       var input = $('#auth-password');
       var show = input.type === 'password';
@@ -577,8 +850,8 @@
     $('#account-btn').addEventListener('click', function (e) { e.stopPropagation(); toggleAccountMenu(); });
     $('#account-menu').addEventListener('click', function (e) {
       e.stopPropagation();
-      var go = e.target.closest('[data-goto]');
-      if (go) return showPanel(go.dataset.goto);
+      var goto = e.target.closest('[data-goto]');
+      if (goto) return showPanel(goto.dataset.goto);
       var th = e.target.closest('[data-theme-choice]');
       if (th) { setPref('theme', th.dataset.themeChoice); toast(t('toast.theme')); return; }
       var lg = e.target.closest('[data-lang-choice]');
@@ -586,31 +859,32 @@
     });
     $('#menu-edit-profile').addEventListener('click', openProfile);
     $('#menu-avatar-edit').addEventListener('click', openProfile);
-    $('#menu-settings').addEventListener('click', function () { toggleAccountMenu(false); location.hash = '#settings'; });
-    $('#menu-logout').addEventListener('click', function () {
-      toggleAccountMenu(false);
-      Store.auth.logout();
-      history.replaceState(null, '', location.pathname);
-      showLogin();
-      toast(t('toast.signedOut'));
-    });
+    $('#menu-settings').addEventListener('click', function () { go('#settings'); });
+    $('#menu-users').addEventListener('click', function () { go('#users'); });
+    $('#menu-updates').addEventListener('click', function () { go('#updates'); });
+    $('#menu-logout').addEventListener('click', function () { signOut(); });
     document.addEventListener('click', function () { if (!$('#account-menu').hidden) toggleAccountMenu(false); });
     document.addEventListener('keydown', function (e) {
       if (e.key === 'Escape' && !$('#account-menu').hidden) { toggleAccountMenu(false); $('#account-btn').focus(); }
     });
 
     $('#content').addEventListener('click', function (e) {
-      if (e.target.closest('[data-action="edit-profile"]')) openProfile();
-      var chk = e.target.closest('[data-action="check"]');
-      if (chk) checkUpdates(chk.dataset.channel);
-      var ins = e.target.closest('[data-action="install"]');
-      if (ins) installUpdate(ins.dataset.channel, ins.dataset.tag);
-      if (e.target.closest('[data-action="reload"]')) location.reload();
+      var el;
+      if (e.target.closest('[data-action="edit-profile"]')) return openProfile();
+      if ((el = e.target.closest('[data-action="check"]'))) return checkUpdates(el.dataset.channel);
+      if ((el = e.target.closest('[data-action="install"]'))) return installUpdate(el.dataset.channel, el.dataset.tag);
+      if (e.target.closest('[data-action="reload"]')) return location.reload();
+      if (e.target.closest('[data-action="add-user"]')) return openUserDialog(null);
+      if ((el = e.target.closest('[data-action="edit-user"]'))) return openUserDialog(findUser(el.dataset.username));
+      if ((el = e.target.closest('[data-action="delete-user"]'))) return deleteUser(el.dataset.username);
     });
-    $('#menu-updates').addEventListener('click', function () { toggleAccountMenu(false); location.hash = '#updates'; });
+    $('#content').addEventListener('input', function (e) {
+      if (e.target.id === 'users-search') { state.users.query = e.target.value; renderUsersTable(); }
+    });
     $('#content').addEventListener('change', function (e) {
       if (e.target.id === 'set-theme') { setPref('theme', e.target.value); toast(t('toast.theme')); }
       if (e.target.id === 'set-lang') { setPref('lang', e.target.value); toast(t('toast.lang')); }
+      if (e.target.id === 'signup-toggle') onSignupToggle(e.target);
     });
 
     $('#profile-form').addEventListener('submit', onProfileSave);
@@ -626,24 +900,48 @@
       refreshProfilePreview();
     });
 
+    $('#user-form').addEventListener('submit', onUserSave);
+    $('#user-cancel').addEventListener('click', function () { $('#user-dialog').close(); });
+
     window.addEventListener('hashchange', function () {
       if (!state.user) return;
       renderSidebar(); renderPage(); applyTranslations();
-      if (currentRoute() === 'updates') loadCurrentVersion();
+      onRouteEnter();
     });
     window.matchMedia('(max-width: 768px)').addEventListener('change', function () {
       $('#app-view').classList.remove('sidebar-open');
       $('#scrim').hidden = true;
     });
+
+    // Session expired or account disabled/deleted while the page was open
+    Store.onUnauthenticated = function () {
+      if (!state.user) return;
+      $$('dialog[open]').forEach(function (d) { d.close(); });
+      signOut(t('err.sessionExpired'));
+    };
   }
 
   async function init() {
     renderIcons();
     bind();
-    try { if (localStorage.getItem('thoth.sidebarCollapsed') === '1') $('#app-view').classList.add('sidebar-collapsed'); } catch (e) { /* ignore */ }
-    await Store.seed();
-    var user = Store.auth.currentUser();
-    if (user) showApp(user); else showLogin();
+    try {
+      if (localStorage.getItem('thoth.sidebarCollapsed') === '1') $('#app-view').classList.add('sidebar-collapsed');
+      // Accounts used to live in the browser; they're on the server now
+      localStorage.removeItem('thoth.users');
+      localStorage.removeItem('thoth.session');
+    } catch (e) { /* storage unavailable */ }
+
+    var session;
+    try {
+      session = await Store.session();
+    } catch (err) {
+      showLogin('login');
+      showAuthError(errMsg(err));
+      return;
+    }
+    state.signupAllowed = Boolean(session.signupAllowed);
+    if (session.user) showApp(session.user);
+    else showLogin(session.setupRequired ? 'setup' : 'login');
   }
 
   init();

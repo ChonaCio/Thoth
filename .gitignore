@@ -1,4 +1,7 @@
 node_modules/
 .updates/
 .update-state.json
+.build-info.json
+# Accounts, sessions and settings (contains password hashes)
+data/
 .env
