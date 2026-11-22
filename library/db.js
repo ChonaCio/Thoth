@@ -52,6 +52,8 @@ const saveLibrary = () => scheduleSave('library');
 const saveProgress = () => scheduleSave('progress');
 
 /* ---------------- indexes ---------------- */
+// Defined before the first reindex() below: sorting books with equal numbers falls back to comparing names
+const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 let booksBySeries = new Map();
 function reindex() {
   booksBySeries = new Map();
@@ -63,7 +65,6 @@ function reindex() {
 }
 reindex();
 
-const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 function compareBooks(a, b) {
   const na = bookMeta(a).numberSort, nb = bookMeta(b).numberSort;
   if (na !== nb) return na - nb;
@@ -142,6 +143,7 @@ function bookView(b, user, { admin = false } = {}) {
     created: b.created, modified: b.fileModified, v: Math.round(b.fileModified ? Date.parse(b.fileModified) / 1000 : 0),
     progress: progressOf(user, b.id), error: b.error || null,
     seriesTitle: db.series[b.seriesId] ? seriesMeta(db.series[b.seriesId]).title : '',
+    oneshot: Boolean(db.series[b.seriesId] && db.series[b.seriesId].oneshot),
     overrides: b.overrides || {}
   };
   if (admin) v.path = b.relPath;
@@ -163,7 +165,7 @@ function seriesView(s, user, { admin = false } = {}) {
   const books = booksBySeries.get(s.id) || [];
   const cover = books.find(b => b.format === 'cbz' && b.pageCount) || books[0];
   const v = Object.assign({
-    id: s.id, libraryId: s.libraryId, libraryName: (db.libraries[s.libraryId] || {}).name || '',
+    id: s.id, libraryId: s.libraryId, libraryName: (db.libraries[s.libraryId] || {}).name || '', oneshot: Boolean(s.oneshot),
     title: m.title, sortTitle: m.sortTitle, summary: m.summary, status: m.status, publisher: m.publisher,
     readingDirection: m.readingDirection, tags: m.tags, ageRating: m.ageRating,
     created: s.created, updated: s.updated,

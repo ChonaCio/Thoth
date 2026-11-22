@@ -407,6 +407,53 @@
     'err.pageNotFound': 'Essa página não existe.', 'err.invalid': 'Alguns valores não são válidos.'
   });
 
+  // One-shots
+  add('en', {
+    'lib.oneshot': 'One-shot', 'reader.backToLibrary': 'Back to the library',
+    'manage.oneshots': 'Show single books as one-shots',
+    'manage.oneshotsFolder': 'One-shots folder',
+    'manage.oneshotsBase': 'The library folder itself',
+    'manage.oneshotsHelp': 'Each book file directly in this folder becomes its own one-book series. Leave empty to use the library folder itself, or enter a folder inside it (e.g. One-shots).',
+    'manage.oneshotsLine': 'One-shots: {folder}', 'manage.oneshotsOff': 'One-shots: off',
+    'err.oneshotsFolderInvalid': 'Use a folder inside the library, like One-shots.'
+  });
+  add('es', {
+    'lib.oneshot': 'Número único', 'reader.backToLibrary': 'Volver a la biblioteca',
+    'manage.oneshots': 'Mostrar libros sueltos como números únicos',
+    'manage.oneshotsFolder': 'Carpeta de números únicos',
+    'manage.oneshotsBase': 'La propia carpeta de la biblioteca',
+    'manage.oneshotsHelp': 'Cada archivo de libro directamente en esta carpeta se convierte en su propia serie de un solo libro. Déjalo vacío para usar la propia carpeta de la biblioteca o escribe una carpeta dentro de ella (p. ej. Unicos).',
+    'manage.oneshotsLine': 'Números únicos: {folder}', 'manage.oneshotsOff': 'Números únicos: desactivado',
+    'err.oneshotsFolderInvalid': 'Usa una carpeta dentro de la biblioteca, como Unicos.'
+  });
+  add('fr', {
+    'lib.oneshot': 'One-shot', 'reader.backToLibrary': 'Retour à la bibliothèque',
+    'manage.oneshots': 'Afficher les livres isolés comme des one-shots',
+    'manage.oneshotsFolder': 'Dossier des one-shots',
+    'manage.oneshotsBase': 'Le dossier de la bibliothèque lui-même',
+    'manage.oneshotsHelp': 'Chaque fichier de livre placé directement dans ce dossier devient sa propre série d’un seul livre. Laissez vide pour utiliser le dossier de la bibliothèque, ou saisissez un dossier qu’elle contient (ex. One-shots).',
+    'manage.oneshotsLine': 'One-shots : {folder}', 'manage.oneshotsOff': 'One-shots : désactivés',
+    'err.oneshotsFolderInvalid': 'Utilisez un dossier situé dans la bibliothèque, comme One-shots.'
+  });
+  add('de', {
+    'lib.oneshot': 'Einzelband', 'reader.backToLibrary': 'Zurück zur Bibliothek',
+    'manage.oneshots': 'Einzelne Bücher als Einzelbände anzeigen',
+    'manage.oneshotsFolder': 'Ordner für Einzelbände',
+    'manage.oneshotsBase': 'Der Bibliotheksordner selbst',
+    'manage.oneshotsHelp': 'Jede Buchdatei direkt in diesem Ordner wird zu einer eigenen Serie mit nur einem Buch. Leer lassen für den Bibliotheksordner selbst oder einen Ordner darin angeben (z. B. Einzelbaende).',
+    'manage.oneshotsLine': 'Einzelbände: {folder}', 'manage.oneshotsOff': 'Einzelbände: aus',
+    'err.oneshotsFolderInvalid': 'Verwende einen Ordner innerhalb der Bibliothek, z. B. Einzelbaende.'
+  });
+  add('pt', {
+    'lib.oneshot': 'Edição única', 'reader.backToLibrary': 'Voltar à biblioteca',
+    'manage.oneshots': 'Mostrar livros avulsos como edições únicas',
+    'manage.oneshotsFolder': 'Pasta de edições únicas',
+    'manage.oneshotsBase': 'A própria pasta da biblioteca',
+    'manage.oneshotsHelp': 'Cada arquivo de livro diretamente nesta pasta vira sua própria série de um livro só. Deixe vazio para usar a própria pasta da biblioteca ou digite uma pasta dentro dela (ex.: Unicos).',
+    'manage.oneshotsLine': 'Edições únicas: {folder}', 'manage.oneshotsOff': 'Edições únicas: desativado',
+    'err.oneshotsFolderInvalid': 'Use uma pasta dentro da biblioteca, como Unicos.'
+  });
+
   // Singular forms
   add('en', { 'manage.unsupported1': "1 file skipped because its format isn't supported ({examples}).", 'manage.failed1': "1 book couldn't be opened. Its page shows an error." });
   add('es', { 'manage.unsupported1': '1 archivo omitido porque su formato no es compatible ({examples}).', 'manage.failed1': 'No se pudo abrir 1 libro. Su página muestra un error.' });

@@ -174,19 +174,23 @@ a { color: var(--primary); text-decoration: none; }
 
 .topbar {
   position: fixed; inset: 0 0 auto 0; height: var(--topbar-h); z-index: 30;
-  display: flex; align-items: center; gap: 16px; padding: 8px 12px 8px 16px;
+  /* Three columns whose sides always have the same width, so the search box stays centered on the screen.
+     --topbar-side is wide enough for the left side (menu + logo, lined up with the sidebar) */
+  --topbar-side: calc(var(--sidebar-w) - 28px);
+  display: grid; grid-template-columns: minmax(var(--topbar-side), 1fr) minmax(0, 720px) minmax(var(--topbar-side), 1fr);
+  align-items: center; gap: 16px; padding: 8px 16px;
   background: var(--bg); border-bottom: 1px solid var(--border);
 }
-.topbar__left { display: flex; align-items: center; gap: 4px; min-width: calc(var(--sidebar-w) - 28px); }
+.topbar__left { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .topbar__left .brand { padding: 0 8px; }
 .topbar__search {
-  flex: 1; max-width: 720px; height: 48px; display: flex; align-items: center; gap: 8px;
+  width: 100%; min-width: 0; height: 48px; display: flex; align-items: center; gap: 8px;
   background: var(--surface-2); border-radius: 24px; padding: 0 16px; color: var(--text-muted);
   transition: background-color .15s, box-shadow .15s;
 }
 .topbar__search:focus-within { background: var(--surface); box-shadow: var(--shadow); }
 .topbar__search input { flex: 1; border: 0; background: none; outline: none; font-size: 16px; min-width: 0; }
-.topbar__right { margin-left: auto; display: flex; align-items: center; gap: 4px; }
+.topbar__right { justify-self: end; display: flex; align-items: center; gap: 4px; }
 
 .avatar-btn {
   width: 48px; height: 48px; border-radius: 50%; border: 0; background: none; cursor: pointer;
@@ -553,7 +557,7 @@ body.is-reading { overflow: hidden; }
 
 /* ================= Responsive ================= */
 @media (max-width: 1024px) {
-  .topbar__left { min-width: 0; }
+  .topbar { --topbar-side: 160px; }
 }
 /* Tablet: sidebar becomes an icon rail; the menu button expands it over the content */
 @media (min-width: 769px) and (max-width: 1024px) {
@@ -567,7 +571,8 @@ body.is-reading { overflow: hidden; }
   .col-last { display: none; }
 }
 @media (max-width: 768px) {
-  .topbar { gap: 8px; padding: 8px; }
+  .topbar { display: flex; gap: 8px; padding: 8px; }
+  .topbar__right { margin-left: auto; }
   .topbar__search { display: none; }
   .topbar__right [data-icon="help"], .topbar__right [data-icon="apps"] { display: none; }
   .sidebar { transform: translateX(-100%); width: var(--sidebar-w); box-shadow: var(--shadow); }

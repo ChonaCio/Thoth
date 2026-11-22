@@ -63,7 +63,8 @@
       var p = r.book.progress;
       st.page = startPage || (p && !p.completed ? p.page : 1);
       $('#reader-title').textContent = r.book.title;
-      $('#reader-subtitle').textContent = (r.series ? r.series.title + ' · ' : '') + t('book.number', { number: r.book.number });
+      $('#reader-subtitle').textContent = r.book.oneshot ? t('lib.oneshot')
+        : (r.series ? r.series.title + ' · ' : '') + t('book.number', { number: r.book.number });
       document.title = r.book.title + ' – Thoth';
       if (r.book.error) return message('<p>' + esc(t('book.error', { error: r.book.error })) + '</p>' + closeButton());
       if (r.book.format === 'pdf') return openPdf(session);
@@ -241,12 +242,16 @@
   function showEnd() {
     markEnd();
     var end = $('#reader-end');
-    var backHref = st.readlist ? '#readlist/' + st.readlist : (st.series ? '#series/' + st.series.id : '#home');
+    var oneshot = st.book.oneshot && st.series;
+    var backHref = st.readlist ? '#readlist/' + st.readlist
+      : oneshot ? '#library/' + st.series.libraryId
+      : (st.series ? '#series/' + st.series.id : '#home');
+    var backKey = st.readlist ? 'reader.backToReadlist' : oneshot ? 'reader.backToLibrary' : 'reader.backToSeries';
     end.innerHTML =
       '<div class="reader__end-card">' +
         '<p class="reader__end-title">' + esc(t('reader.finished', { title: st.book.title })) + '</p>' +
         (st.next ? '<button class="btn btn--primary" data-reader="next-book">' + esc(t('reader.nextBook', { title: st.next.number + ' · ' + st.next.title })) + '</button>' : '') +
-        '<a class="btn btn--outline" href="' + backHref + '">' + esc(t(st.readlist ? 'reader.backToReadlist' : 'reader.backToSeries')) + '</a>' +
+        '<a class="btn btn--outline" href="' + backHref + '">' + esc(t(backKey)) + '</a>' +
         '<button class="btn btn--text" data-reader="stay">' + esc(t('reader.stay')) + '</button>' +
       '</div>';
     end.hidden = false;

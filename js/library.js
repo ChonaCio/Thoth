@@ -73,11 +73,14 @@
     var badge = s.booksCount && s.booksRead === s.booksCount
       ? '<span class="cover__badge cover__badge--done">' + icon('check') + '</span>'
       : (unread > 0 && s.booksRead + s.booksInProgress > 0 ? '<span class="cover__badge">' + unread + '</span>' : '');
+    // A one-shot is a single book, so its card opens the book directly
+    var href = s.oneshot && s.coverBookId ? '#book/' + s.coverBookId : '#series/' + s.id;
+    if (s.oneshot) badge = s.booksRead ? '<span class="cover__badge cover__badge--done">' + icon('check') + '</span>' : '';
     return '<div class="media-card">' +
-      '<a class="media-card__link" href="#series/' + s.id + '">' +
+      '<a class="media-card__link" href="' + href + '">' +
         '<div class="cover">' + seriesCoverHtml(s) + badge + '</div>' +
         '<div class="media-card__title" title="' + esc(s.title) + '">' + esc(s.title) + '</div>' +
-        '<div class="media-card__sub">' + esc(count(s.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</div>' +
+        '<div class="media-card__sub">' + esc(s.oneshot ? t('lib.oneshot') : count(s.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</div>' +
       '</a>' +
       (opts.remove ? '<button class="media-card__remove icon-btn icon-btn--sm" data-lib="' + opts.remove + '" data-id="' + s.id + '" data-icon="close" title="' + esc(t('coll.remove')) + '" aria-label="' + esc(t('coll.remove')) + '"></button>' : '') +
     '</div>';
@@ -87,7 +90,7 @@
     opts = opts || {};
     var pct = progressPct(b.progress, b.pageCount);
     var href = opts.read ? '#read/' + b.id + (opts.readlist ? '?readlist=' + opts.readlist : '') : '#book/' + b.id;
-    var sub = opts.showSeries ? b.seriesTitle : (b.pageCount ? t('book.pages', { count: b.pageCount }) : b.format.toUpperCase());
+    var sub = opts.showSeries ? (b.oneshot ? t('lib.oneshot') : b.seriesTitle) : (b.pageCount ? t('book.pages', { count: b.pageCount }) : b.format.toUpperCase());
     return '<div class="media-card">' +
       '<a class="media-card__link" href="' + href + '">' +
         '<div class="cover">' + bookCoverHtml(b) +
@@ -302,13 +305,14 @@
         isAdmin() && b.path ? ['book.file', b.path] : null
       ].filter(Boolean);
       var authors = b.authors.map(function (a) { return esc(a.name) + ' <span class="muted small">(' + esc(t('author.' + a.role)) + ')</span>'; });
-      return (s ? backLink('#series/' + s.id, s.title) : '') +
+      var back = s ? (b.oneshot ? backLink('#library/' + s.libraryId, s.libraryName) : backLink('#series/' + s.id, s.title)) : '';
+      return back +
         (b.error ? '<div class="banner banner--error">' + esc(t('book.error', { error: b.error })) + '</div>' : '') +
         '<div class="detail">' +
           '<div class="detail__cover cover cover--large">' + bookCoverHtml(b) +
             (progressPct(p, b.pageCount) && !(p && p.completed) ? '<div class="cover__progress"><span style="width:' + progressPct(p, b.pageCount) + '%"></span></div>' : '') + '</div>' +
           '<div class="detail__body">' +
-            '<p class="detail__eyebrow">' + esc(t('book.number', { number: b.number })) + '</p>' +
+            '<p class="detail__eyebrow">' + esc(b.oneshot ? t('lib.oneshot') : t('book.number', { number: b.number })) + '</p>' +
             '<h1 class="detail__title">' + esc(b.title) + '</h1>' +
             (authors.length ? '<p class="detail__authors">' + authors.join(', ') + '</p>' : '') +
             '<div class="detail__actions">' +
@@ -515,6 +519,9 @@
               '<div class="lib-card__text"><h2 class="card__title"><a href="#library/' + l.id + '">' + esc(l.name) + '</a></h2>' +
               '<p class="muted small lib-card__path">' + icon('folder_open') + '<span>' + esc(l.root) + '</span></p></div></div>' +
             '<p class="small">' + esc(count(l.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + ' · ' + esc(count(l.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</p>' +
+            '<p class="muted small">' + esc(l.oneshots && l.oneshots.enabled
+              ? t('manage.oneshotsLine', { folder: l.oneshots.folder || t('manage.oneshotsBase') })
+              : t('manage.oneshotsOff')) + '</p>' +
             scanSummary(l) +
             '<div class="lib-card__actions">' +
               '<button class="btn btn--outline btn--pill" data-lib="scan-library" data-id="' + l.id + '"' + (l.scanning ? ' disabled' : '') + '>' + icon('sync') + esc(t(l.scanning ? 'lib.scanning' : 'manage.scan')) + '</button>' +
@@ -569,6 +576,10 @@
       else if (f.type === 'folder') input = '<div class="folder-input"><input id="' + id + '" name="' + f.name + '" value="' + esc(f.value || '') + '" placeholder="' + esc(f.placeholder || '') + '" spellcheck="false" />' +
         '<button type="button" class="btn btn--outline" data-fd="browse">' + icon('folder_open') + esc(t('manage.browse')) + '</button></div>' +
         '<div class="folder-browser" id="folder-browser" hidden></div>';
+      else if (f.type === 'checkbox') {
+        return '<div class="field" data-field="' + f.name + '"><label class="checkbox"><input type="checkbox" id="' + id + '" name="' + f.name + '"' + (f.value ? ' checked' : '') + ' />' +
+          '<span>' + esc(f.label) + '</span></label>' + (f.help ? '<small class="field__help">' + esc(f.help) + '</small>' : '') + '</div>';
+      }
       else input = '<input id="' + id + '" name="' + f.name + '" value="' + esc(f.value || '') + '" placeholder="' + esc(f.placeholder || '') + '"' + (f.type === 'date' ? ' type="text" inputmode="numeric"' : '') + ' />';
       return '<div class="field" data-field="' + f.name + '"' + (f.showWhen ? ' data-show-when="' + esc(JSON.stringify(f.showWhen)) + '"' : '') + '>' +
         '<label for="' + id + '">' + esc(f.label) + '</label>' + input + (f.help ? '<small class="field__help">' + esc(f.help) + '</small>' : '') + '</div>';
@@ -581,7 +592,7 @@
   }
   function formValues() {
     var v = {};
-    $$('#form-dialog-fields [name]').forEach(function (el) { v[el.name] = el.value.trim(); });
+    $$('#form-dialog-fields [name]').forEach(function (el) { v[el.name] = el.type === 'checkbox' ? el.checked : el.value.trim(); });
     return v;
   }
   function syncShowWhen() {
@@ -705,7 +716,11 @@
       submitLabel: lib ? t('common.save') : t('manage.add'),
       fields: [
         { name: 'name', label: t('manage.name'), value: lib ? lib.name : '', placeholder: 'Comics' },
-        { name: 'root', label: t('manage.folder'), type: 'folder', value: lib ? lib.root : '', placeholder: '/media/comics' }
+        { name: 'root', label: t('manage.folder'), type: 'folder', value: lib ? lib.root : '', placeholder: '/media/comics' },
+        // One-shots: on by default, using the library folder itself
+        { name: 'oneshotsEnabled', type: 'checkbox', label: t('manage.oneshots'), value: lib ? lib.oneshots.enabled : true },
+        { name: 'oneshotsFolder', label: t('manage.oneshotsFolder'), value: lib ? lib.oneshots.folder : '',
+          placeholder: t('manage.oneshotsBase'), help: t('manage.oneshotsHelp'), showWhen: { field: 'oneshotsEnabled', value: true } }
       ],
       onSubmit: function (v) {
         var req = lib ? api('PATCH', '/api/libraries/' + lib.id, v) : api('POST', '/api/libraries', v);

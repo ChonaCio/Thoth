@@ -35,8 +35,18 @@ function libraryView(lib, user) {
   const series = Object.values(db.series).filter(s => s.libraryId === lib.id).length;
   const books = Object.values(db.books).filter(b => b.libraryId === lib.id).length;
   const v = { id: lib.id, name: lib.name, seriesCount: series, booksCount: books, scanning: scanner.scanning.has(lib.id) };
-  if (isAdmin(user)) Object.assign(v, { root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, scanProgress: scanner.scanning.get(lib.id) || null });
+  if (isAdmin(user)) Object.assign(v, { root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, scanProgress: scanner.scanning.get(lib.id) || null, oneshots: scanner.oneshotSettings(lib) });
   return v;
+}
+
+// { oneshotsEnabled, oneshotsFolder } from a request → { enabled, folder }, or undefined if not sent
+function parseOneshots(body, current) {
+  if (!('oneshotsEnabled' in body) && !('oneshotsFolder' in body)) return undefined;
+  const cur = current || { enabled: true, folder: '' };
+  const enabled = 'oneshotsEnabled' in body ? Boolean(body.oneshotsEnabled) : cur.enabled;
+  const folder = 'oneshotsFolder' in body ? scanner.normalizeOneshotFolder(body.oneshotsFolder) : cur.folder;
+  if (folder === null) throw httpError(400, 'oneshotsFolderInvalid');
+  return { enabled, folder };
 }
 async function validateRoot(root) {
   const abs = path.resolve(clean(root, 4096));
@@ -213,7 +223,7 @@ async function handle(ctx) {
     if (!name) throw httpError(400, 'nameRequired');
     const root = await validateRoot(body.root);
     if (Object.values(db.libraries).some(l => l.root === root)) throw httpError(409, 'folderInUse');
-    const lib = { id: store.newId(), name, root, created: new Date().toISOString() };
+    const lib = { id: store.newId(), name, root, created: new Date().toISOString(), oneshots: parseOneshots(body) || { enabled: true, folder: '' } };
     db.libraries[lib.id] = lib;
     store.saveLibrary();
     scanner.scanLibrary(lib.id).catch(() => {});
@@ -241,6 +251,12 @@ async function handle(ctx) {
         if (Object.values(db.libraries).some(l => l.id !== lib.id && l.root === root)) throw httpError(409, 'folderInUse');
         lib.root = root; rescan = true;
       }
+    }
+    const oneshots = parseOneshots(body, scanner.oneshotSettings(lib));
+    if (oneshots) {
+      const cur = scanner.oneshotSettings(lib);
+      if (oneshots.enabled !== cur.enabled || oneshots.folder !== cur.folder) rescan = true;
+      lib.oneshots = oneshots;
     }
     store.saveLibrary();
     if (rescan) scanner.scanLibrary(lib.id).catch(() => {});

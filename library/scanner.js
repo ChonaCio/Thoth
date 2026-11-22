@@ -101,6 +101,21 @@ async function analyze(file, format, mtimeMs) {
   return { pageCount: images.length, meta };
 }
 
+/* ---------------- one-shots ----------------
+ * lib.oneshots = { enabled, folder }. folder is relative to the library folder; '' = the library folder
+ * itself (the default). Book files directly in that folder are one-shots: each is its own series.
+ */
+function oneshotSettings(lib) {
+  const o = lib.oneshots || {};
+  return { enabled: o.enabled !== false, folder: o.folder || '' };
+}
+// "One-shots/", "\\Extras\\Singles" → "One-shots", "Extras<sep>Singles"; null if it tries to leave the library
+function normalizeOneshotFolder(value) {
+  const parts = String(value || '').split(/[\\/]+/).map(s => s.trim()).filter(Boolean);
+  if (parts.some(p => p === '..' || p === '.') || /^[a-zA-Z]:/.test(parts[0] || '')) return null;
+  return parts.join(path.sep);
+}
+
 /* ---------------- walking the folder ---------------- */
 async function walk(root, rel, out) {
   let entries;
@@ -124,7 +139,8 @@ async function walk(root, rel, out) {
 async function scanLibrary(libraryId) {
   const lib = store.db.libraries[libraryId];
   if (!lib) throw Object.assign(new Error('Library not found'), { status: 404, code: 'notFound' });
-  if (scanning.has(libraryId)) return { alreadyRunning: true };
+  // Already scanning: run once more when it finishes (settings may have changed in between)
+  if (scanning.has(libraryId)) { scanning.get(libraryId).again = true; return { alreadyRunning: true }; }
   const status = { startedAt: new Date().toISOString(), filesSeen: 0, analyzed: 0 };
   scanning.set(libraryId, status);
   const started = Date.now();
@@ -136,23 +152,27 @@ async function scanLibrary(libraryId) {
     const seenBooks = new Set(), seenSeries = new Set();
     let added = 0, updated = 0;
 
-    // group book files by folder → series
+    // Group book files by folder → series. Files directly in the one-shots folder (by default the
+    // library folder itself) each become their own single-book series instead.
+    const one = oneshotSettings(lib);
     const groups = new Map();
     for (const rel of found.books) {
       const dir = path.dirname(rel) === '.' ? '' : path.dirname(rel);
-      if (!groups.has(dir)) groups.set(dir, []);
-      groups.get(dir).push(rel);
+      if (one.enabled && dir === one.folder) { groups.set('oneshot\0' + rel, { dir, files: [rel], oneshot: true }); continue; }
+      if (!groups.has(dir)) groups.set(dir, { dir, files: [], oneshot: false });
+      groups.get(dir).files.push(rel);
     }
 
-    for (const [dir, files] of groups) {
+    for (const { dir, files, oneshot } of groups.values()) {
       files.sort((a, b) => store.collator.compare(path.basename(a), path.basename(b)));
-      const seriesId = store.stableId(libraryId, 'series', dir);
+      const seriesId = oneshot ? store.stableId(libraryId, 'oneshot', files[0]) : store.stableId(libraryId, 'series', dir);
       seenSeries.add(seriesId);
       let series = store.db.series[seriesId];
       if (!series) {
         series = store.db.series[seriesId] = {
-          id: seriesId, libraryId, relPath: dir, name: dir ? path.basename(dir) : lib.name,
-          meta: {}, overrides: {}, created: now, updated: now
+          id: seriesId, libraryId, relPath: oneshot ? files[0] : dir,
+          name: oneshot ? path.basename(files[0]).replace(/\.[^.]+$/, '') : (dir ? path.basename(dir) : lib.name),
+          oneshot, meta: {}, overrides: {}, created: now, updated: now
         };
         added++;
       }
@@ -174,6 +194,8 @@ async function scanLibrary(libraryId) {
             format: BOOK_EXT[path.extname(rel).toLowerCase()], overrides: {}, created: now
           };
         }
+        // A book can move between series when the one-shot setting changes; its id (and progress) stays
+        if (book.seriesId !== seriesId) { book.seriesId = seriesId; seriesChanged = true; }
         if (book.index !== i) { book.index = i; seriesChanged = true; }
         if (isNew || book.size !== stat.size || book.fileModified !== modified) {
           try {
@@ -200,7 +222,9 @@ async function scanLibrary(libraryId) {
         const first = files.map(f => store.db.books[store.stableId(libraryId, 'book', f)]).find(b => b && b.meta && Object.keys(b.meta).length);
         const fm = (first && first.meta) || {};
         series.meta = {
-          title: fm.series || undefined, summary: fm.summary && files.length === 1 ? fm.summary : undefined,
+          // A one-shot is named after its book (ComicInfo title first); a series after ComicInfo's series name
+          title: (oneshot ? fm.title || fm.series : fm.series) || undefined,
+          summary: fm.summary && files.length === 1 ? fm.summary : undefined,
           publisher: fm.publisher, readingDirection: fm.readingDirection, ageRating: fm.ageRating,
           tags: [...new Set(files.flatMap(f => ((store.db.books[store.stableId(libraryId, 'book', f)] || {}).meta || {}).tags || []))]
         };
@@ -238,6 +262,7 @@ async function scanLibrary(libraryId) {
     throw e;
   } finally {
     scanning.delete(libraryId);
+    if (status.again && store.db.libraries[libraryId]) setImmediate(() => scanLibrary(libraryId).catch(() => {}));
   }
 }
 
@@ -252,4 +277,4 @@ function startSchedule() {
   if (minutes > 0) timer = setInterval(scanAll, minutes * 60 * 1000).unref();
 }
 
-module.exports = { scanLibrary, scanAll, startSchedule, scanning, imageEntries, IMAGE_TYPES, BOOK_EXT, parseComicInfo };
+module.exports = { scanLibrary, scanAll, startSchedule, scanning, imageEntries, IMAGE_TYPES, BOOK_EXT, parseComicInfo, oneshotSettings, normalizeOneshotFolder };

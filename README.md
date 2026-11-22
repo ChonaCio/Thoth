@@ -66,7 +66,16 @@ Sign in as an administrator → **Manage libraries** → **Add library**, give i
     Saga 002.cbz
   One Piece/
     Volume 01.cbz
+  Watchmen.cbz               ← one-shot (a book directly in the library folder)
 ```
+
+**One-shots.** Each library has a one-shots folder. Every book file directly in it becomes its own
+single-book series, named after the book (its `ComicInfo.xml` title, else the file name), shown as
+*One-shot* and opening straight to the book. By default this is **the library folder itself**, so loose
+files next to your series folders are one-shots. In the library's settings you can point it at a subfolder
+instead (e.g. `One-shots`, relative to the library folder) or turn it off, in which case loose files in the
+library folder are grouped into one series named after the library. Changing it rescans the library;
+reading progress is kept.
 
 The library page shows scan results: new/changed/removed books, files skipped for unsupported formats,
 and books that couldn't be opened. Removing a library from Thoth never deletes files.
