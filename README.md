@@ -77,6 +77,26 @@ instead (e.g. `One-shots`, relative to the library folder) or turn it off, in wh
 library folder are grouped into one series named after the library. Changing it rescans the library;
 reading progress is kept.
 
+**Versions of a work.** When you keep several versions of the same work, name them with a suffix in
+parentheses or brackets: `Work`, `Work (Colored)`, `Work (Raw)`, `Work (Uncensored)`, `Work (Animated)`.
+They're grouped into one card ("2 versions"), and the work's page has a tab per version, in the order
+Base, Colored, Raw, Uncensored, Animated. Each version keeps its own books, progress and metadata.
+Recognized suffixes (any case): Colored/Coloured/Color/Full Color, Raw, Uncensored/Uncen, Animated/Motion,
+Base/Original; anything else, like `(2019)`, stays part of the title. This works for series folders and
+one-shot files alike. If a version is detected wrongly, an administrator can set it in the series' **Edit** dialog.
+
+```
+/srv/comics/
+  Work/                      ← Base tab
+  Work (Colored)/            ← Colored tab
+  Work [Raw]/                ← Raw tab
+```
+
+**Scanning runs in its own process.** Walking folders and opening archives happens in a separate Node
+process with the lowest CPU priority, so browsing and reading stay fast during big scans. Libraries are
+scanned one at a time (others show *Waiting…*). If that process can't be started, the scan runs inside the
+server instead; set `THOTH_SCAN_IN_PROCESS=1` to force that.
+
 The library page shows scan results: new/changed/removed books, files skipped for unsupported formats,
 and books that couldn't be opened. Removing a library from Thoth never deletes files.
 
@@ -143,7 +163,7 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
 | `js/reader.js` | The reader |
 | `server.js` | Zero-dependency web server: page + CSS/JS, accounts API, library API, update API |
 | `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, library access |
-| `library/` | `zip.js` (CBZ reader), `scanner.js` (folder scanning, ComicInfo.xml), `db.js` (storage), `api.js` (routes) |
+| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `db.js` (storage, versions), `api.js` (routes) |
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |

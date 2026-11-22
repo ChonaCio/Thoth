@@ -454,6 +454,38 @@
     'err.oneshotsFolderInvalid': 'Use uma pasta dentro da biblioteca, como Unicos.'
   });
 
+  // Versions of a work, scan queue
+  add('en', {
+    'edition.base': 'Base', 'edition.colored': 'Colored', 'edition.raw': 'Raw', 'edition.uncensored': 'Uncensored', 'edition.animated': 'Animated',
+    'lib.versions': '{count} versions', 'series.versions': 'Versions', 'edit.edition': 'Version',
+    'edit.editionHelp': 'Detected from names like "Work (Colored)". Versions with the same title are shown together as tabs.',
+    'manage.queued': 'Waiting for another library to finish scanning…'
+  });
+  add('es', {
+    'edition.base': 'Base', 'edition.colored': 'A color', 'edition.raw': 'Raw', 'edition.uncensored': 'Sin censura', 'edition.animated': 'Animado',
+    'lib.versions': '{count} versiones', 'series.versions': 'Versiones', 'edit.edition': 'Versión',
+    'edit.editionHelp': 'Se detecta en nombres como «Obra (Colored)». Las versiones con el mismo título se muestran juntas en pestañas.',
+    'manage.queued': 'Esperando a que termine el escaneo de otra biblioteca…'
+  });
+  add('fr', {
+    'edition.base': 'Base', 'edition.colored': 'Couleur', 'edition.raw': 'Raw', 'edition.uncensored': 'Non censuré', 'edition.animated': 'Animé',
+    'lib.versions': '{count} versions', 'series.versions': 'Versions', 'edit.edition': 'Version',
+    'edit.editionHelp': 'Détectée à partir de noms comme « Œuvre (Colored) ». Les versions du même titre sont regroupées en onglets.',
+    'manage.queued': 'En attente de la fin de l’analyse d’une autre bibliothèque…'
+  });
+  add('de', {
+    'edition.base': 'Basis', 'edition.colored': 'Koloriert', 'edition.raw': 'Raw', 'edition.uncensored': 'Unzensiert', 'edition.animated': 'Animiert',
+    'lib.versions': '{count} Versionen', 'series.versions': 'Versionen', 'edit.edition': 'Version',
+    'edit.editionHelp': 'Wird aus Namen wie „Werk (Colored)" erkannt. Versionen mit demselben Titel werden zusammen als Tabs angezeigt.',
+    'manage.queued': 'Wartet, bis eine andere Bibliothek fertig durchsucht ist…'
+  });
+  add('pt', {
+    'edition.base': 'Base', 'edition.colored': 'Colorido', 'edition.raw': 'Raw', 'edition.uncensored': 'Sem censura', 'edition.animated': 'Animado',
+    'lib.versions': '{count} versões', 'series.versions': 'Versões', 'edit.edition': 'Versão',
+    'edit.editionHelp': 'Detectada em nomes como "Obra (Colored)". Versões com o mesmo título aparecem juntas em abas.',
+    'manage.queued': 'Aguardando outra biblioteca terminar a análise…'
+  });
+
   // Singular forms
   add('en', { 'manage.unsupported1': "1 file skipped because its format isn't supported ({examples}).", 'manage.failed1': "1 book couldn't be opened. Its page shows an error." });
   add('es', { 'manage.unsupported1': '1 archivo omitido porque su formato no es compatible ({examples}).', 'manage.failed1': 'No se pudo abrir 1 libro. Su página muestra un error.' });

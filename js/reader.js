@@ -63,8 +63,9 @@
       var p = r.book.progress;
       st.page = startPage || (p && !p.completed ? p.page : 1);
       $('#reader-title').textContent = r.book.title;
-      $('#reader-subtitle').textContent = r.book.oneshot ? t('lib.oneshot')
-        : (r.series ? r.series.title + ' · ' : '') + t('book.number', { number: r.book.number });
+      var edition = r.book.edition && r.book.edition !== 'base' ? ' · ' + t('edition.' + r.book.edition) : '';
+      $('#reader-subtitle').textContent = (r.book.oneshot ? t('lib.oneshot')
+        : (r.series ? r.series.title + ' · ' : '') + t('book.number', { number: r.book.number })) + edition;
       document.title = r.book.title + ' – Thoth';
       if (r.book.error) return message('<p>' + esc(t('book.error', { error: r.book.error })) + '</p>' + closeButton());
       if (r.book.format === 'pdf') return openPdf(session);

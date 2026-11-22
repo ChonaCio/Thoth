@@ -67,6 +67,15 @@
     return pageCount ? Math.max(2, Math.round(p.page / pageCount * 100)) : 0;
   }
 
+  // "3 books · 2 versions", "One-shot", or "3 books · Colored" for a single non-base version
+  function editionLabel(e) { return t('edition.' + (e || 'base')); }
+  function cardSubtitle(s) {
+    var main = s.oneshot ? t('lib.oneshot') : count(s.booksCount, 'lib.bookCount1', 'lib.booksCount');
+    if (s.editions && s.editions.length > 1) return main + ' · ' + t('lib.versions', { count: s.editions.length });
+    if (s.edition && s.edition !== 'base') return main + ' · ' + editionLabel(s.edition);
+    return main;
+  }
+
   function seriesCard(s, opts) {
     opts = opts || {};
     var unread = s.booksCount - s.booksRead;
@@ -74,13 +83,14 @@
       ? '<span class="cover__badge cover__badge--done">' + icon('check') + '</span>'
       : (unread > 0 && s.booksRead + s.booksInProgress > 0 ? '<span class="cover__badge">' + unread + '</span>' : '');
     // A one-shot is a single book, so its card opens the book directly
-    var href = s.oneshot && s.coverBookId ? '#book/' + s.coverBookId : '#series/' + s.id;
+    // (unless it has other versions: then the work page with its version tabs)
+    var href = s.oneshot && s.coverBookId && !(s.editions && s.editions.length > 1) ? '#book/' + s.coverBookId : '#series/' + s.id;
     if (s.oneshot) badge = s.booksRead ? '<span class="cover__badge cover__badge--done">' + icon('check') + '</span>' : '';
     return '<div class="media-card">' +
       '<a class="media-card__link" href="' + href + '">' +
         '<div class="cover">' + seriesCoverHtml(s) + badge + '</div>' +
         '<div class="media-card__title" title="' + esc(s.title) + '">' + esc(s.title) + '</div>' +
-        '<div class="media-card__sub">' + esc(s.oneshot ? t('lib.oneshot') : count(s.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</div>' +
+        '<div class="media-card__sub">' + esc(cardSubtitle(s)) + '</div>' +
       '</a>' +
       (opts.remove ? '<button class="media-card__remove icon-btn icon-btn--sm" data-lib="' + opts.remove + '" data-id="' + s.id + '" data-icon="close" title="' + esc(t('coll.remove')) + '" aria-label="' + esc(t('coll.remove')) + '"></button>' : '') +
     '</div>';
@@ -253,10 +263,21 @@
       ].filter(Boolean);
       var progressLine = s.booksRead || s.booksInProgress
         ? '<p class="muted small">' + esc(t('series.readOf', { read: s.booksRead, total: s.booksCount })) + '</p>' : '';
-      return backLink('#library/' + s.libraryId, s.libraryName) +
+      // Versions of this work (Base, Colored, Raw, Uncensored, Animated) as tabs; each tab is its own page
+      var editions = d.editions || [];
+      var tabs = editions.length > 1
+        ? '<nav class="tabs" aria-label="' + esc(t('series.versions')) + '">' + editions.map(function (e) {
+            var active = e.id === s.id;
+            var done = e.booksCount && e.booksRead === e.booksCount;
+            return '<a class="tab' + (active ? ' is-active' : '') + '" href="#series/' + e.id + '"' + (active ? ' aria-current="page"' : '') + '>' +
+              esc(editionLabel(e.edition)) + '<span class="tab__count">' + (done ? icon('check') : e.booksCount) + '</span></a>';
+          }).join('') + '</nav>'
+        : '';
+      return backLink('#library/' + s.libraryId, s.libraryName) + tabs +
         '<div class="detail">' +
           '<div class="detail__cover cover cover--large">' + seriesCoverHtml(s) + '</div>' +
           '<div class="detail__body">' +
+            (s.edition !== 'base' ? '<p class="detail__eyebrow">' + esc(editionLabel(s.edition)) + '</p>' : '') +
             '<h1 class="detail__title">' + esc(s.title) + '</h1>' +
             '<div class="detail__meta">' + meta.join('<span class="dot">·</span>') + '</div>' +
             progressLine +
@@ -305,7 +326,8 @@
         isAdmin() && b.path ? ['book.file', b.path] : null
       ].filter(Boolean);
       var authors = b.authors.map(function (a) { return esc(a.name) + ' <span class="muted small">(' + esc(t('author.' + a.role)) + ')</span>'; });
-      var back = s ? (b.oneshot ? backLink('#library/' + s.libraryId, s.libraryName) : backLink('#series/' + s.id, s.title)) : '';
+      var seriesLabel = s ? s.title + (s.edition !== 'base' ? ' (' + editionLabel(s.edition) + ')' : '') : '';
+      var back = s ? (b.oneshot ? backLink('#library/' + s.libraryId, s.libraryName) : backLink('#series/' + s.id, seriesLabel)) : '';
       return back +
         (b.error ? '<div class="banner banner--error">' + esc(t('book.error', { error: b.error })) + '</div>' : '') +
         '<div class="detail">' +
@@ -488,6 +510,7 @@
   function scanSummary(l) {
     if (l.scanning) {
       var p = l.scanProgress || {};
+      if (p.queued) return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc(t('manage.queued')) + '</p>';
       return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc(t('manage.scanningNow', { seen: p.filesSeen || 0, analyzed: p.analyzed || 0 })) + '</p>';
     }
     if (l.scanError) return '<p class="notice notice--error">' + esc(A().errMsg({ code: l.scanError, message: l.scanError })) + '</p>';
@@ -650,6 +673,8 @@
         { name: 'status', label: t('edit.status'), type: 'select', value: o.status || '', options: [{ value: '', label: t('edit.auto') }].concat(['ongoing', 'ended', 'hiatus', 'abandoned'].map(function (v) { return { value: v, label: t('series.status.' + v) }; })) },
         { name: 'publisher', label: t('edit.publisher'), value: o.publisher || '', placeholder: s.publisher },
         { name: 'readingDirection', label: t('edit.direction'), type: 'select', value: o.readingDirection || '', options: [{ value: '', label: t('edit.auto') + ' (' + t('series.direction.' + s.readingDirection) + ')' }, dir('ltr'), dir('rtl'), dir('vertical')] },
+        { name: 'edition', label: t('edit.edition'), type: 'select', value: o.edition || '', help: t('edit.editionHelp'),
+          options: [{ value: '', label: t('edit.auto') + (o.edition ? '' : ' (' + editionLabel(s.edition) + ')') }].concat(['base', 'colored', 'raw', 'uncensored', 'animated'].map(function (e) { return { value: e, label: editionLabel(e) }; })) },
         { name: 'tags', label: t('edit.tags'), value: (o.tags || []).join(', '), placeholder: s.tags.join(', '), help: t('edit.tagsHelp') }
       ],
       onSubmit: function (v) {

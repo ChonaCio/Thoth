@@ -92,14 +92,60 @@ function readState(c) {
   if (c.booksRead || c.booksInProgress) return 'inProgress';
   return 'unread';
 }
+/* ---------------- works: versions of the same title grouped together ----------------
+ * Takes series views and returns one entry per work: the main version (Base first, then Colored, Raw,
+ * Uncensored, Animated) with `editions` listing every version. Dates come from the newest version.
+ */
+const editionRank = e => { const i = store.EDITIONS.indexOf(e); return i === -1 ? 99 : i; };
+function sortEditions(list) {
+  // Same version twice: the folder nearest the library root wins, then the older one
+  return list.sort((a, b) => editionRank(a.edition) - editionRank(b.edition) || a.depth - b.depth || a.created.localeCompare(b.created) || a.id.localeCompare(b.id));
+}
+// Only different versions are grouped: the first series of each version joins the work; another series
+// with an already-taken version (e.g. two unrelated "Base" folders that happen to share a title) stays separate.
+function splitByEdition(list) {
+  sortEditions(list);
+  const main = [], separate = [], taken = new Set();
+  for (const v of list) {
+    if (taken.has(v.edition)) separate.push([v]);
+    else { taken.add(v.edition); main.push(v); }
+  }
+  return [main, ...separate];
+}
+function editionSummary(v) {
+  return { id: v.id, edition: v.edition, booksCount: v.booksCount, booksRead: v.booksRead, booksInProgress: v.booksInProgress, oneshot: v.oneshot, coverBookId: v.coverBookId };
+}
+function groupWorks(views) {
+  const works = new Map();
+  for (const v of views) {
+    if (!works.has(v.workKey)) works.set(v.workKey, []);
+    works.get(v.workKey).push(v);
+  }
+  return [...works.values()].flatMap(splitByEdition).map(list => {
+    const work = Object.assign({}, list[0]);
+    work.editions = list.map(editionSummary);
+    work.created = list.reduce((m, v) => (v.created > m ? v.created : m), work.created);
+    work.updated = list.reduce((m, v) => (v.updated > m ? v.updated : m), work.updated);
+    return work;
+  });
+}
+// Every version of the work a series belongs to (same library, same title)
+function editionsOf(s, user) {
+  const key = store.seriesMeta(s).workKey;
+  const groups = splitByEdition(Object.values(db.series)
+    .filter(x => x.libraryId === s.libraryId && store.seriesMeta(x).workKey === key)
+    .map(x => store.seriesView(x, user)));
+  return (groups.find(g => g.some(v => v.id === s.id)) || []).map(editionSummary);
+}
+
 function listSeries(user, q) {
   const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
   const library = q.get('library');
   const term = searchable(q.get('q'));
   const read = q.get('read');
-  let items = Object.values(db.series)
+  let items = groupWorks(Object.values(db.series)
     .filter(s => libs.has(s.libraryId) && (!library || s.libraryId === library))
-    .map(s => store.seriesView(s, user));
+    .map(s => store.seriesView(s, user)));
   if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term) || s.tags.some(t => searchable(t).includes(term)));
   if (read) items = items.filter(s => readState(s) === read);
   const sort = q.get('sort') || 'title';
@@ -133,7 +179,7 @@ function home(user) {
   return {
     keepReading,
     onDeck: onDeck.slice(0, 24).map(x => store.bookView(x.book, user)),
-    recentSeries: series.sort((a, b) => b.created.localeCompare(a.created)).slice(0, 24).map(s => store.seriesView(s, user)),
+    recentSeries: groupWorks(series.map(s => store.seriesView(s, user))).sort((a, b) => b.created.localeCompare(a.created)).slice(0, 24),
     recentBooks: books.sort((a, b) => b.created.localeCompare(a.created) || store.compareBooks(a, b)).slice(0, 24).map(b => store.bookView(b, user)),
     libraries: libs.size
   };
@@ -289,7 +335,7 @@ async function handle(ctx) {
   if ((m = /^\/api\/series\/([\w-]+)$/.exec(p))) {
     const s = getSeries(user, m[1]);
     if (method === 'GET') {
-      return send(200, { series: store.seriesView(s, user, { admin }), books: store.booksOf(s.id).map(b => store.bookView(b, user, { admin })),
+      return send(200, { series: store.seriesView(s, user, { admin }), editions: editionsOf(s, user), books: store.booksOf(s.id).map(b => store.bookView(b, user, { admin })),
         collections: Object.values(db.collections).filter(c => c.seriesIds.includes(s.id)).map(c => ({ id: c.id, name: c.name })) });
     }
     if (method === 'PATCH') {
@@ -298,6 +344,7 @@ async function handle(ctx) {
       for (const k of ['title', 'sortTitle', 'summary', 'publisher']) if (k in body) { const v = clean(body[k], k === 'summary' ? 5000 : 200); if (v) o[k] = v; else delete o[k]; }
       if ('status' in body) { if (body.status && !STATUSES.includes(body.status)) throw httpError(400, 'invalid'); if (body.status) o.status = body.status; else delete o.status; }
       if ('readingDirection' in body) { if (body.readingDirection && !DIRECTIONS.includes(body.readingDirection)) throw httpError(400, 'invalid'); if (body.readingDirection) o.readingDirection = body.readingDirection; else delete o.readingDirection; }
+      if ('edition' in body) { if (body.edition && !store.EDITIONS.includes(body.edition)) throw httpError(400, 'invalid'); if (body.edition) o.edition = body.edition; else delete o.edition; }
       if ('tags' in body) { const tags = (Array.isArray(body.tags) ? body.tags : String(body.tags || '').split(',')).map(t => clean(t, 40)).filter(Boolean).slice(0, 50); if (tags.length) o.tags = tags; else delete o.tags; }
       s.overrides = o;
       s.updated = new Date().toISOString();
@@ -383,8 +430,8 @@ async function handle(ctx) {
     const term = searchable(q.get('q'));
     if (!term) return send(200, { series: [], books: [], collections: [], readlists: [] });
     const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-    const series = Object.values(db.series).filter(s => libs.has(s.libraryId))
-      .map(s => store.seriesView(s, user)).filter(s => searchable(s.title).includes(term) || s.tags.some(t => searchable(t).includes(term)))
+    const series = groupWorks(Object.values(db.series).filter(s => libs.has(s.libraryId)).map(s => store.seriesView(s, user)))
+      .filter(s => searchable(s.title).includes(term) || s.tags.some(t => searchable(t).includes(term)))
       .sort((a, b) => store.collator.compare(a.sortTitle, b.sortTitle)).slice(0, 30);
     const books = Object.values(db.books).filter(b => libs.has(b.libraryId))
       .map(b => store.bookView(b, user)).filter(b => searchable(b.title).includes(term) || searchable(b.fileName).includes(term) || b.authors.some(a => searchable(a.name).includes(term)))

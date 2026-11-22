@@ -424,6 +424,17 @@ a { color: var(--primary); text-decoration: none; }
 .shelf__row { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(120px, 13vw, 170px); gap: clamp(10px, 1.2vw, 20px); overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
 .shelf__row > * { scroll-snap-align: start; }
 
+/* Version tabs on a work page */
+.tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin: 0 0 20px; overflow-x: auto; scrollbar-width: thin; }
+.tab { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; color: var(--text-muted); font-weight: 500; white-space: nowrap;
+  border-bottom: 3px solid transparent; margin-bottom: -1px; border-radius: 8px 8px 0 0; }
+.tab:hover { background: var(--hover); color: var(--text); }
+.tab.is-active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab__count { min-width: 22px; height: 20px; padding: 0 6px; border-radius: 10px; background: var(--bg-alt); color: var(--text-muted);
+  font-size: 12px; display: inline-flex; align-items: center; justify-content: center; }
+.tab.is-active .tab__count { background: var(--primary-soft); color: var(--on-primary-soft); }
+.tab__count .icon svg { width: 14px; height: 14px; }
+
 /* Series / book detail */
 .back-link { display: inline-flex; align-items: center; gap: 6px; color: var(--text-muted); font-weight: 500; margin-bottom: 16px; max-width: 100%; }
 .back-link span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

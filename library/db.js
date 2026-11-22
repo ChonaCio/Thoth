@@ -74,12 +74,38 @@ function compareBooks(a, b) {
 const newId = () => crypto.randomBytes(8).toString('hex');
 const stableId = (...parts) => crypto.createHash('sha1').update(parts.join('\0')).digest('hex').slice(0, 16);
 
+/* ---------------- versions of a work ----------------
+ * "Work", "Work (Colored)", "Work [Raw]", "Work (Uncensored)", "Work (Animated)" are versions of the
+ * work "Work". Each version is its own series (own folder, books and progress); the browser groups them.
+ */
+const EDITIONS = ['base', 'colored', 'raw', 'uncensored', 'animated'];
+const EDITION_WORDS = [
+  [/^(colou?red|colou?r|full[ -]?colou?r)$/i, 'colored'],
+  [/^raw$/i, 'raw'],
+  [/^(uncensored|uncen)$/i, 'uncensored'],
+  [/^(animated|motion)$/i, 'animated'],
+  [/^(base|original)$/i, 'base']
+];
+// "Work (Colored)" → { title: 'Work', edition: 'colored' }; no recognized suffix → edition null
+function splitEdition(name) {
+  const m = /^(.*\S)\s*[([]\s*([^)\]]+?)\s*[)\]]\s*$/.exec(String(name || ''));
+  if (m) for (const [re, edition] of EDITION_WORDS) if (re.test(m[2])) return { title: m[1], edition };
+  return { title: String(name || ''), edition: null };
+}
+
 /* ---------------- metadata (scanned values + admin overrides) ---------------- */
 function seriesMeta(s) {
   const m = Object.assign({}, s.meta || {}, s.overrides || {});
+  // Version: admin override, else a suffix on the title or on the folder/file name, else Base
+  const fromTitle = splitEdition(m.title || s.name);
+  const fromName = splitEdition(s.name);
+  const edition = EDITIONS.includes(m.edition) ? m.edition : (fromTitle.edition || fromName.edition || 'base');
+  const title = fromTitle.title || s.name;
   return {
-    title: m.title || s.name,
-    sortTitle: m.sortTitle || m.title || s.name,
+    title,
+    edition,
+    workKey: s.libraryId + '\0' + title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(),
+    sortTitle: m.sortTitle || title,
     summary: m.summary || '',
     status: m.status || 'unknown', // ongoing | ended | hiatus | abandoned | unknown
     publisher: m.publisher || '',
@@ -143,6 +169,7 @@ function bookView(b, user, { admin = false } = {}) {
     created: b.created, modified: b.fileModified, v: Math.round(b.fileModified ? Date.parse(b.fileModified) / 1000 : 0),
     progress: progressOf(user, b.id), error: b.error || null,
     seriesTitle: db.series[b.seriesId] ? seriesMeta(db.series[b.seriesId]).title : '',
+    edition: db.series[b.seriesId] ? seriesMeta(db.series[b.seriesId]).edition : 'base',
     oneshot: Boolean(db.series[b.seriesId] && db.series[b.seriesId].oneshot),
     overrides: b.overrides || {}
   };
@@ -166,7 +193,8 @@ function seriesView(s, user, { admin = false } = {}) {
   const cover = books.find(b => b.format === 'cbz' && b.pageCount) || books[0];
   const v = Object.assign({
     id: s.id, libraryId: s.libraryId, libraryName: (db.libraries[s.libraryId] || {}).name || '', oneshot: Boolean(s.oneshot),
-    title: m.title, sortTitle: m.sortTitle, summary: m.summary, status: m.status, publisher: m.publisher,
+    title: m.title, edition: m.edition, workKey: m.workKey, sortTitle: m.sortTitle, summary: m.summary, status: m.status, publisher: m.publisher,
+    depth: String(s.relPath || '').split(/[\\/]/).filter(Boolean).length, // folder depth in the library (tie-breaker when grouping versions)
     readingDirection: m.readingDirection, tags: m.tags, ageRating: m.ageRating,
     created: s.created, updated: s.updated,
     coverBookId: cover ? cover.id : null, coverV: cover ? Math.round(Date.parse(cover.fileModified || 0) / 1000) : 0,
@@ -180,7 +208,7 @@ function seriesView(s, user, { admin = false } = {}) {
 module.exports = {
   DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex,
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
-  newId, stableId, collator, seriesMeta, bookMeta, compareBooks,
+  newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
   bookView, seriesView, seriesCounts
 };
