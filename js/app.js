@@ -380,12 +380,12 @@
     return msg !== key ? msg : t('upd.err.generic', { message: err.message || err.code });
   }
 
-  async function api(method, url, body) {
+  async function api(method, url, body, extraHeaders) {
     var res;
     try {
       res = await fetch(url, {
         method: method,
-        headers: body ? { 'Content-Type': 'application/json' } : {},
+        headers: Object.assign(body ? { 'Content-Type': 'application/json' } : {}, extraHeaders || {}),
         body: body ? JSON.stringify(body) : undefined
       });
     } catch (e) {
@@ -400,6 +400,7 @@
   async function loadCurrentVersion() {
     try {
       state.updates.current = await api('GET', '/api/version');
+      state.updates.adminRequired = Boolean(state.updates.current.adminRequired);
       state.updates.currentError = null;
     } catch (e) {
       state.updates.currentError = e;
@@ -425,10 +426,16 @@
   async function installUpdate(channel, tag) {
     if (!window.confirm(t('upd.confirm', { tag: tag }))) return;
     var u = state.updates;
+    var headers = {};
+    if (u.adminRequired) {
+      var pw = window.prompt(t('upd.adminPrompt'));
+      if (pw == null) return;
+      headers['X-Thoth-Admin'] = encodeURIComponent(pw);
+    }
     u.installing = tag; u.done = null; u.installError = null;
     renderPage();
     try {
-      var result = await api('POST', '/api/updates/install', { channel: channel, tag: tag });
+      var result = await api('POST', '/api/updates/install', { channel: channel, tag: tag }, headers);
       u.done = result;
       u.current = result.current;
       u.release = {}; u.push = {};
@@ -436,6 +443,7 @@
       if (result.autoRestart) waitForRestartThenReload();
     } catch (e) {
       u.installError = e;
+      if (e.code === 'adminRequired') u.adminRequired = true;
     }
     u.installing = null;
     if (currentRoute() === 'updates') renderPage();

@@ -1,0 +1,13 @@
+.git
+.gitattributes
+.gitignore
+.claude
+.env
+.env.*
+!.env.example
+.updates
+.update-state.json
+node_modules
+Dockerfile
+docker-compose.yml
+.dockerignore

@@ -1,0 +1,23 @@
+# Run on a headless server:
+#   cp .env.example .env        # then set THOTH_ADMIN_PASSWORD
+#   docker compose up -d --build
+# Open http://<server-ip>:3000 from any device on the network.
+# Starts again automatically when the server reboots (as long as Docker itself starts on boot).
+services:
+  thoth:
+    build: .
+    image: thoth:latest
+    container_name: thoth
+    restart: unless-stopped
+    ports:
+      - "${THOTH_PORT:-3000}:3000"
+    environment:
+      THOTH_ADMIN_PASSWORD: ${THOTH_ADMIN_PASSWORD:-}
+      THOTH_UPDATE_REPO: ${THOTH_UPDATE_REPO:-ChonaCio/Thoth}
+      GITHUB_TOKEN: ${GITHUB_TOKEN:-}
+    volumes:
+      # Holds the app files, so updates installed from the Updates page persist
+      - thoth-app:/app
+
+volumes:
+  thoth-app:

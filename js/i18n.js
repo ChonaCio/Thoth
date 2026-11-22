@@ -103,6 +103,8 @@ window.TRANSLATIONS = {
     'upd.err.rateLimited': 'GitHub rate limit reached. Try again in a few minutes.',
     'upd.err.repoNotFound': "The update repository couldn't be found.",
     'upd.err.busy': 'An update is already being installed.',
+    'upd.adminPrompt': 'Enter the update password set on the server:',
+    'upd.err.adminRequired': 'Wrong or missing update password.',
     'upd.err.invalidPackage': "That version doesn't look like a Thoth app, so it wasn't installed.",
     'upd.err.generic': 'Something went wrong: {message}'
   },
@@ -201,6 +203,8 @@ window.TRANSLATIONS = {
     'upd.err.rateLimited': 'Se alcanzó el límite de GitHub. Inténtalo en unos minutos.',
     'upd.err.repoNotFound': 'No se encontró el repositorio de actualizaciones.',
     'upd.err.busy': 'Ya se está instalando una actualización.',
+    'upd.adminPrompt': 'Escribe la contraseña de actualización configurada en el servidor:',
+    'upd.err.adminRequired': 'Contraseña de actualización incorrecta o vacía.',
     'upd.err.invalidPackage': 'Esa versión no parece una app de Thoth, así que no se instaló.',
     'upd.err.generic': 'Algo salió mal: {message}'
   },
@@ -299,6 +303,8 @@ window.TRANSLATIONS = {
     'upd.err.rateLimited': 'Limite GitHub atteinte. Réessayez dans quelques minutes.',
     'upd.err.repoNotFound': 'Le dépôt de mises à jour est introuvable.',
     'upd.err.busy': 'Une mise à jour est déjà en cours d’installation.',
+    'upd.adminPrompt': 'Saisissez le mot de passe de mise à jour défini sur le serveur :',
+    'upd.err.adminRequired': 'Mot de passe de mise à jour incorrect ou manquant.',
     'upd.err.invalidPackage': 'Cette version ne ressemble pas à une app Thoth ; elle n’a pas été installée.',
     'upd.err.generic': 'Une erreur est survenue : {message}'
   },
@@ -397,6 +403,8 @@ window.TRANSLATIONS = {
     'upd.err.rateLimited': 'GitHub-Limit erreicht. Versuche es in ein paar Minuten erneut.',
     'upd.err.repoNotFound': 'Das Update-Repository wurde nicht gefunden.',
     'upd.err.busy': 'Es wird bereits ein Update installiert.',
+    'upd.adminPrompt': 'Gib das auf dem Server festgelegte Update-Passwort ein:',
+    'upd.err.adminRequired': 'Update-Passwort falsch oder fehlt.',
     'upd.err.invalidPackage': 'Diese Version sieht nicht wie eine Thoth-App aus und wurde nicht installiert.',
     'upd.err.generic': 'Etwas ist schiefgelaufen: {message}'
   },
@@ -495,6 +503,8 @@ window.TRANSLATIONS = {
     'upd.err.rateLimited': 'Limite do GitHub atingido. Tente novamente em alguns minutos.',
     'upd.err.repoNotFound': 'O repositório de atualizações não foi encontrado.',
     'upd.err.busy': 'Já há uma atualização sendo instalada.',
+    'upd.adminPrompt': 'Digite a senha de atualização definida no servidor:',
+    'upd.err.adminRequired': 'Senha de atualização incorreta ou ausente.',
     'upd.err.invalidPackage': 'Essa versão não parece um app Thoth, então não foi instalada.',
     'upd.err.generic': 'Algo deu errado: {message}'
   }

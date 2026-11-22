@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Installs Thoth as a systemd service that starts on boot.
 #
-#   sudo bash deploy/install.sh [--dir /opt/thoth] [--user thoth] [--port 3000] [--host 127.0.0.1] [--no-start]
+#   sudo bash deploy/install.sh [--dir /opt/thoth] [--user thoth] [--port 3000] [--host 0.0.0.0] [--no-start]
 #
 # Safe to run again: it updates the app files and the unit, and keeps /etc/thoth/thoth.env,
 # the installed-version record and update backups.
@@ -137,14 +137,30 @@ URL="http://$CHECK_HOST:$CFG_PORT"
 
 for _ in $(seq 1 15); do
   if "$NODE_BIN" -e "fetch('$URL/api/version').then(r => process.exit(r.ok ? 0 : 1), () => process.exit(1))" 2>/dev/null; then
-    info "Thoth is running at $URL"
+    info "Thoth is running"
+    if [[ -z "$CFG_HOST" || "$CFG_HOST" == "0.0.0.0" || "$CFG_HOST" == "::" ]]; then
+      echo "  Open it from any device on the network:"
+      for ip in $(hostname -I 2>/dev/null || true); do
+        [[ "$ip" == *:* ]] && continue   # skip IPv6 for brevity
+        echo "    http://$ip:$CFG_PORT"
+      done
+      command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q "Status: active" && \
+        warn "ufw firewall is active. Allow the port with: sudo ufw allow $CFG_PORT/tcp"
+      command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1 && \
+        warn "firewalld is active. Allow the port with: sudo firewall-cmd --permanent --add-port=$CFG_PORT/tcp && sudo firewall-cmd --reload"
+    else
+      echo "  Listening on $URL"
+      [[ "$CFG_HOST" == "127.0.0.1" ]] && echo "  Only reachable from this machine. Set HOST=0.0.0.0 in $ENV_FILE for network access."
+    fi
+    if ! grep -qE '^THOTH_ADMIN_PASSWORD=.+' "$ENV_FILE"; then
+      warn "No update password set: anyone who can reach the server can install updates."
+      echo "  Set THOTH_ADMIN_PASSWORD in $ENV_FILE, then: sudo systemctl restart $SERVICE"
+    fi
     echo
     echo "  Status:   systemctl status $SERVICE"
     echo "  Logs:     journalctl -u $SERVICE -f"
     echo "  Restart:  sudo systemctl restart $SERVICE"
     echo "  Settings: $ENV_FILE"
-    [[ "$CFG_HOST" == "127.0.0.1" || -z "$CFG_HOST" ]] && \
-      echo "  Only reachable from this machine. For remote access see deploy/nginx-thoth.conf."
     exit 0
   fi
   sleep 1
