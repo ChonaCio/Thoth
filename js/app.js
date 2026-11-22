@@ -229,11 +229,13 @@
     renderIcons($('#sidebar'));
   }
 
-  function isMobile() { return window.matchMedia('(max-width: 768px)').matches; }
+  // Phones (drawer) and tablets (icon rail): the menu button opens the full sidebar over the content
+  var OVERLAY_NAV = '(max-width: 1024px)';
+  function isOverlayNav() { return window.matchMedia(OVERLAY_NAV).matches; }
 
   function toggleSidebar(force) {
     var app = $('#app-view');
-    if (isMobile()) {
+    if (isOverlayNav()) {
       var open = force != null ? force : !app.classList.contains('sidebar-open');
       app.classList.toggle('sidebar-open', open);
       $('#scrim').hidden = !open;
@@ -538,15 +540,15 @@
       var self = u.username.toLowerCase() === me;
       html +=
         '<tr' + (u.disabled ? ' class="is-disabled"' : '') + '>' +
-          '<td><div class="user-cell">' +
+          '<td class="col-user"><div class="user-cell">' +
             '<span class="avatar avatar--sm" data-avatar-for="' + esc(u.username) + '"></span>' +
             '<div class="user-cell__text"><div class="user-cell__name">' + esc(u.displayName) +
               (self ? ' <span class="badge">' + esc(t('users.you')) + '</span>' : '') + '</div>' +
               '<div class="muted small">@' + esc(u.username) + '</div></div>' +
           '</div></td>' +
           '<td class="col-email">' + (u.email ? esc(u.email) : '<span class="muted">—</span>') + '</td>' +
-          '<td><span class="badge' + (u.role === 'admin' ? ' badge--primary' : '') + '">' + esc(t('role.' + u.role)) + '</span></td>' +
-          '<td><span class="badge' + (u.disabled ? ' badge--danger' : ' badge--ok') + '">' + esc(t(u.disabled ? 'users.disabled' : 'users.active')) + '</span></td>' +
+          '<td class="col-role"><span class="badge' + (u.role === 'admin' ? ' badge--primary' : '') + '">' + esc(t('role.' + u.role)) + '</span></td>' +
+          '<td class="col-status"><span class="badge' + (u.disabled ? ' badge--danger' : ' badge--ok') + '">' + esc(t(u.disabled ? 'users.disabled' : 'users.active')) + '</span></td>' +
           '<td class="col-last">' + (u.lastLoginAt ? esc(fmtDate(u.lastLoginAt)) : '<span class="muted">' + esc(t('users.never')) + '</span>') + '</td>' +
           '<td class="col-actions">' +
             '<button class="icon-btn icon-btn--sm" data-action="edit-user" data-username="' + esc(u.username) + '" data-icon="edit" title="' + esc(t('users.edit')) + '" aria-label="' + esc(t('users.edit') + ' ' + u.username) + '"></button>' +
@@ -845,7 +847,7 @@
 
     $('#menu-toggle').addEventListener('click', function () { toggleSidebar(); });
     $('#scrim').addEventListener('click', function () { toggleSidebar(false); });
-    $('#sidebar').addEventListener('click', function (e) { if (e.target.closest('a') && isMobile()) toggleSidebar(false); });
+    $('#sidebar').addEventListener('click', function (e) { if (e.target.closest('a') && isOverlayNav()) toggleSidebar(false); });
 
     $('#account-btn').addEventListener('click', function (e) { e.stopPropagation(); toggleAccountMenu(); });
     $('#account-menu').addEventListener('click', function (e) {
@@ -908,9 +910,15 @@
       renderSidebar(); renderPage(); applyTranslations();
       onRouteEnter();
     });
-    window.matchMedia('(max-width: 768px)').addEventListener('change', function () {
-      $('#app-view').classList.remove('sidebar-open');
-      $('#scrim').hidden = true;
+    // Close an open overlay sidebar when the layout changes (rotate, resize)
+    ['(max-width: 768px)', OVERLAY_NAV].forEach(function (q) {
+      window.matchMedia(q).addEventListener('change', function () {
+        $('#app-view').classList.remove('sidebar-open');
+        $('#scrim').hidden = true;
+      });
+    });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && $('#app-view').classList.contains('sidebar-open')) toggleSidebar(false);
     });
 
     // Session expired or account disabled/deleted while the page was open
