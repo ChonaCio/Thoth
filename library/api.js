@@ -42,7 +42,8 @@ function libraryView(lib, user) {
       root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, oneshots: scanner.oneshotSettings(lib),
       metadata: metadata.librarySettings(lib),
       metadataCount: Object.values(db.series).filter(s => s.libraryId === lib.id && s.provider && (s.provider.matches || []).length).length,
-      scanProgress: progress ? Object.assign({}, progress, { serviceStopped: progress.queued && scanner.serviceState() !== 'running' }) : null
+      scanProgress: progress ? Object.assign({}, progress, { serviceStopped: progress.queued && scanner.serviceState() !== 'running', progress: scanner.progressOf(progress) }) : null,
+      defaults: store.libraryDefaults(lib)
     });
   }
   return v;
@@ -57,6 +58,20 @@ function parseOneshots(body, current) {
   if (folder === null) throw httpError(400, 'oneshotsFolderInvalid');
   if (body.oneshotsEnabled === false) folder = '';
   return { folder };
+}
+// { bookLayout: 'tiles'|'list', readingDirection: ''|'ltr'|'rtl'|'vertical' } → the library's work defaults
+function parseDefaults(body, current) {
+  const d = Object.assign({}, current || {});
+  if (!body || typeof body !== 'object') return d;
+  if ('bookLayout' in body) {
+    if (!store.BOOK_LAYOUTS.includes(body.bookLayout)) throw httpError(400, 'invalid');
+    d.bookLayout = body.bookLayout;
+  }
+  if ('readingDirection' in body) {
+    if (body.readingDirection && !store.DIRECTIONS.includes(body.readingDirection)) throw httpError(400, 'invalid');
+    d.readingDirection = body.readingDirection || null; // null = automatic (from the files and metadata)
+  }
+  return d;
 }
 async function validateRoot(root) {
   const abs = path.resolve(clean(root, 4096));
@@ -152,22 +167,38 @@ function editionsOf(s, user) {
   return (groups.find(g => g.some(v => v.id === s.id)) || []).map(editionSummary);
 }
 
-function listSeries(user, q) {
+// Every work the user can see, grouped across libraries (versions may live in different libraries);
+// with a library: the works that have a version in it
+function worksFor(user, library) {
   const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-  const library = q.get('library');
-  const term = searchable(q.get('q'));
-  const read = q.get('read');
-  // Group across every library the user can see (versions may live in different libraries), then keep
-  // the works that have a version in the requested library
   let items = groupWorks(Object.values(db.series)
     .filter(s => libs.has(s.libraryId))
     .map(s => store.seriesView(s, user)), library || null);
   if (library) items = items.filter(w => w.editions.some(e => e.libraryId === library));
-  if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term) || s.tags.some(t => searchable(t).includes(term))
+  return items;
+}
+// Online metadata state of a work: 'matched', 'unmatched' (looked up, nothing found) or 'none' (never looked up)
+const metadataState = s => (!s.metadata ? 'none' : s.metadata.matched ? 'matched' : 'unmatched');
+const same = (a, b) => searchable(a) === searchable(b);
+
+function listSeries(user, q) {
+  let items = worksFor(user, q.get('library'));
+  const term = searchable(q.get('q'));
+  if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term)
+    || s.tags.some(t => searchable(t).includes(term)) || s.genres.some(t => searchable(t).includes(term))
     || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)));
+  const read = q.get('read');
   if (read) items = items.filter(s => readState(s) === read);
   const type = q.get('type');
   if (type) items = items.filter(s => (s.type || 'unknown') === type);
+  const status = q.get('status');
+  if (status) items = items.filter(s => s.status === status);
+  const genre = q.get('genre');
+  if (genre) items = items.filter(s => s.genres.some(g => same(g, genre)));
+  const tag = q.get('tag');
+  if (tag) items = items.filter(s => s.tags.some(t => same(t, tag)));
+  const md = q.get('metadata');
+  if (md) items = items.filter(s => metadataState(s) === md);
   const sort = q.get('sort') || 'title';
   if (sort === 'added') items.sort((a, b) => b.created.localeCompare(a.created));
   else if (sort === 'updated') items.sort((a, b) => b.updated.localeCompare(a.updated));
@@ -175,6 +206,28 @@ function listSeries(user, q) {
   const offset = Math.max(0, Number(q.get('offset')) || 0);
   const limit = Math.min(200, Math.max(1, Number(q.get('limit')) || 60));
   return { total: items.length, offset, items: items.slice(offset, offset + limit) };
+}
+// The values the library filters can offer, with how many works have each
+function seriesFacets(user, library) {
+  const count = (list, key) => {
+    const m = new Map();
+    for (const v of list) {
+      const k = searchable(v);
+      if (!k) continue;
+      if (!m.has(k)) m.set(k, { name: v, count: 0 });
+      m.get(k).count++;
+    }
+    return [...m.values()].sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, key === 'tags' ? 300 : 100);
+  };
+  const items = worksFor(user, library);
+  const tally = values => { const m = {}; for (const v of values) m[v] = (m[v] || 0) + 1; return m; };
+  return {
+    genres: count(items.flatMap(s => s.genres), 'genres'),
+    tags: count(items.flatMap(s => s.tags), 'tags'),
+    types: tally(items.map(s => s.type || 'unknown')),
+    statuses: tally(items.map(s => s.status)),
+    metadata: tally(items.map(metadataState))
+  };
 }
 
 /* ---------------- home ---------------- */
@@ -290,7 +343,7 @@ async function handle(ctx) {
     const root = await validateRoot(body.root);
     if (Object.values(db.libraries).some(l => l.root === root)) throw httpError(409, 'folderInUse');
     const lib = { id: store.newId(), name, root, created: new Date().toISOString(), oneshots: parseOneshots(body) || { folder: '' },
-      metadata: metadata.parseLibrarySettings(body.metadata || {}) };
+      metadata: metadata.parseLibrarySettings(body.metadata || {}), defaults: parseDefaults(body.defaults) };
     db.libraries[lib.id] = lib;
     store.saveLibrary();
     scanner.scanLibrary(lib.id).catch(() => {});
@@ -326,6 +379,7 @@ async function handle(ctx) {
       lib.oneshots = oneshots;
     }
     if (body.metadata && typeof body.metadata === 'object') lib.metadata = metadata.parseLibrarySettings(body.metadata, metadata.librarySettings(lib));
+    if (body.defaults && typeof body.defaults === 'object') lib.defaults = parseDefaults(body.defaults, lib.defaults);
     store.saveLibrary();
     if (rescan) scanner.scanLibrary(lib.id).catch(() => {});
     return send(200, { library: libraryView(lib, user) });
@@ -355,6 +409,7 @@ async function handle(ctx) {
 
   // ---- series ----
   if (p === '/api/series' && method === 'GET') return send(200, listSeries(user, q));
+  if (p === '/api/series/facets' && method === 'GET') return send(200, seriesFacets(user, q.get('library') || null));
   if ((m = /^\/api\/series\/([\w-]+)$/.exec(p))) {
     const s = getSeries(user, m[1]);
     if (method === 'GET') {
@@ -369,9 +424,15 @@ async function handle(ctx) {
       for (const k of ['title', 'sortTitle', 'summary', 'publisher']) if (k in body) { const v = clean(body[k], k === 'summary' ? 5000 : 200); if (v) o[k] = v; else delete o[k]; }
       if ('status' in body) { if (body.status && !STATUSES.includes(body.status)) throw httpError(400, 'invalid'); if (body.status) o.status = body.status; else delete o.status; }
       if ('readingDirection' in body) { if (body.readingDirection && !DIRECTIONS.includes(body.readingDirection)) throw httpError(400, 'invalid'); if (body.readingDirection) o.readingDirection = body.readingDirection; else delete o.readingDirection; }
+      if ('bookLayout' in body) { if (body.bookLayout && !store.BOOK_LAYOUTS.includes(body.bookLayout)) throw httpError(400, 'invalid'); if (body.bookLayout) o.bookLayout = body.bookLayout; else delete o.bookLayout; }
+      if ('cover' in body) { if (body.cover && !['file', 'metadata'].includes(body.cover)) throw httpError(400, 'invalid'); if (body.cover) o.cover = body.cover; else delete o.cover; }
       if ('type' in body) { if (body.type && !metadata.TYPES.includes(body.type)) throw httpError(400, 'invalid'); if (body.type) o.type = body.type; else delete o.type; }
       if ('edition' in body) { if (body.edition && !store.EDITIONS.includes(body.edition)) throw httpError(400, 'invalid'); if (body.edition) o.edition = body.edition; else delete o.edition; }
-      if ('tags' in body) { const tags = (Array.isArray(body.tags) ? body.tags : String(body.tags || '').split(',')).map(t => clean(t, 40)).filter(Boolean).slice(0, 50); if (tags.length) o.tags = tags; else delete o.tags; }
+      for (const k of ['tags', 'genres']) {
+        if (!(k in body)) continue;
+        const list = (Array.isArray(body[k]) ? body[k] : String(body[k] || '').split(',')).map(t => clean(t, 40)).filter(Boolean).slice(0, 50);
+        if (list.length) o[k] = list; else delete o[k];
+      }
       s.overrides = o;
       s.updated = new Date().toISOString();
       store.saveLibrary();
@@ -499,7 +560,8 @@ async function handle(ctx) {
     if (!term) return send(200, { series: [], books: [], collections: [], readlists: [] });
     const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
     const series = groupWorks(Object.values(db.series).filter(s => libs.has(s.libraryId)).map(s => store.seriesView(s, user)))
-      .filter(s => searchable(s.title).includes(term) || s.tags.some(t => searchable(t).includes(term)))
+      .filter(s => searchable(s.title).includes(term) || s.tags.some(t => searchable(t).includes(term)) || s.genres.some(t => searchable(t).includes(term))
+        || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)))
       .sort((a, b) => store.collator.compare(a.sortTitle, b.sortTitle)).slice(0, 30);
     const books = Object.values(db.books).filter(b => libs.has(b.libraryId))
       .map(b => store.bookView(b, user)).filter(b => searchable(b.title).includes(term) || searchable(b.fileName).includes(term) || b.authors.some(a => searchable(a.name).includes(term)))

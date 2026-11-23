@@ -16,6 +16,9 @@ const store = require('./db');
 const config = require('../config');
 const metadata = require('./metadata');
 
+// Bump when what is read from files changes (2: ComicInfo genres kept apart from tags)
+const READ_VERSION = 2;
+
 const { BOOK_EXT, IMAGE_TYPES, parseComicInfo } = core;
 const WORKER = path.join(__dirname, 'scan-worker.js');
 const IN_PROCESS = process.env.THOTH_SCAN_IN_PROCESS === '1'; // debugging / platforms without fork
@@ -226,16 +229,21 @@ async function runScan(job) {
   if (!lib) throw Object.assign(new Error('Library not found'), { status: 404, code: 'notFound' });
   const started = Date.now();
   try {
+    status.phase = 'listing';
     const listing = await listFiles(lib, status);
     status.filesSeen = listing.files.length;
 
-    // Read only new or changed files (by size and modification time), or every file for a full scan
+    // Read only new or changed files (by size and modification time), or every file for a full scan.
+    // Books read by an older version of the reader (READ_VERSION) are read again once.
     const books = new Map(Object.values(store.db.books).filter(b => b.libraryId === libraryId).map(b => [b.relPath, b]));
     const toRead = listing.files.filter(f => {
       const b = books.get(f.rel);
-      return job.full || !b || b.size !== f.size || b.fileModified !== f.fileModified;
+      return job.full || !b || b.size !== f.size || b.fileModified !== f.fileModified || (b.readVersion || 1) < READ_VERSION;
     }).map(f => f.rel);
+    status.phase = 'reading';
+    status.readingStartedAt = Date.now();
     const analysis = new Map((await analyzeFiles(lib, toRead, status)).map(r => [r.rel, r]));
+    status.phase = 'saving';
     if (!store.db.libraries[libraryId]) throw Object.assign(new Error('Library was removed'), { code: 'notFound' });
 
     const byRel = new Map(listing.files.map(f => [f.rel, Object.assign({}, f, analysis.has(f.rel) ? Object.assign({ changed: true }, analysis.get(f.rel)) : {})]));
@@ -291,6 +299,7 @@ async function runScan(job) {
           book.size = f.size;
           book.fileModified = f.fileModified;
           book.analyzedAt = now;
+          book.readVersion = READ_VERSION;
           if (!isNew) updated++;
           seriesChanged = true;
         }
@@ -306,6 +315,7 @@ async function runScan(job) {
           title: (oneshot ? fm.title || fm.series : fm.series) || undefined,
           summary: fm.summary && files.length === 1 ? fm.summary : undefined,
           publisher: fm.publisher, readingDirection: fm.readingDirection, ageRating: fm.ageRating,
+          genres: [...new Set(list.flatMap(b => (b.meta || {}).genres || []))],
           tags: [...new Set(list.flatMap(b => (b.meta || {}).tags || []))]
         };
         series.updated = now;
@@ -393,6 +403,21 @@ async function pump() {
   pump();
 }
 
+// Progress of a running scan for progress bars: phase, done/total files, percent (null = unknown yet)
+// and estimated time left (from the reading speed so far; null until there's enough to go on)
+function progressOf(st) {
+  if (!st || st.queued) return null;
+  const now = Date.now();
+  const p = { phase: st.phase || 'listing', done: st.analyzed || 0, total: st.toAnalyze || 0, filesSeen: st.filesSeen || 0,
+    elapsedMs: st.startedAt ? now - Date.parse(st.startedAt) : 0, percent: null, etaMs: null };
+  if (p.phase === 'reading') {
+    p.percent = p.total ? Math.min(100, Math.floor(p.done / p.total * 100)) : 100;
+    const spent = now - (st.readingStartedAt || now);
+    if (p.total && p.done >= 2 && spent >= 500) p.etaMs = Math.round(spent / p.done * (p.total - p.done));
+  } else if (p.phase === 'saving') { p.percent = 100; p.etaMs = 0; }
+  return p;
+}
+
 // What the Processes page shows
 function serviceInfo() {
   const name = id => (store.db.libraries[id] || {}).name || '';
@@ -403,7 +428,7 @@ function serviceInfo() {
     processes: cfg.scanWorkers, concurrency: cfg.scanConcurrency,
     workers: service.workers.map(w => ({ pid: w.pid, startedAt: w.startedAt, stats: w.stats, busy: w.pending.size > 0 })),
     current: currentJob ? { libraryId: currentJob.libraryId, name: name(currentJob.libraryId), full: Boolean(currentJob.full),
-      startedAt: currentJob.status.startedAt, filesSeen: currentJob.status.filesSeen, toAnalyze: currentJob.status.toAnalyze, analyzed: currentJob.status.analyzed } : null,
+      startedAt: currentJob.status.startedAt, filesSeen: currentJob.status.filesSeen, toAnalyze: currentJob.status.toAnalyze, analyzed: currentJob.status.analyzed, progress: progressOf(currentJob.status) } : null,
     queue: queue.map(j => ({ libraryId: j.libraryId, name: name(j.libraryId), full: Boolean(j.full) }))
   };
 }
@@ -427,5 +452,5 @@ function startSchedule() {
 module.exports = {
   scanLibrary, scanAll, startSchedule, init, scanning, imageEntries, IMAGE_TYPES, BOOK_EXT, parseComicInfo,
   oneshotSettings, normalizeOneshotFolder,
-  startService, stopService, restartService, serviceInfo, serviceState: () => service.state
+  startService, stopService, restartService, serviceInfo, serviceState: () => service.state, progressOf
 };

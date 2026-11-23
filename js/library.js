@@ -18,7 +18,7 @@
   var PAGE_SIZE = 60;
 
   var cache = {};
-  function reset() { cache = { home: null, libs: {}, series: {}, book: {}, search: {}, collections: null, collection: {}, readlists: null, readlist: {}, manage: null }; }
+  function reset() { cache = { home: null, libs: {}, facets: {}, series: {}, book: {}, search: {}, collections: null, collection: {}, readlists: null, readlist: {}, manage: null }; }
   reset();
 
   function load(hash, fn) {
@@ -126,6 +126,39 @@
       '<div class="shelf__row">' + cards.join('') + '</div></section>';
   }
   function grid(cards) { return '<div class="media-grid">' + cards.join('') + '</div>'; }
+
+  // Chapters/books as a list: number, title, pages, progress, release date, and a Read button
+  function bookList(books) {
+    return '<ol class="book-list">' + books.map(function (b) {
+      var p = b.progress, pct = progressPct(p, b.pageCount);
+      var state = p ? (p.completed ? t('book.progressRead') : t('book.progressAt', { page: p.page, total: b.pageCount || '?' })) : t('book.unread');
+      var readHref = '#read/' + b.id + (p && p.completed ? '?page=1' : '');
+      return '<li class="book-row' + (p && p.completed ? ' is-read' : '') + '">' +
+        '<a class="book-row__main" href="#book/' + b.id + '">' +
+          '<span class="book-row__num">' + esc(b.number) + '</span>' +
+          '<span class="book-row__text"><span class="book-row__title">' + esc(b.title) + '</span>' +
+            '<span class="book-row__sub">' + esc([b.pageCount ? t('book.pages', { count: b.pageCount }) : b.format.toUpperCase(), b.releaseDate].filter(Boolean).join(' · ')) + '</span></span>' +
+          '<span class="book-row__state">' + (p && p.completed ? icon('check') : '') + '<span>' + esc(state) + '</span>' +
+            (pct && pct < 100 ? '<span class="book-row__bar"><span style="width:' + pct + '%"></span></span>' : '') + '</span>' +
+          (b.error ? '<span class="cover__error" title="' + esc(b.error) + '">!</span>' : '') +
+        '</a>' +
+        (!b.error ? '<a class="icon-btn book-row__read" href="' + readHref + '" title="' + esc(t('book.read')) + '" aria-label="' + esc(t('book.read')) + ' ' + esc(b.title) + '" data-icon="play"></a>' : '') +
+      '</li>';
+    }).join('') + '</ol>';
+  }
+
+  // A one-shot's pages as tiles: each opens the reader at that page
+  function pageGrid(b) {
+    var p = b.progress;
+    var tiles = [];
+    for (var n = 1; n <= b.pageCount; n++) {
+      var cur = p && !p.completed && p.page === n;
+      tiles.push('<a class="page-tile' + (cur ? ' is-current' : '') + '" href="#read/' + b.id + '?page=' + n + '" title="' + esc(t('book.progressAt', { page: n, total: b.pageCount })) + '">' +
+        '<img loading="lazy" decoding="async" alt="" src="/api/books/' + b.id + '/pages/' + n + '?v=' + b.v + '" />' +
+        '<span class="page-tile__num">' + n + '</span></a>');
+    }
+    return '<div class="page-grid">' + tiles.join('') + '</div>';
+  }
   function backLink(href, label) {
     return '<a class="back-link" href="' + href + '">' + icon('arrow_back') + '<span>' + esc(label) + '</span></a>';
   }
@@ -159,13 +192,37 @@
 
   /* ================= LIBRARY (series grid) ================= */
   function libKey(route) { return route.param || 'all'; }
+  // Filters besides the text search; a link like #library/<id>?genre=Action sets them (and clears the others)
+  var FILTERS = ['type', 'status', 'genre', 'tag', 'metadata'];
   function libState(route) {
     var key = libKey(route);
     if (!cache.libs[key]) {
-      cache.libs[key] = { items: null, total: 0, q: '', sort: route.query.get('sort') || 'title', read: route.query.get('read') || '', type: route.query.get('type') || '', error: null, loading: false };
+      cache.libs[key] = { items: null, total: 0, q: '', sort: route.query.get('sort') || 'title', read: route.query.get('read') || '', error: null, loading: false };
+      FILTERS.forEach(function (f) { cache.libs[key][f] = ''; });
     }
     return cache.libs[key];
   }
+  // Arriving at a library URL with filters in it (a genre/tag chip, a bookmark): use them
+  function applyRouteFilters(route) {
+    var st = libState(route);
+    if (st.lastHash === route.hash) return;
+    st.lastHash = route.hash;
+    if (FILTERS.some(function (f) { return route.query.has(f); })) {
+      FILTERS.forEach(function (f) { st[f] = route.query.get(f) || ''; });
+      st.q = '';
+    }
+  }
+  // Keep the address in step with the filters (shareable, survives reload) without re-entering the page
+  function syncFilterUrl(route) {
+    var st = libState(route);
+    var q = {};
+    FILTERS.forEach(function (f) { q[f] = st[f]; });
+    var qs = Store.qs(q);
+    var hash = route.hash.split('?')[0] + (qs ? '?' + qs : '');
+    st.lastHash = hash;
+    history.replaceState(null, '', hash);
+  }
+  function activeFilters(st) { return FILTERS.filter(function (f) { return st[f]; }).length; }
   function libraryName(id) {
     if (id === 'all') return t('nav.allLibraries');
     var l = A().state.libraries.filter(function (x) { return x.id === id; })[0];
@@ -175,7 +232,9 @@
     var st = libState(route);
     var key = libKey(route);
     st.loading = true;
-    var qs = Store.qs({ library: key === 'all' ? '' : key, q: st.q, sort: st.sort, read: st.read, type: st.type, offset: append ? st.items.length : 0, limit: PAGE_SIZE });
+    var params = { library: key === 'all' ? '' : key, q: st.q, sort: st.sort, read: st.read, offset: append ? st.items.length : 0, limit: PAGE_SIZE };
+    FILTERS.forEach(function (f) { params[f] = st[f]; });
+    var qs = Store.qs(params);
     return api('GET', '/api/series?' + qs).then(function (r) {
       st.items = append ? st.items.concat(r.items) : r.items;
       st.total = r.total;
@@ -189,7 +248,7 @@
     var html;
     if (st.error) html = errorBanner(st.error);
     else if (!st.items) html = spinner;
-    else if (!st.items.length) html = emptyState('library', '', st.q || st.read || st.type ? t('lib.noMatch') : t('lib.noSeries'));
+    else if (!st.items.length) html = emptyState('library', '', st.q || st.read || activeFilters(st) ? t('lib.noMatch') : t('lib.noSeries'));
     else {
       html = '<p class="muted small grid-count">' + esc(count(st.total, 'lib.seriesCount1', 'lib.seriesCount')) + '</p>' +
         grid(st.items.map(function (s) { return seriesCard(s); })) +
@@ -203,6 +262,7 @@
     title: function (route) { return libraryName(libKey(route)); },
     render: function (route) {
       var key = libKey(route);
+      applyRouteFilters(route);
       var st = libState(route);
       var lib = A().state.libraries.filter(function (x) { return x.id === key; })[0];
       if (key !== 'all' && !lib && A().state.libraries.length) return emptyState('library', t('lib.notFound'), '');
@@ -218,10 +278,9 @@
               opt('title', 'lib.sortTitle', st.sort) + opt('added', 'lib.sortAdded', st.sort) + opt('updated', 'lib.sortUpdated', st.sort) + '</select>' +
             '<select class="select select--compact" id="lib-read" aria-label="' + esc(t('lib.read')) + '">' +
               opt('', 'lib.readAll', st.read) + opt('unread', 'lib.readUnread', st.read) + opt('inProgress', 'lib.readInProgress', st.read) + opt('read', 'lib.readRead', st.read) + '</select>' +
-            '<select class="select select--compact" id="lib-type" aria-label="' + esc(t('meta.type')) + '">' +
-              opt('', 'meta.typeAll', st.type) + WORK_TYPES.map(function (ty) { return opt(ty, 'type.' + ty, st.type); }).join('') + opt('unknown', 'type.unknown', st.type) + '</select>' +
           '</div>' +
         '</div>' +
+        '<div class="toolbar toolbar--filters" id="lib-filters">' + filtersHtml(route) + '</div>' +
         '<div id="lib-grid"></div>';
     },
     mount: function (el, route) {
@@ -234,10 +293,64 @@
       });
       $('#lib-sort', el).addEventListener('change', function (e) { st.sort = e.target.value; fetchSeries(route); });
       $('#lib-read', el).addEventListener('change', function (e) { st.read = e.target.value; fetchSeries(route); });
-      $('#lib-type', el).addEventListener('change', function (e) { st.type = e.target.value; fetchSeries(route); });
+      $('#lib-filters', el).addEventListener('change', function (e) {
+        var f = e.target.dataset.filter;
+        if (!f) return;
+        st[f] = e.target.value;
+        syncFilterUrl(route);
+        refreshFilters(route);
+        fetchSeries(route);
+      });
+      $('#lib-filters', el).addEventListener('click', function (e) {
+        if (!e.target.closest('[data-filter-clear]')) return;
+        FILTERS.forEach(function (f) { st[f] = ''; });
+        syncFilterUrl(route);
+        refreshFilters(route);
+        fetchSeries(route);
+      });
     },
-    enter: function (route) { fetchSeries(route); }
+    enter: function (route) {
+      fetchSeries(route);
+      // What the filters can offer (genres, tags, … with counts) for this library
+      var key = libKey(route);
+      api('GET', '/api/series/facets?' + Store.qs({ library: key === 'all' ? '' : key })).then(function (r) {
+        cache.facets[key] = r;
+        refreshFilters(route);
+      }, function () { /* filters keep their fixed options */ });
+    }
   };
+  function refreshFilters(route) {
+    var el = $('#lib-filters');
+    if (!el || location.hash.split('?')[0] !== route.hash.split('?')[0]) return;
+    el.innerHTML = filtersHtml(route);
+    renderIcons(el);
+  }
+  // Type, status, genre, tag, metadata; options show how many works have each (when known)
+  function filtersHtml(route) {
+    var st = libState(route), fc = cache.facets[libKey(route)] || null;
+    var n = function (map, k) { return fc && map && map[k] ? ' (' + map[k] + ')' : ''; };
+    var option = function (value, label, cur, extra) {
+      return '<option value="' + esc(value) + '"' + (value === cur ? ' selected' : '') + '>' + esc(label + (extra || '')) + '</option>';
+    };
+    var sel = function (f, allKey, options) {
+      return '<select class="select select--compact' + (st[f] ? ' is-active' : '') + '" data-filter="' + f + '" aria-label="' + esc(t('filter.' + f)) + '">' +
+        option('', t(allKey), st[f]) + options + '</select>';
+    };
+    var types = WORK_TYPES.concat(['unknown']).filter(function (ty) { return !fc || fc.types[ty] || st.type === ty; });
+    var statuses = ['ongoing', 'ended', 'hiatus', 'abandoned', 'unknown'].filter(function (v) { return !fc || fc.statuses[v] || st.status === v; });
+    var named = function (list, cur) {
+      var opts = (list || []).map(function (x) { return option(x.name, x.name, cur, ' (' + x.count + ')'); });
+      if (cur && !(list || []).some(function (x) { return x.name.toLowerCase() === cur.toLowerCase(); })) opts.unshift(option(cur, cur, cur));
+      return opts.join('');
+    };
+    return '<span class="toolbar__label muted small">' + icon('tune') + esc(t('filter.title')) + '</span>' +
+      sel('type', 'meta.typeAll', types.map(function (ty) { return option(ty, t('type.' + ty), st.type, n(fc && fc.types, ty)); }).join('')) +
+      sel('status', 'filter.statusAll', statuses.map(function (v) { return option(v, t('series.status.' + v), st.status, n(fc && fc.statuses, v)); }).join('')) +
+      sel('genre', 'filter.genreAll', named(fc && fc.genres, st.genre)) +
+      sel('tag', 'filter.tagAll', named(fc && fc.tags, st.tag)) +
+      sel('metadata', 'filter.metadataAll', ['matched', 'unmatched', 'none'].map(function (v) { return option(v, t('filter.metadata.' + v), st.metadata, n(fc && fc.metadata, v)); }).join('')) +
+      (activeFilters(st) ? '<button type="button" class="btn btn--text btn--small" data-filter-clear>' + icon('close') + esc(t('filter.clear')) + '</button>' : '');
+  }
 
   /* ================= SERIES ================= */
   function nextToRead(books) {
@@ -250,6 +363,27 @@
   function chips(list, cls) {
     return list.length ? '<div class="chips">' + list.map(function (x) { return '<span class="chip ' + (cls || '') + '">' + x + '</span>'; }).join('') + '</div>' : '';
   }
+  // Genre/tag chips that open the work's library filtered by that value
+  function filterChips(s, kind, values, cls) {
+    if (!values.length) return '';
+    return '<div class="chips" aria-label="' + esc(t(kind === 'genre' ? 'filter.genre' : 'filter.tag')) + '">' + values.map(function (v) {
+      return '<a class="chip chip--filter ' + cls + '" href="#library/' + s.libraryId + '?' + kind + '=' + encodeURIComponent(v) + '">' + esc(v) + '</a>';
+    }).join('') + '</div>';
+  }
+
+  // The chapters/books of a work: a one-shot shows its pages; otherwise tiles or a list (work setting,
+  // else the library default)
+  function booksSection(s, books) {
+    if (!books.length) return '<h2 class="section-title">' + esc(t('series.books')) + '</h2>' + emptyState('book', '', t('lib.noBooks'));
+    var only = books[0];
+    if (s.oneshot && books.length === 1 && only.format === 'cbz' && only.pageCount && !only.error) {
+      return '<h2 class="section-title">' + esc(t('series.pages', { count: only.pageCount })) + '</h2>' + pageGrid(only);
+    }
+    var list = s.bookLayout === 'list';
+    return '<h2 class="section-title">' + esc(t('series.books')) + '</h2>' +
+      (list ? bookList(books) : grid(books.map(function (b) { return bookCard(b); })));
+  }
+
   // Online metadata: links to the sites it came from; admins can refresh, pick the right match or clear it
   var PROVIDER_NAMES = { anilist: 'AniList', mangadex: 'MangaDex', mangaupdates: 'MangaUpdates', kitsu: 'Kitsu', myanimelist: 'MyAnimeList',
     openlibrary: 'Open Library', googlebooks: 'Google Books', comicvine: 'Comic Vine' };
@@ -275,7 +409,8 @@
         }), 'chip--link')
       : '';
     var status = !md ? t('meta.never')
-      : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (md.locked ? ' · ' + t('meta.lockedTo', { provider: providerName(md.locked.provider) }) : '')
+      : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (md.locked ? ' · ' + t('meta.lockedTo', { provider: providerName(md.locked.provider) }) : '') +
+          (md.cover ? ' · ' + (md.coverProvider ? t('meta.coverFrom', { provider: providerName(md.coverProvider) }) : t('meta.coverDownloaded')) + (s.coverSource === 'metadata' ? '' : ' (' + t('meta.coverNotShown') + ')') : ' · ' + t('meta.noCover'))
       : t('meta.noMatch', { time: A().fmtDate(md.fetchedAt) });
     return '<div class="detail__in detail__meta-src">' +
       '<span class="muted small">' + esc(t('meta.sources')) + '</span>' + links +
@@ -331,7 +466,8 @@
             authorsLine(s.authors) +
             (s.altTitles && s.altTitles.length ? '<p class="muted small detail__alt">' + esc(s.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
             progressLine +
-            chips(s.tags.map(esc)) +
+            filterChips(s, 'genre', s.genres || [], 'chip--genre') +
+            filterChips(s, 'tag', s.tags, '') +
             '<div class="detail__actions">' +
               (next ? '<a class="btn btn--primary" href="#read/' + next.book.id + (next.fromStart ? '?page=1' : '') + '">' + icon('play') + esc(t(next.key)) + '</a>' : '') +
               '<button class="btn btn--outline" data-lib="series-toggle-read" data-id="' + s.id + '" data-done="' + (allRead ? '1' : '') + '">' + icon(allRead ? 'remove_done' : 'done_all') + esc(t(allRead ? 'series.markUnread' : 'series.markRead')) + '</button>' +
@@ -345,8 +481,7 @@
             (isAdmin() && s.path != null ? '<p class="muted small detail__path">' + icon('folder_open') + esc(s.path || '/') + '</p>' : '') +
           '</div>' +
         '</div>' +
-        '<h2 class="section-title">' + esc(t('series.books')) + '</h2>' +
-        (books.length ? grid(books.map(function (b) { return bookCard(b); })) : emptyState('book', '', t('lib.noBooks')));
+        booksSection(s, books);
     },
     enter: function (route) {
       var id = route.param;
@@ -556,6 +691,35 @@
     }
   };
 
+  /* ================= PROGRESS BARS ================= */
+  // "45 s", "3 min", "1 h 20 min"
+  function fmtTime(ms) {
+    var s = Math.max(1, Math.round(ms / 1000));
+    if (s < 60) return t('time.seconds', { n: s });
+    var m = Math.round(s / 60);
+    if (m < 60) return t('time.minutes', { n: m });
+    return t('time.hours', { h: Math.floor(m / 60), m: m % 60 });
+  }
+  // p: { percent (null = not known yet), etaMs (null = not estimated yet), elapsedMs }
+  function progressBar(p, label, detail) {
+    var known = p && p.percent != null;
+    var eta = !p ? '' : p.etaMs != null ? (p.etaMs < 5000 ? t('progress.almostDone') : t('progress.left', { time: fmtTime(p.etaMs) })) : known && p.percent < 100 ? t('progress.estimating') : '';
+    var parts = [label, known ? p.percent + '%' : '', detail || '', eta].filter(Boolean);
+    return '<div class="progress' + (known ? '' : ' progress--indeterminate') + '" role="progressbar" aria-label="' + esc(label) + '"' +
+        (known ? ' aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + p.percent + '"' : '') + '>' +
+      '<div class="progress__track"><span class="progress__fill" style="width:' + (known ? p.percent : 30) + '%"></span></div>' +
+      '<div class="progress__text small">' + esc(parts.join(' · ')) + (p && p.elapsedMs ? '<span class="muted"> · ' + esc(t('progress.elapsed', { time: fmtTime(p.elapsedMs) })) + '</span>' : '') + '</div>' +
+    '</div>';
+  }
+  // A running library scan: finding files (count so far) → reading new/changed files (x of y) → saving
+  function scanProgressBar(prog, full) {
+    var p = prog || { phase: 'listing' };
+    var label = (full ? t('manage.modeFull') + ': ' : '') + t('progress.phase.' + (p.phase || 'listing'));
+    var detail = p.phase === 'reading' ? t('progress.files', { done: p.done, total: p.total })
+      : p.phase === 'listing' ? t('progress.found', { count: p.filesSeen || 0 }) : '';
+    return progressBar(p, label, detail);
+  }
+
   /* ================= MANAGE LIBRARIES (admins) ================= */
   var pollTimer = null;
   function scanSummary(l) {
@@ -563,6 +727,7 @@
       var p = l.scanProgress || {};
       if (p.serviceStopped) return '<p class="notice">' + esc(t('manage.queuedStopped')) + ' <a href="#processes">' + esc(t('nav.processes')) + '</a></p>';
       if (p.queued) return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc(t('manage.queued')) + '</p>';
+      if (p.progress) return scanProgressBar(p.progress, p.full);
       return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc((p.full ? t('manage.modeFull') + ': ' : '') + t('manage.scanningNow', { seen: p.filesSeen || 0, analyzed: p.analyzed || 0 })) + '</p>';
     }
     if (l.scanError) return '<p class="notice notice--error">' + esc(A().errMsg({ code: l.scanError, message: l.scanError })) + '</p>';
@@ -718,7 +883,9 @@
               }).join('') + '</tbody></table></div>'
             : '') +
           '<h3 class="proc-sub">' + esc(t('proc.current')) + '</h3>' +
-          (cur
+          (cur && cur.progress
+            ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur.full)
+            : cur
             ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(cur.name) + '</strong> · ' +
                 esc(t(cur.full ? 'manage.modeFull' : 'manage.modeChanges')) + ' · ' +
                 esc(cur.toAnalyze ? t('proc.progress', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0, total: cur.toAnalyze }) : t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
@@ -737,17 +904,27 @@
 
       // Online metadata lookups (run inside the web server, one work at a time)
       var md = p.metadata;
+      // current: a list of works (several at once); an older server sent one object or null
+      var mdCurrent = md ? (Array.isArray(md.current) ? md.current : md.current ? [md.current] : []) : [];
+      var mdBusy = mdCurrent.length > 0 || (md && md.queue > 0);
       var metaCard = md ? '<section class="card proc-card">' +
           '<div class="proc-card__head"><span class="lib-card__icon">' + icon('download') + '</span>' +
             '<div><h2 class="card__title">' + esc(t('meta.service')) + '</h2>' +
-            '<span class="badge ' + (md.current ? 'badge--primary' : 'badge--ok') + '">' + esc(t(md.current ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
+            '<span class="badge ' + (mdBusy ? 'badge--primary' : 'badge--ok') + '">' + esc(t(mdBusy ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
           facts([
             ['proc.queue', esc(md.queue)],
+            md.concurrency ? ['meta.atOnce', esc(md.concurrency)] : null,
             ['meta.doneCount', esc(md.done)],
+            md.covers != null ? ['meta.coversDownloaded', esc(md.covers)] : null,
             md.lastError ? ['proc.lastError', esc(md.lastError)] : null
           ]) +
-          (md.current ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span>' + esc(t('meta.looking', { title: md.current.title })) + '</span></p>' : '') +
-          '<p class="field__help">' + esc(t('meta.serviceHelp')) + '</p>' +
+          (md.progress ? progressBar(md.progress, t('meta.batch'), t('progress.works', { done: md.progress.done, total: md.progress.total })) : '') +
+          (mdCurrent.length ? '<ul class="proc-list">' + mdCurrent.map(function (c) {
+            var what = c.step === 'cover' ? t('meta.stepCover', { provider: providerName(c.provider || '') })
+              : c.provider ? t('meta.stepSearching', { provider: providerName(c.provider) }) : '';
+            return '<li><span class="spinner spinner--sm"></span><span><strong>' + esc(c.title) + '</strong>' + (what ? ' <span class="muted small">' + esc(what) + '</span>' : '') + '</span></li>';
+          }).join('') + '</ul>' : '') +
+          '<p class="field__help">' + esc(t('meta.serviceHelp')) + ' <a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>' +
         '</section>' : '';
       return head + '<div class="cards">' + serverCard + scanCard + metaCard + '</div>';
     },
@@ -773,7 +950,8 @@
   /* ================= SERVER SETTINGS (admins) ================= */
   var SETTINGS_FIELDS = [
     { key: 'scanWorkers', label: 'cfg.scanWorkers', help: 'cfg.scanWorkersHelp' },
-    { key: 'scanConcurrency', label: 'cfg.scanConcurrency', help: 'cfg.scanConcurrencyHelp' }
+    { key: 'scanConcurrency', label: 'cfg.scanConcurrency', help: 'cfg.scanConcurrencyHelp' },
+    { key: 'metadataConcurrency', label: 'cfg.metadataConcurrency', help: 'cfg.metadataConcurrencyHelp', section: 'cfg.metadata' }
   ];
   var KEY_FIELDS = [
     { key: 'comicVineApiKey', label: 'Comic Vine', help: 'cfg.comicVineHelp', url: 'https://comicvine.gamespot.com/api/' },
@@ -790,9 +968,9 @@
         '<section class="card card--wide"><form class="form" id="config-form" novalidate>' +
           '<h2 class="card__title">' + esc(t('cfg.scanning')) + '</h2>' +
           '<p class="muted small">' + esc(t('cfg.cpus', { count: c.cpus })) + '</p>' +
-          SETTINGS_FIELDS.map(function (f) {
+          SETTINGS_FIELDS.filter(function (f) { return c.schema[f.key]; }).map(function (f) {
             var s = c.schema[f.key];
-            return '<div class="field">' +
+            return (f.section ? '<h2 class="card__title cfg-section">' + esc(t(f.section)) + '</h2>' : '') + '<div class="field">' +
               '<label for="cfg-' + f.key + '">' + esc(t(f.label)) + '</label>' +
               '<input id="cfg-' + f.key + '" name="' + f.key + '" type="number" inputmode="numeric" min="' + s.min + '" max="' + s.max + '" step="1" value="' + esc(c.values[f.key]) + '" class="input--short" />' +
               '<small class="field__help">' + esc(t(f.help)) + ' ' + esc(t('cfg.range', { min: s.min, max: s.max, def: s.default })) + '</small>' +
@@ -823,7 +1001,7 @@
       form.addEventListener('submit', function (e) {
         e.preventDefault();
         var patch = {};
-        SETTINGS_FIELDS.forEach(function (f) { patch[f.key] = Number(form.elements[f.key].value); });
+        SETTINGS_FIELDS.forEach(function (f) { if (form.elements[f.key]) patch[f.key] = Number(form.elements[f.key].value); });
         // Empty key field = keep the saved key
         KEY_FIELDS.forEach(function (f) { var el = form.elements[f.key]; if (el && el.value.trim()) patch[f.key] = el.value.trim(); });
         api('PATCH', '/api/config', patch).then(function (r) {
@@ -956,6 +1134,11 @@
   }
   function fail(e) { A().toast(A().errMsg(e)); }
 
+  // The library's default chapter layout (known to admins from the libraries list)
+  function libraryLayoutOf(s) {
+    var l = (cache.manage && cache.manage.libraries || []).concat(A().state.libraries || []).filter(function (x) { return x.id === s.libraryId && x.defaults; })[0];
+    return l ? l.defaults.bookLayout : 'tiles';
+  }
   function editSeries(id) {
     var s = cache.series[id].series, o = s.overrides || {};
     var dir = function (v) { return { value: v, label: t('series.direction.' + v) }; };
@@ -970,9 +1153,19 @@
         { name: 'publisher', label: t('edit.publisher'), value: o.publisher || '', placeholder: s.publisher },
         { name: 'type', label: t('meta.type'), type: 'select', value: o.type || '',
           options: [{ value: '', label: t('edit.auto') + (!o.type && s.type ? ' (' + t('type.' + s.type) + ')' : '') }].concat(WORK_TYPES.map(function (ty) { return { value: ty, label: t('type.' + ty) }; })) },
-        { name: 'readingDirection', label: t('edit.direction'), type: 'select', value: o.readingDirection || '', options: [{ value: '', label: t('edit.auto') + ' (' + t('series.direction.' + s.readingDirection) + ')' }, dir('ltr'), dir('rtl'), dir('vertical')] },
+        // Reading mode: blank = the library's default (a fixed mode) or, if it has none, what was detected
+        { name: 'readingDirection', label: t('edit.direction'), type: 'select', value: o.readingDirection || '', help: t('edit.directionHelp'),
+          options: [{ value: '', label: s.libraryDirection
+            ? t('edit.libraryDefault', { value: t('series.direction.' + s.libraryDirection) })
+            : t('edit.autoDetected', { value: t('series.direction.' + (s.detectedDirection || 'ltr')) }) }, dir('ltr'), dir('rtl'), dir('vertical')] },
+        { name: 'bookLayout', label: t('layout.label'), type: 'select', value: o.bookLayout || '',
+          options: [{ value: '', label: t('edit.libraryDefault', { value: t('layout.' + (o.bookLayout ? libraryLayoutOf(s) : s.bookLayout)) }) },
+            { value: 'tiles', label: t('layout.tiles') }, { value: 'list', label: t('layout.list') }] },
+        { name: 'cover', label: t('edit.cover'), type: 'select', value: o.cover || '', help: s.metadata && s.metadata.cover ? '' : t('edit.coverNoDownload'),
+          options: [{ value: '', label: t('edit.coverAuto') }, { value: 'file', label: t('edit.coverFile') }, { value: 'metadata', label: t('edit.coverMetadata') }] },
         { name: 'edition', label: t('edit.edition'), type: 'select', value: o.edition || '', help: t('edit.editionHelp'),
           options: [{ value: '', label: t('edit.auto') + (o.edition ? '' : ' (' + editionLabel(s.edition) + ')') }].concat(['base', 'colored', 'raw', 'uncensored', 'animated'].map(function (e) { return { value: e, label: editionLabel(e) }; })) },
+        { name: 'genres', label: t('edit.genres'), value: (o.genres || []).join(', '), placeholder: (s.genres || []).join(', '), help: t('edit.tagsHelp') },
         { name: 'tags', label: t('edit.tags'), value: (o.tags || []).join(', '), placeholder: s.tags.join(', '), help: t('edit.tagsHelp') }
       ],
       onSubmit: function (v) {
@@ -1114,9 +1307,18 @@
     var metaFields = all.length ? [
       { name: 'metaProviders', label: t('meta.providers'), type: 'providers', value: libraryProviders(lib, all), help: t('meta.providersHelp') },
       { name: 'metaAutoFetch', label: t('meta.autoFetch'), type: 'checkbox', value: md.autoFetch !== false, help: t('meta.autoFetchHelp') },
-      { name: 'metaCover', label: t('meta.cover'), type: 'select', value: md.cover || 'missing',
+      { name: 'metaCover', label: t('meta.cover'), type: 'select', value: md.cover || 'missing', help: t('meta.coverHelp'),
         options: ['missing', 'always', 'never'].map(function (v) { return { value: v, label: t('meta.cover.' + v) }; }) }
     ] : [];
+    // Defaults for the library's works (each work can override them in its Edit dialog)
+    var d = (lib && lib.defaults) || {};
+    var dir = function (v) { return { value: v, label: t('series.direction.' + v) }; };
+    var defaultFields = [
+      { name: 'defLayout', label: t('layout.libraryLabel'), type: 'select', value: d.bookLayout || 'tiles', help: t('layout.help'),
+        options: [{ value: 'tiles', label: t('layout.tiles') }, { value: 'list', label: t('layout.list') }] },
+      { name: 'defDirection', label: t('manage.defaultDirection'), type: 'select', value: d.readingDirection || '', help: t('manage.defaultDirectionHelp'),
+        options: [{ value: '', label: t('manage.directionAuto') }, dir('ltr'), dir('rtl'), dir('vertical')] }
+    ];
     openForm({
       title: t(lib ? 'manage.edit' : 'manage.add'),
       submitLabel: lib ? t('common.save') : t('manage.add'),
@@ -1127,14 +1329,14 @@
         // Files directly in the library folder are always individual works; optionally one more folder
         { name: 'oneshotsFolder', label: t('manage.oneshotsFolderExtra'), value: lib ? oneshotsOf(lib).folder : '',
           placeholder: t('manage.oneshotsNone'), help: t('manage.oneshotsHelpExtra') }
-      ].concat(metaFields),
+      ].concat(defaultFields, metaFields),
       onSubmit: function (v) {
-        var body = { name: v.name, root: v.root, oneshotsFolder: v.oneshotsFolder };
+        var body = { name: v.name, root: v.root, oneshotsFolder: v.oneshotsFolder, defaults: { bookLayout: v.defLayout, readingDirection: v.defDirection } };
         if (v.metaProviders) body.metadata = { providers: v.metaProviders, autoFetch: v.metaAutoFetch, cover: v.metaCover };
         var req = lib ? api('PATCH', '/api/libraries/' + lib.id, body) : api('POST', '/api/libraries', body);
         return req.then(function () {
           A().toast(t(lib ? 'manage.saved' : 'manage.created'));
-          invalidate();
+          invalidate(); cache.series = {};
           A().refreshLibraries();
           refreshCurrent();
         });

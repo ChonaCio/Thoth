@@ -471,6 +471,56 @@ a { color: var(--primary); text-decoration: none; }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }
 .chip { padding: 3px 10px; border-radius: 999px; background: var(--bg-alt); color: var(--text-muted); font-size: 12px; font-weight: 500; }
 .chip--link a { color: var(--primary); }
+a.chip--filter { text-decoration: none; }
+a.chip--filter:hover { background: var(--hover); color: var(--text); }
+.chip--genre { background: var(--primary-soft); color: var(--on-primary-soft); }
+
+/* ---- Library filters ---- */
+.toolbar--filters { justify-content: flex-start; gap: 8px; margin-top: -4px; }
+.toolbar__label { display: inline-flex; align-items: center; gap: 4px; }
+.toolbar__label [data-icon] svg { width: 18px; height: 18px; }
+.toolbar--filters .select { max-width: 220px; }
+.select.is-active { border-color: var(--primary); color: var(--primary); }
+
+/* ---- Work page: chapters as a list ---- */
+.book-list { list-style: none; margin: 0; padding: 0; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+.book-row { display: flex; align-items: center; gap: 4px; padding-right: 8px; }
+.book-row + .book-row { border-top: 1px solid var(--border); }
+.book-row:hover { background: var(--hover); }
+.book-row__main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 14px; padding: 10px 8px 10px 16px; color: inherit; text-decoration: none; position: relative; }
+.book-row__num { flex: none; min-width: 2.5em; font-variant-numeric: tabular-nums; font-weight: 500; color: var(--text-muted); }
+.book-row__text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.book-row__title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.book-row__sub { font-size: 12px; color: var(--text-muted); }
+.book-row__state { flex: none; display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); text-align: right; }
+.book-row__state [data-icon] svg { width: 16px; height: 16px; fill: var(--ok); }
+.book-row__bar { width: 56px; height: 4px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.book-row__bar span { display: block; height: 100%; background: var(--primary); }
+.book-row.is-read .book-row__title { color: var(--text-muted); }
+.book-row .cover__error { position: static; flex: none; }
+@media (max-width: 600px) {
+  .book-row__state span:not(.book-row__bar):not([data-icon]) { display: none; }
+}
+
+/* ---- One-shot work page: its pages ---- */
+.page-grid { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(clamp(96px, 11vw, 150px), 1fr)); }
+.page-tile { position: relative; display: block; aspect-ratio: 2 / 3; border-radius: 8px; overflow: hidden; background: var(--bg-alt); border: 2px solid transparent; }
+.page-tile:hover { border-color: var(--primary); }
+.page-tile.is-current { border-color: var(--primary); }
+.page-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.page-tile__num { position: absolute; left: 6px; bottom: 6px; padding: 1px 7px; border-radius: 999px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
+
+/* ---- Progress bars (scans, metadata lookups) ---- */
+.progress { display: flex; flex-direction: column; gap: 6px; margin: 4px 0; }
+.progress__track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.progress__fill { display: block; height: 100%; border-radius: 3px; background: var(--primary); transition: width 0.4s ease; }
+.progress--indeterminate .progress__fill { animation: progress-slide 1.4s ease-in-out infinite; }
+@keyframes progress-slide { from { transform: translateX(-100%); } to { transform: translateX(340%); } }
+@media (prefers-reduced-motion: reduce) { .progress--indeterminate .progress__fill { animation: none; width: 100% !important; opacity: 0.4; } }
+.progress__text { font-variant-numeric: tabular-nums; }
+.proc-current { margin: 0; }
+.proc-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.proc-list li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
 .prev-next { display: flex; justify-content: space-between; gap: 12px; margin-top: 32px; border-top: 1px solid var(--border); padding-top: 16px; }
 .prev-next__link { display: flex; align-items: center; gap: 8px; color: var(--text); max-width: 48%; padding: 8px; border-radius: 8px; }
 .prev-next__link:hover { background: var(--hover); }

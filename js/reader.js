@@ -25,12 +25,15 @@
   function loadPrefs(series) {
     var p = {};
     try { p = JSON.parse(localStorage.getItem('thoth.reader.' + series.id)) || {}; } catch (e) { /* none */ }
-    var mode = MODES.indexOf(p.mode) !== -1 ? p.mode : (series.readingDirection || 'ltr');
-    var fit = FITS.indexOf(p.fit) !== -1 ? p.fit : (mode === 'vertical' ? 'width' : 'screen');
+    // The work's reading mode (its own setting, the library default or detected). A mode picked in the
+    // reader is remembered, until an administrator changes the default (p.base = the default it was picked against).
+    var def = series.readingDirection || 'ltr';
+    var mode = MODES.indexOf(p.mode) !== -1 && (p.base === undefined || p.base === def) ? p.mode : def;
+    var fit = FITS.indexOf(p.fit) !== -1 && mode === p.mode ? p.fit : (mode === 'vertical' ? 'width' : 'screen');
     return { mode: mode, fit: fit };
   }
   function savePrefs() {
-    try { localStorage.setItem('thoth.reader.' + st.series.id, JSON.stringify({ mode: st.mode, fit: st.fit })); } catch (e) { /* ignore */ }
+    try { localStorage.setItem('thoth.reader.' + st.series.id, JSON.stringify({ mode: st.mode, fit: st.fit, base: st.series.readingDirection || 'ltr' })); } catch (e) { /* ignore */ }
   }
 
   /* ---------------- open / close ---------------- */

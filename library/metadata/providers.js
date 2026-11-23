@@ -100,7 +100,8 @@ const anilist = {
       year: m.startDate && m.startDate.year || undefined, type,
       authors: authors.length ? authors : undefined,
       // Genres, plus the community's strongest tags (AniList lists dozens per popular title)
-      tags: uniq([...(m.genres || []), ...((m.tags || []).filter(t => t.rank >= 80 && !t.isMediaSpoiler).sort((a, b) => b.rank - a.rank).slice(0, 8).map(t => t.name))]),
+      genres: uniq(m.genres || []),
+      tags: uniq((m.tags || []).filter(t => t.rank >= 80 && !t.isMediaSpoiler).sort((a, b) => b.rank - a.rank).slice(0, 8).map(t => t.name)),
       rating: m.averageScore || undefined,
       cover: m.coverImage && (m.coverImage.extraLarge || m.coverImage.large),
       readingDirection: type === 'manga' ? 'rtl' : undefined,
@@ -144,6 +145,7 @@ const mangadex = {
     if (!m) return null;
     const a = m.attributes;
     const tags = (a.tags || []).map(t => firstValue(t.attributes.name));
+    const genres = (a.tags || []).filter(t => t.attributes.group === 'genre').map(t => firstValue(t.attributes.name));
     const authors = (m.relationships || []).filter(x => (x.type === 'author' || x.type === 'artist') && x.attributes)
       .map(x => ({ name: x.attributes.name, role: x.type === 'author' ? 'writer' : 'penciller' }));
     const b = mdBasics(m);
@@ -151,7 +153,8 @@ const mangadex = {
       summary: cleanText(firstValue(a.description)),
       status: { ongoing: 'ongoing', completed: 'ended', hiatus: 'hiatus', cancelled: 'abandoned' }[a.status],
       authors: authors.length ? authors : undefined,
-      tags: uniq([...tags.filter(t => t !== 'Long Strip' && t !== 'Web Comic' && t !== 'Full Color'), a.publicationDemographic && a.publicationDemographic[0].toUpperCase() + a.publicationDemographic.slice(1)]),
+      genres: uniq(genres),
+      tags: uniq([...tags.filter(t => !genres.includes(t) && t !== 'Long Strip' && t !== 'Web Comic' && t !== 'Full Color'), a.publicationDemographic && a.publicationDemographic[0].toUpperCase() + a.publicationDemographic.slice(1)]),
       readingDirection: tags.includes('Long Strip') ? 'vertical' : b.type === 'manga' ? 'rtl' : undefined,
       ageRating: a.contentRating === 'pornographic' || a.contentRating === 'erotica' ? 'Adults Only 18+' : undefined
     });
@@ -190,7 +193,8 @@ const mangaupdates = {
       year: yearOf(s.year), type: muType(s.type),
       publisher: ((s.publishers || []).find(p => p.type === 'Original') || (s.publishers || [])[0] || {}).publisher_name,
       authors: (s.authors || []).length ? s.authors.map(a => ({ name: a.name, role: a.type === 'Artist' ? 'penciller' : 'writer' })) : undefined,
-      tags: uniq((s.genres || []).map(g => g.genre)),
+      genres: uniq((s.genres || []).map(g => g.genre)),
+      tags: uniq((s.categories || []).filter(c => (c.votes || 0) >= 5).sort((x, y) => (y.votes || 0) - (x.votes || 0)).slice(0, 8).map(c => c.category)),
       rating: s.bayesian_rating ? Math.round(s.bayesian_rating * 10) : undefined,
       cover: s.image && s.image.url && s.image.url.original,
       readingDirection: muType(s.type) === 'manga' ? 'rtl' : undefined
@@ -230,7 +234,7 @@ const kitsu = {
       summary: cleanText(a.synopsis || a.description),
       status: { current: 'ongoing', finished: 'ended' }[a.status],
       authors: authors.length ? authors : undefined,
-      tags: uniq(inc.filter(x => x.type === 'categories').map(x => x.attributes.title)),
+      genres: uniq(inc.filter(x => x.type === 'categories').map(x => x.attributes.title)),
       rating: a.averageRating ? Math.round(Number(a.averageRating)) : undefined,
       readingDirection: kitsuType(a.subtype) === 'manga' ? 'rtl' : undefined,
       ageRating: a.ageRating === 'R18' ? 'Adults Only 18+' : undefined
@@ -265,7 +269,8 @@ const myanimelist = {
       status: { Publishing: 'ongoing', Finished: 'ended', 'On Hiatus': 'hiatus', Discontinued: 'abandoned' }[m.status],
       publisher: ((m.serializations || [])[0] || {}).name,
       authors: (m.authors || []).length ? m.authors.map(a => ({ name: flipName(a.name), role: 'writer' })) : undefined,
-      tags: uniq([...(m.genres || []), ...(m.themes || []), ...(m.demographics || [])].map(g => g.name)),
+      genres: uniq((m.genres || []).map(g => g.name)),
+      tags: uniq([...(m.themes || []), ...(m.demographics || [])].map(g => g.name)),
       rating: m.score ? Math.round(m.score * 10) : undefined,
       readingDirection: type === 'manga' ? 'rtl' : undefined
     });
@@ -304,7 +309,9 @@ const openlibrary = {
       summary: cleanText(typeof w.description === 'string' ? w.description : w.description && w.description.value),
       year: yearOf(w.first_publish_date), type: olType(subjects),
       authors: authors.length ? authors : undefined,
-      tags: uniq(subjects.slice(0, 12)),
+      // Subjects are free-form: drop bookkeeping entries ("nyt:…=2009-03-15", "Accessible book") and long ones
+      tags: uniq(subjects.filter(x => !/[:=]|accessible book|protected daisy|in library|large type|^fiction$/i.test(x) && x.length <= 40)
+        .map(x => x.replace(/,\s*(fiction|juvenile fiction)$/i, '')).slice(0, 8)),
       cover: (w.covers || []).find(c => c > 0) ? `https://covers.openlibrary.org/b/id/${w.covers.find(c => c > 0)}-L.jpg` : undefined
     };
   }
@@ -335,7 +342,7 @@ const googlebooks = {
     return Object.assign(gbBasics(v), {
       summary: cleanText(i.description), publisher: i.publisher,
       authors: (i.authors || []).length ? i.authors.map(n => ({ name: n, role: 'writer' })) : undefined,
-      tags: uniq((i.categories || []).flatMap(c => c.split(/\s*\/\s*/))),
+      genres: uniq((i.categories || []).flatMap(c => c.split(/\s*\/\s*/))),
       rating: i.averageRating ? Math.round(i.averageRating * 20) : undefined,
       ageRating: i.maturityRating === 'MATURE' ? 'Mature 17+' : undefined
     });

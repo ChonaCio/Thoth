@@ -358,7 +358,7 @@ function walk(dir, base = dir, out = []) {
 
 // Code the running server has loaded: changing it only takes effect after a restart.
 // (index.html, css/ and js/ are sent to browsers fresh on every load; deploy/ and scripts/ aren't loaded.)
-const BROWSER_OR_TOOLING = new Set(['js', 'css', 'deploy', 'scripts']);
+const BROWSER_OR_TOOLING = new Set(['js', 'css', 'deploy', 'scripts', 'tests']);
 function isServerCode(rel) {
   const parts = rel.split(/[\\/]/);
   if (parts.length > 1 && BROWSER_OR_TOOLING.has(parts[0])) return false;

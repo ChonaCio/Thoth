@@ -99,11 +99,25 @@ function splitEdition(name) {
 /* ---------------- metadata (scanned values + admin overrides) ---------------- */
 // Precedence: admin edits > the files' own metadata (ComicInfo.xml) > online providers. Titles are never
 // taken from providers (the library's names group versions and stay recognizable).
+const BOOK_LAYOUTS = ['tiles', 'list'];
+const DIRECTIONS = ['ltr', 'rtl', 'vertical'];
+// A library's defaults for its works: { bookLayout: 'tiles'|'list', readingDirection: null (automatic)|'ltr'|'rtl'|'vertical' }
+function libraryDefaults(lib) {
+  const d = (lib && lib.defaults) || {};
+  return {
+    bookLayout: BOOK_LAYOUTS.includes(d.bookLayout) ? d.bookLayout : 'tiles',
+    readingDirection: DIRECTIONS.includes(d.readingDirection) ? d.readingDirection : null
+  };
+}
 const filled = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length)));
 function seriesMeta(s) {
   const online = filled(s.provider && s.provider.merged);
   delete online.title;
-  const m = Object.assign({}, online, filled(s.meta), filled(s.overrides));
+  const overrides = filled(s.overrides);
+  const m = Object.assign({}, online, filled(s.meta), overrides);
+  const defaults = libraryDefaults(db.libraries[s.libraryId]);
+  // Reading mode: the work's own setting > the library's fixed default > detected (files, then online) > left to right
+  const readingDirection = overrides.readingDirection || defaults.readingDirection || m.readingDirection || 'ltr';
   // Version: admin override, else a suffix on the folder/file name, else on the title, else Regular
   const fromTitle = splitEdition(m.title || s.name);
   const fromName = splitEdition(s.name);
@@ -118,7 +132,14 @@ function seriesMeta(s) {
     summary: m.summary || '',
     status: m.status || 'unknown', // ongoing | ended | hiatus | abandoned | unknown
     publisher: m.publisher || '',
-    readingDirection: m.readingDirection || 'ltr', // ltr | rtl | vertical
+    readingDirection, // ltr | rtl | vertical (continuous)
+    // Detected reading mode (files/online), shown as "Automatic (…)" when editing
+    detectedDirection: Object.assign({}, online, filled(s.meta)).readingDirection || 'ltr',
+    // How the work page lists chapters/books: the work's own setting > the library default
+    bookLayout: BOOK_LAYOUTS.includes(overrides.bookLayout) ? overrides.bookLayout : defaults.bookLayout,
+    // Which cover to show: 'file' (first page), 'metadata' (downloaded) or null (library setting decides)
+    coverChoice: ['file', 'metadata'].includes(overrides.cover) ? overrides.cover : null,
+    genres: Array.isArray(m.genres) ? m.genres : [],
     tags: Array.isArray(m.tags) ? m.tags : [],
     ageRating: m.ageRating || null,
     type: m.type || null, // manga | manhwa | manhua | webcomic | comic | novel | book | other
@@ -211,7 +232,9 @@ function seriesView(s, user, { admin = false } = {}) {
     title: m.title, edition: m.edition, workKey: m.workKey, sortTitle: m.sortTitle, summary: m.summary, status: m.status, publisher: m.publisher,
     depth: String(s.relPath || '').split(/[\\/]/).filter(Boolean).length, // folder depth in the library (tie-breaker when grouping versions)
     readingDirection: m.readingDirection, tags: m.tags, ageRating: m.ageRating,
-    type: m.type, year: m.year, rating: m.rating, authors: m.authors, altTitles: m.altTitles,
+    type: m.type, year: m.year, rating: m.rating, authors: m.authors, altTitles: m.altTitles, genres: m.genres,
+    bookLayout: m.bookLayout, detectedDirection: m.detectedDirection, coverChoice: m.coverChoice,
+    libraryDirection: libraryDefaults(db.libraries[s.libraryId]).readingDirection,
     created: s.created, updated: s.updated,
     coverBookId: cover ? cover.id : null, coverV: cover ? Math.round(Date.parse(cover.fileModified || 0) / 1000) : 0,
     coverFormat: cover ? cover.format : null,
@@ -221,7 +244,7 @@ function seriesView(s, user, { admin = false } = {}) {
     metadata: s.provider ? {
       fetchedAt: s.provider.fetchedAt, links: s.provider.links || [], sources: s.provider.sources || {},
       matched: (s.provider.matches || []).length > 0, locked: s.provider.locked || null,
-      cover: Boolean(s.provider.coverFile), errors: admin ? s.provider.errors || [] : undefined
+      cover: Boolean(s.provider.coverFile), coverProvider: s.provider.coverFile ? s.provider.coverProvider || null : null, errors: admin ? s.provider.errors || [] : undefined
     } : null,
     overrides: s.overrides || {}
   }, seriesCounts(s, user));
@@ -232,6 +255,9 @@ function seriesView(s, user, { admin = false } = {}) {
 // Use the downloaded cover? Per library: 'always', 'missing' (only when the files have no cover page) or 'never'
 function coverFromMetadata(s) {
   if (!s.provider || !s.provider.coverFile) return false;
+  const choice = (s.overrides || {}).cover; // the work's own choice wins
+  if (choice === 'metadata') return true;
+  if (choice === 'file') return !(booksBySeries.get(s.id) || []).some(b => b.format === 'cbz' && b.pageCount);
   const mode = ((db.libraries[s.libraryId] || {}).metadata || {}).cover || 'missing';
   if (mode === 'never') return false;
   if (mode === 'always') return true;
@@ -243,5 +269,5 @@ module.exports = {
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
-  bookView, seriesView, seriesCounts, coverFromMetadata
+  bookView, seriesView, seriesCounts, coverFromMetadata, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS
 };

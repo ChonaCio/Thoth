@@ -48,7 +48,8 @@ function parseComicInfo(xml) {
     publisher: xmlText(xml, 'Publisher') || undefined,
     releaseDate: /^\d{4}$/.test(y) ? `${y}-${String(mo || 1).padStart(2, '0')}-${String(d || 1).padStart(2, '0')}` : undefined,
     authors: authors.length ? authors : undefined,
-    tags: [...list(xmlText(xml, 'Genre')), ...list(xmlText(xml, 'Tags'))],
+    genres: list(xmlText(xml, 'Genre')),
+    tags: list(xmlText(xml, 'Tags')),
     ageRating: xmlText(xml, 'AgeRating') || undefined,
     readingDirection: manga === 'yesandrighttoleft' ? 'rtl' : (/webtoon/i.test(xmlText(xml, 'Format')) ? 'vertical' : undefined)
   };

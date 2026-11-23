@@ -18,11 +18,16 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   MangaUpdates, Kitsu, MyAnimeList, Open Library, Google Books and Comic Vine. Each library chooses which
   sources to use and in what order. See [Online metadata](#online-metadata).
 - **Browse**: Home (*Keep reading*, *On deck* = next book in series you've started, recently added),
-  per-library series grids with filter, sort and read-status filters, series and book pages, global search
-  (series, books, authors, tags, collections, read lists).
-- **Reader**: left-to-right, right-to-left (manga) and vertical scroll (webtoon); fit to screen, width,
+  per-library grids with text search, sort, read status and **filters by type, status, genre, tag and
+  metadata state** (each option shows how many works have it; genre/tag chips on a work page open the filtered
+  library), series and book pages, global search (series, books, authors, genres, tags, collections, read lists).
+- **Work page**: chapters as **tiles or a list** (library default, changeable per work). A one-shot shows
+  its **pages** instead, each opening the reader at that page.
+- **Reader**: left to right, right to left (manga) and continuous (vertical scroll, webtoon); fit to screen, width,
   height or original size; keyboard, tap zones, swipe and a page slider; preloads upcoming pages; saves
-  your page as you read and offers the next book at the end. Settings are remembered per series.
+  your page as you read and offers the next book at the end. The **default reading mode** is set per library
+  (or automatic from the files/metadata) and per work; a mode picked in the reader is remembered per work
+  in that browser until an administrator changes the default.
 - **Progress**: per user; mark books or whole series as read/unread.
 - **Collections** (groups of series) and **read lists** (books from any series, in reading order).
   Administrators create and edit them; everyone sees the parts they have access to.
@@ -116,11 +121,15 @@ them in small batches, each process reading several files at once. Libraries are
 | --- | --- | --- |
 | Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each). Changing it restarts the scan service. |
 | Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
+| Works looked up at once | 3 | Metadata lookups running in parallel (1–8). Each site still gets a pause between requests. |
 | Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
 **Processes page (administrators).** Shows the web server, the scan service and the metadata lookups:
-process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting.
+process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting. Scans and
+metadata batches show a **progress bar with the time left**, estimated from the speed so far (scans: finding
+files → reading new/changed files *x of y* → saving; metadata: works done of the batch, and which site each
+work is being checked on). Manage libraries shows the same bar on a library being scanned.
 - **Scan service: Start / Stop / Restart.** Stopping cancels the scan in progress (it starts over later);
   scans requested while stopped wait in line. A stopped service stays stopped across server restarts until
   you start it. If the service crashes it restarts by itself, and gives up after 3 crashes in a minute.
@@ -150,19 +159,24 @@ order them with the arrows.
 - **How results are combined.** For each work, the enabled sources are asked in order with the work's title
   (the folder name without its version suffix). A result counts only if its title (or an alternative title)
   is a close match; the publication year from the books breaks ties. The **first** good match fills each field
-  (summary, status, year, type, publisher, authors, tags, rating, cover, reading direction, age rating);
-  later sources only fill fields still empty. It stops once the main fields are filled.
+  (summary, status, year, type, publisher, authors, genres, tags, rating, cover, reading direction, age rating);
+  later sources only fill fields still empty. It stops once the main fields are filled. **Genres** (Action,
+  Romance, …) are kept apart from **tags** (themes like *Time Travel*), both from the sites and from
+  `ComicInfo.xml` (`<Genre>` vs `<Tags>`).
 - **What wins.** Your edits (series *Edit*) > the files' `ComicInfo.xml` > online metadata. Titles always stay
   the library's, so versions keep grouping and works stay recognizable.
 - **When.** With *Fetch metadata automatically* on (default), works that were never looked up are queued
   after each scan. *Fetch metadata* (missing ones) and *Refresh all metadata* are on each library's card, and
   every work page has **Refresh metadata**, **Identify** (search the sites and pick the right match; it
   sticks for future refreshes) and **Clear metadata**.
-- **Covers.** Downloaded once to `data/covers/`. Per library: use them only when the files have no cover
-  page (default, e.g. PDFs), always, or never.
-- **Rate limits.** Lookups run inside the web server one work at a time, with a pause between requests to the
-  same site and automatic retries when a site says "too many requests". A big library takes a while the
-  first time; the Processes page shows progress.
+- **Covers** are downloaded as part of every metadata check (from the first source that has one; if that
+  image fails, the next source's) and stored in `data/covers/`. Per library: show them only when the files
+  have no cover page (default, e.g. PDFs), always, or never (never = not downloaded). Per work (Edit → Cover):
+  library setting, first page, or downloaded cover. *Fetch metadata* also downloads covers still missing for
+  matched works. The work page says where its cover came from.
+- **Rate limits.** Lookups run inside the web server, several works at once (Server settings, default 3), with
+  a pause between requests to the same site and automatic retries when a site says "too many requests". A big
+  library takes a while the first time; the Processes page shows progress and time left.
 - **Privacy.** Only work titles (and, for Identify, what you type) are sent to the metadata sites, with a
   generic user agent. Nothing about your users or server is sent. Turn off every source of a library to keep
   it fully offline.
@@ -231,6 +245,20 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
   -v thoth-app:/app -v /srv/comics:/media:ro thoth
 ```
 
+### Library and work settings
+
+| Setting | Library (Manage libraries → Edit) | Work (its page → Edit) |
+| --- | --- | --- |
+| Chapters shown as | Tiles (default) or List | Library default, Tiles or List |
+| Reading mode | Automatic (default: `ComicInfo.xml`, then online metadata, else left to right), or a fixed mode for every work | Library default/automatic, Left to right, Right to left, Continuous |
+| Cover | Metadata covers: only when missing (default), always, never | Library setting, First page, Downloaded |
+
+## Tests
+
+`npm test` runs the offline suites (about a minute); `node tests/run.js all` adds the slow and online ones
+(scan processes, metadata sites, GitHub). Each suite starts the server from this folder with its own
+temporary data folder, so `data/` is never touched. See [HANDOFF.md](HANDOFF.md) for details.
+
 ## Structure
 
 | File | Purpose |
@@ -251,6 +279,8 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |
+| `tests/` | Test suites and runner (`npm test`) |
+| `HANDOFF.md` | State of the project for whoever works on it next |
 
 ## Updates
 

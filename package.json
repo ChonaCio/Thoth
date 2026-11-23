@@ -2,11 +2,12 @@
   "name": "thoth",
   "version": "0.1.0",
   "private": true,
-  "description": "Web app shell with login, sidebar, and Google-style account menu",
+  "description": "Self-hosted comic, manga and book server",
   "thoth": {
     "updateRepo": "ChonaCio/Thoth"
   },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node tests/run.js"
   }
 }

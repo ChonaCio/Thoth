@@ -15,6 +15,8 @@ const SCHEMA = {
   scanWorkers: { default: Math.min(4, Math.max(1, CPUS - 1)), min: 1, max: Math.max(1, Math.min(16, CPUS * 2)) },
   // Files each worker process reads at the same time (helps on fast disks and network storage)
   scanConcurrency: { default: 4, min: 1, max: 32 },
+  // Works looked up on metadata sites at the same time (each site still gets a pause between requests)
+  metadataConcurrency: { default: 3, min: 1, max: 8 },
   // API keys for metadata providers (secret: never sent back to the browser, only whether one is set)
   comicVineApiKey: { default: '', secret: true },
   googleBooksApiKey: { default: '', secret: true }
