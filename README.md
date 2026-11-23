@@ -22,12 +22,25 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
 - **Folder metadata sources**: your own JSON files matched by name (`11.json` → `11.cbz`), managed on the
   Metadata sources page. See [Metadata sources page and folder sources](#metadata-sources-page-and-folder-sources).
 - **Browse**: Home (*Keep reading*, *On deck* = next book in series you've started, recently added),
-  per-library grids with text search, sort, read status and **filters by type, status, genre, tag and
-  metadata state** (each option shows how many works have it; genre/tag chips on a work page open the filtered
-  library), series and book pages, global search (series, books, authors, genres, tags, collections, read lists).
+  per-library grids with text search, sort, read status and an **advanced search** (*Search & filters*): every
+  type, status, genre, tag and metadata state can be **included or excluded** (click once to include, twice to
+  exclude), combined with a year range and an author. Works need all included genres/tags and none of the
+  excluded ones; for type, status and metadata any included value matches. Each value shows how many works
+  have it, the chosen criteria show as removable chips, and the address keeps them (bookmarkable). Genre/tag
+  chips on a work page open the library filtered by them. Global search covers series, books, authors,
+  genres, tags, collections and read lists.
+- **Page cache**: pages you've opened are kept in the browser. Switching between them within a minute needs
+  no request at all; after that, or after something changed, the page shows at once and refreshes in the
+  background.
+- **Deleting works** (administrators, work page → *Delete*): **hide** it (logical delete: gone for everyone,
+  files untouched, stays hidden after scans; *Hidden works* on the library page lists them with *Restore*) or
+  **delete its files** from the disk (physical: type the title to confirm; the work's folder goes too if it's
+  left empty; files the server can't delete — read-only mounts, no permission — are reported and kept). With
+  several versions you choose this version or all of them.
 - **Going back** (browser Back or the back link) returns to exactly where you were: same scroll position, the
   same works loaded with *Load more*, same search, order and filters. All work tiles have the same size.
-- **Work page**: chapters as **tiles or a list** (library default, changeable per work). A one-shot shows
+- **Work page**: chapters as **tiles or a list**, **first or last chapter first** (both: library default,
+  changeable per work; readers can flip the order on the page, remembered per work). A one-shot shows
   its **pages** instead, each opening the reader at that page.
 - **Reader**: left to right, right to left (manga) and continuous (vertical scroll, webtoon); fit to screen, width,
   height or original size; keyboard, tap zones, swipe and a page slider; preloads upcoming pages; saves
@@ -223,12 +236,18 @@ A **folder source** is a folder of JSON files you keep, matched to your files by
 - **Covers:** an image named like the work's JSON (`One Piece.jpg`/`.png`/`.webp`), or the JSON's `"cover"`
   (a path inside the folder). Shown according to the library's/work's cover setting.
 - **JSON keys** (any case; ComicInfo names like `Summary`, `Genre`, `Writer` work too):
-  books: `title`, `number` (or `chapter`, `issue`, `volume`), `summary`, `date`/`releaseDate`, authors;
-  works: `summary`, `status` (ongoing/completed/hiatus/cancelled), `type` (manga, manhwa, …), `year`,
-  `publisher`, `genres`, `tags`, `rating` (0–10 or 0–100), `ageRating`, `readingDirection` (rtl/ltr/
-  continuous), `altTitles`, `sortTitle`, `cover`, and authors as `authors` (names or `{name, role}`) or
-  `writer`/`artist`/`penciller`/`colorist`/`letterer`/`editor`. Other keys are ignored. Work titles always
-  stay the library's.
+  - `title`: a text, or a **list** whose first entry is the main title and the rest alternative titles
+    (`"title": ["One Piece", "ワンピース", "OP"]`). For a work, the main title is shown as its title (versions
+    still group by folder name).
+  - `tags`, `genres`: lists (or comma-separated text).
+  - `artists` (list → artists), `writers`/`authors` (list of names or `{name, role}`), or single `writer`,
+    `artist`, `penciller`, `colorist`, `letterer`, `editor`.
+  - books also: `number` (or `chapter`, `issue`, `volume`), `summary`, `date`/`releaseDate`;
+    works also: `summary`, `status` (ongoing/completed/hiatus/cancelled), `type` (manga, manhwa, …), `year`,
+    `publisher`, `rating` (0–10 or 0–100), `ageRating`, `readingDirection` (rtl/ltr/continuous),
+    `altTitles`, `sortTitle`, `cover`. Other keys are ignored.
+- **In memory:** a source's JSON files are read once and kept in memory (parsed); later runs only re-read
+  files whose size or date changed, and matching works and books against them never touches the disk.
 - **Precedence:** your edits > folder sources > `ComicInfo.xml` > online sites. Several folder sources:
   the first in the library's order fills each field. Folder sources always come before online sites.
 - **When it's read:** after every scan (new chapters get their JSON right away), on *Refresh metadata*, and
@@ -307,6 +326,7 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
 | --- | --- | --- |
 | Default order of works | Title A–Z (default), Recently added or Recently updated (readers can still change it on the page) | — |
 | Chapters shown as | Tiles (default) or List | Library default, Tiles or List |
+| Chapter order | First chapter first (default) or Last chapter first | Library default, either (readers can flip it on the page) |
 | Reading mode | Automatic (default: `ComicInfo.xml`, then online metadata, else left to right), or a fixed mode for every work | Library default/automatic, Left to right, Right to left, Continuous |
 | Cover | Metadata covers: only when missing (default), always, never | Library setting, First page, Downloaded |
 

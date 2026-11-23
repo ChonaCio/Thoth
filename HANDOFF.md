@@ -4,7 +4,7 @@ Read this before changing anything. **Keep it up to date**: whenever a change la
 sections it touches (what exists, conventions, known gaps, recent changes). User-facing documentation
 lives in [README.md](README.md); this file is for whoever develops Thoth next.
 
-_Last updated: 2026-11-23 (quick scans, delta updates, default order, back navigation)_
+_Last updated: 2026-11-23 (advanced search, deleting works, page cache, chapter order, JSON lists in memory)_
 
 ## What Thoth is
 
@@ -54,13 +54,14 @@ from GitHub (`ChonaCio/Thoth`).
 - `libraries[id]`: `{ id, name, root, created, oneshots: { folder }, defaults: { sort: 'title'|'added'|'updated', bookLayout: 'tiles'|'list', readingDirection: null|'ltr'|'rtl'|'vertical' }, metadata: { providers: [{ id, enabled }], autoFetch, cover: 'missing'|'always'|'never' }, lastScan, scanError }`
 - `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt (last change), checkedAt (last check) }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion }) }`
 - `books[id]`: `{ id, seriesId, libraryId, relPath, fileName, format, pageCount, size, fileModified, meta, local ({ merged, sourceId, file }), overrides, index, readVersion }`
+- Works can be hidden: `series.hidden = { at, by }` (logical delete). `api.js` filters hidden works/books out of every list for everyone (`shown`/`bookShown`); admins open them and list them with `?deleted=1`. Physical delete: `deleteWorkFiles` (unlink inside the library folder only, empty folder removed, failures reported).
 - `metadataSources[id]` (folder sources): `{ id: 'folder-…', name, folder (absolute), match: 'path'|'name', created, updated }`. `s.local`/`b.local` are recomputed from the JSON files by `applyLocal` (after every scan, Refresh, source/library changes), so they can always be thrown away.
 - `data/scan-index/<library>.json` (not in library.json): `{ version: 1, root, dirs: { relDir: { mtimeMs, files: [[name, size, modified]], dirs, unsupported } } }` from the last scan; safe to delete (the next scan is then a "changes" scan).
 - IDs are stable hashes of library + path, so rescans and one-shot setting changes keep progress.
 
 **Precedence of a work's values** (`seriesMeta`): admin overrides > folder sources > `ComicInfo.xml` >
 online metadata; books (`bookMeta`): overrides > folder source JSON > `ComicInfo.xml`. Work titles never come
-from providers or folder sources (book titles can). Reading mode: work override > library fixed default > detected (files,
+from online providers; a folder source's main title is shown (book titles can come from both). Reading mode: work override > library fixed default > detected (files,
 then online) > `ltr`. Layout: work override > library default > tiles.
 
 **Versions of a work**: folders `X`, `X (Colored)`, `X [Raw]`, … group into one work by folder name
@@ -90,6 +91,8 @@ through `/api/setup`, and use the browser.
   object (parse/validate in `api.js`); per work in `series.overrides`.
 - The client tolerates an older server (missing fields → defaults), because after an update the page can talk
   to the old process for a moment.
+- Page cache (`js/library.js`): `load(hash, fn, get)` skips the request while `get()` is fresh (`FRESH_MS` 60 s, stamped `_at`); `invalidate()`/`markStale()` mark entries stale instead of dropping them (shown at once, refreshed in the background). Use `markStale(cache.x)`, never `cache.x = {}`.
+- Advanced search: client state `st.inc[f]`/`st.exc[f]` for type/status/genre/tag/metadata + yearFrom/yearTo/author; API params are repeated keys (`genre=a&genre=b&xgenre=c`). genre/tag = all included and none excluded; single-valued fields = any included, none excluded.
 - Library pages keep their state (search, sort, filters, loaded works) in `cache.libs`; `invalidate()` marks it
   `stale` instead of dropping it, and `enter()` reloads as many works as were loaded, so Back keeps the place.
 - Work tiles: one size everywhere (`--tile-w` in `styles.css`; titles reserve two lines). Card grids for
@@ -122,6 +125,8 @@ through `/api/setup`, and use the browser.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+
+- **2026-11-23** — Chapter order (library `defaults.bookOrder` + work `overrides.bookOrder` + per-browser toggle); advanced search with include/exclude, year range and author (replaces the single filter selects); hiding (`series.hidden`) and physically deleting works, hidden-works view with restore; page cache with freshness (no requests when switching pages within 60 s); folder sources keep parsed JSON in memory (`indexCache`; unchanged files reused, matching purely in memory, `applyLocal` reports `jsonRead`/`jsonReused`); JSON `title` lists (main + alternative titles; a work's main title is now displayed), `tags`/`artists` lists, book tags/genres/alt titles; a work without its own year/authors takes them from its books (`fromBooks`). New suite `tests/test-works.js`.
 
 - **2026-11-23** — Saved scan index + quick scans (startup/schedule look only into changed folders; first scan
   and new folders are full; *Scan changes* checks every file); delta update installs (only changed files

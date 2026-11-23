@@ -26,10 +26,31 @@ const TYPES = ['manga', 'manhwa', 'manhua', 'webcomic', 'comic', 'novel', 'book'
 const slash = p => p.split(path.sep).join('/');
 const keyOf = rel => slash(rel).replace(/\.[^./]+$/, '').toLowerCase(); // "One Piece/11.cbz" → "one piece/11"
 
-/* ---------------- reading a source folder ---------------- */
-// { files: Map(key → { json, image }), byName: Map(base → [key]), count, truncated }
-async function buildIndex(folder) {
-  const files = new Map(), byName = new Map();
+/* ---------------- reading a source folder ----------------
+ * The index holds everything matching needs, in memory: every JSON file's key, path, size, date and its
+ * parsed contents ({ data } or { error }), plus images. Building it reads only JSON files that are new or
+ * changed since `prev` (same path, size and date → the parsed data is reused); matching afterwards never
+ * touches the disk.
+ * { folder, files: Map(key → { json, image, size, mtimeMs, data, error }), byName: Map(base → [key]),
+ *   count, truncated, parsed (files read this time), reused } */
+async function mapLimit(items, limit, fn) {
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, async () => {
+    while (next < items.length) { const i = next++; await fn(items[i], i); }
+  }));
+}
+async function parseFile(file, size) {
+  if (size > MAX_JSON) return { error: 'file is too large (over 2 MB)' };
+  try {
+    const raw = (await fs.promises.readFile(file, 'utf8')).replace(/^﻿/, '');
+    const data = JSON.parse(raw);
+    return data && typeof data === 'object' && !Array.isArray(data) ? { data } : { error: 'not a JSON object' };
+  } catch (e) { return { error: 'invalid JSON: ' + e.message }; }
+}
+async function buildIndex(folder, prev) {
+  if (prev && prev.folder !== folder) prev = null;
+  const files = new Map(), byName = new Map(), images = new Set();
+  const jsons = [];
   let count = 0, truncated = false;
   async function walk(dir, rel, depth) {
     let entries;
@@ -47,36 +68,35 @@ async function buildIndex(folder) {
       const key = keyOf(r);
       if (!files.has(key)) files.set(key, {});
       const entry = files.get(key);
-      if (!entry[kind]) entry[kind] = path.join(dir, e.name);
-      if (kind === 'json') {
-        const base = key.split('/').pop();
-        if (!byName.has(base)) byName.set(base, []);
-        byName.get(base).push(key);
+      if (kind === 'image') images.add(path.join(dir, e.name));
+      if (!entry[kind]) {
+        entry[kind] = path.join(dir, e.name);
+        if (kind === 'json') {
+          const base = key.split('/').pop();
+          if (!byName.has(base)) byName.set(base, []);
+          byName.get(base).push(key);
+          jsons.push(key);
+        }
       }
     }
   }
   await walk(folder, '', 0);
-  return { files, byName, count, truncated };
-}
-
-// Parsed JSON files, reused while unchanged
-const parsed = new Map(); // file → { mtimeMs, data, error }
-async function readJson(file) {
-  let st;
-  try { st = await fs.promises.stat(file); } catch { return { error: 'missing' }; }
-  const hit = parsed.get(file);
-  if (hit && hit.mtimeMs === st.mtimeMs) return hit;
-  let out;
-  if (st.size > MAX_JSON) out = { mtimeMs: st.mtimeMs, error: 'file is too large (over 2 MB)' };
-  else {
-    try {
-      const text = (await fs.promises.readFile(file, 'utf8')).replace(/^﻿/, '');
-      const data = JSON.parse(text);
-      out = data && typeof data === 'object' && !Array.isArray(data) ? { mtimeMs: st.mtimeMs, data } : { mtimeMs: st.mtimeMs, error: 'not a JSON object' };
-    } catch (e) { out = { mtimeMs: st.mtimeMs, error: 'invalid JSON: ' + e.message }; }
-  }
-  parsed.set(file, out);
-  return out;
+  // Load the JSON files into memory: only new or changed ones are read
+  let parsed = 0, reused = 0;
+  await mapLimit(jsons, 16, async key => {
+    const entry = files.get(key);
+    let st;
+    try { st = await fs.promises.stat(entry.json); } catch { entry.error = 'missing'; return; }
+    entry.size = st.size; entry.mtimeMs = st.mtimeMs;
+    const old = prev && prev.files.get(key);
+    if (old && old.json === entry.json && old.size === st.size && old.mtimeMs === st.mtimeMs) {
+      entry.data = old.data; entry.error = old.error; reused++;
+      return;
+    }
+    Object.assign(entry, await parseFile(entry.json, st.size));
+    parsed++;
+  });
+  return { folder, files, byName, images, count, truncated, parsed, reused, builtAt: Date.now() };
 }
 
 /* ---------------- JSON → metadata ---------------- */
@@ -111,7 +131,7 @@ function authorsOf(o) {
       else if (a && typeof a === 'object') add(a.name, ['writer', 'penciller', 'inker', 'colorist', 'letterer', 'coverartist', 'editor', 'creator'].includes(String(a.role || '').toLowerCase()) ? String(a.role).toLowerCase() : 'writer');
     }
   } else if (typeof raw === 'string') for (const n of raw.split(/[,;]/)) add(n, 'writer');
-  for (const [k, role] of [['writer', 'writer'], ['author', 'writer'], ['penciller', 'penciller'], ['artist', 'penciller'], ['inker', 'inker'],
+  for (const [k, role] of [['writer', 'writer'], ['writers', 'writer'], ['author', 'writer'], ['penciller', 'penciller'], ['artist', 'penciller'], ['artists', 'penciller'], ['inker', 'inker'],
     ['colorist', 'colorist'], ['letterer', 'letterer'], ['coverartist', 'coverartist'], ['editor', 'editor']]) {
     const v = o[k];
     if (typeof v === 'string') for (const n of v.split(/[,;]/)) add(n, role);
@@ -124,11 +144,20 @@ function ratingOf(v) {
   if (!Number.isFinite(n) || n <= 0) return undefined;
   return Math.round(n <= 5 && String(v).includes('/5') ? n * 20 : n <= 10 ? n * 10 : Math.min(100, n));
 }
+// "title" may be a string or a list: the first entry is the main title, the rest are alternative titles
+function titles(o) {
+  const v = pick(o, 'title', 'titles', 'name');
+  const all = Array.isArray(v) ? v.map(x => text(x, 200)).filter(Boolean) : [text(v, 200)].filter(Boolean);
+  return { main: all[0], alt: all.slice(1) };
+}
 // For a work
 function seriesRecord(data) {
   const o = lower(data);
   const type = text(pick(o, 'type', 'format', 'kind'), 30);
+  const t = titles(o);
+  const alt = [...new Set([...t.alt, ...(list(pick(o, 'alttitles', 'alternativetitles', 'alternatetitles', 'synonyms', 'aliases'), 20) || [])])].filter(x => x !== t.main).slice(0, 20);
   const rec = {
+    title: t.main, // shown as the work's title (the folder name still groups versions)
     summary: text(pick(o, 'summary', 'description', 'synopsis', 'plot')),
     status: mapped(pick(o, 'status', 'publicationstatus'), STATUS),
     year: (() => { const y = Number(String(pick(o, 'year', 'startyear', 'released') || '').slice(0, 4)); return y >= 1000 && y <= 9999 ? y : undefined; })(),
@@ -140,7 +169,7 @@ function seriesRecord(data) {
     rating: ratingOf(pick(o, 'rating', 'score', 'communityrating')),
     ageRating: text(pick(o, 'agerating', 'contentrating'), 40),
     readingDirection: mapped(pick(o, 'readingdirection', 'direction', 'manga', 'readingmode'), DIRECTION),
-    altTitles: list(pick(o, 'alttitles', 'alternativetitles', 'alternatetitles', 'synonyms', 'aliases'), 20),
+    altTitles: alt.length ? alt : undefined,
     sortTitle: text(pick(o, 'sorttitle', 'sortname'), 200),
     coverRel: text(pick(o, 'cover', 'image', 'thumbnail', 'poster'), 500)
   };
@@ -149,12 +178,16 @@ function seriesRecord(data) {
 // For a book (chapter/volume/issue)
 function bookRecord(data) {
   const o = lower(data);
+  const t = titles(o);
   const rec = {
-    title: text(pick(o, 'title', 'name', 'chaptertitle'), 200),
+    title: t.main || text(pick(o, 'chaptertitle'), 200),
+    altTitles: t.alt.length ? t.alt : undefined,
     number: text(pick(o, 'number', 'chapter', 'issue', 'volume', 'episode'), 20),
     summary: text(pick(o, 'summary', 'description', 'synopsis', 'plot')),
     releaseDate: date(pick(o, 'releasedate', 'date', 'published', 'publishdate', 'year')),
-    authors: authorsOf(o)
+    authors: authorsOf(o),
+    genres: list(pick(o, 'genres', 'genre')),
+    tags: list(pick(o, 'tags', 'tag', 'keywords'))
   };
   return Object.fromEntries(Object.entries(rec).filter(([, v]) => v !== undefined));
 }
@@ -187,7 +220,7 @@ function coverFor(index, key, rec, jsonFile, folder) {
     // Relative to the JSON file, and it must stay inside the source folder
     const p = path.resolve(path.dirname(jsonFile), rec.coverRel);
     const root = path.resolve(folder);
-    if (p.startsWith(root + path.sep) && IMAGE_EXT.has(path.extname(p).toLowerCase()) && fs.existsSync(p)) return p;
+    if (p.startsWith(root + path.sep) && index.images.has(p)) return p;
   }
   const e = index.files.get(key);
   if (e && e.image) return e.image;
@@ -196,5 +229,5 @@ function coverFor(index, key, rec, jsonFile, folder) {
 }
 
 module.exports = {
-  MATCH_MODES, buildIndex, readJson, seriesRecord, bookRecord, findKey, bookKeys, seriesKeys, coverFor, keyOf
+  MATCH_MODES, buildIndex, seriesRecord, bookRecord, findKey, bookKeys, seriesKeys, coverFor, keyOf
 };

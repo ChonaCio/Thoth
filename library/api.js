@@ -19,22 +19,26 @@ const isAdmin = u => u.role === 'admin';
 const clean = (v, max) => String(v == null ? '' : v).trim().slice(0, max);
 const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
 
+// Hidden (logically deleted) works and their books exist only for administrators (who can restore them)
+const shown = s => Boolean(s) && !s.hidden;
+const bookShown = b => Boolean(b) && shown(db.series[b.seriesId]);
+
 function getSeries(user, id) {
   const s = db.series[id];
-  if (!s || !store.canAccessLibrary(user, s.libraryId)) throw httpError(404, 'notFound');
+  if (!s || !store.canAccessLibrary(user, s.libraryId) || (s.hidden && !isAdmin(user))) throw httpError(404, 'notFound');
   return s;
 }
 function getBook(user, id) {
   const b = db.books[id];
-  if (!b || !store.canAccessLibrary(user, b.libraryId)) throw httpError(404, 'notFound');
+  if (!b || !store.canAccessLibrary(user, b.libraryId) || (!bookShown(b) && !isAdmin(user))) throw httpError(404, 'notFound');
   return b;
 }
 const bookFile = b => path.join(db.libraries[b.libraryId].root, b.relPath);
 
 /* ---------------- libraries ---------------- */
 function libraryView(lib, user) {
-  const series = Object.values(db.series).filter(s => s.libraryId === lib.id).length;
-  const books = Object.values(db.books).filter(b => b.libraryId === lib.id).length;
+  const series = Object.values(db.series).filter(s => s.libraryId === lib.id && shown(s)).length;
+  const books = Object.values(db.books).filter(b => b.libraryId === lib.id && bookShown(b)).length;
   const v = { id: lib.id, name: lib.name, seriesCount: series, booksCount: books, scanning: scanner.scanning.has(lib.id),
     defaultSort: store.libraryDefaults(lib).sort }; // everyone: the library page opens with this order
   if (isAdmin(user)) {
@@ -44,7 +48,8 @@ function libraryView(lib, user) {
       metadata: metadata.librarySettings(lib),
       metadataCount: Object.values(db.series).filter(s => s.libraryId === lib.id && s.provider && (s.provider.matches || []).length).length,
       scanProgress: progress ? Object.assign({}, progress, { serviceStopped: progress.queued && scanner.serviceState() !== 'running', progress: scanner.progressOf(progress) }) : null,
-      defaults: store.libraryDefaults(lib)
+      defaults: store.libraryDefaults(lib),
+      hiddenCount: Object.values(db.series).filter(s => s.libraryId === lib.id && s.hidden).length
     });
   }
   return v;
@@ -67,6 +72,10 @@ function parseDefaults(body, current) {
   if ('bookLayout' in body) {
     if (!store.BOOK_LAYOUTS.includes(body.bookLayout)) throw httpError(400, 'invalid');
     d.bookLayout = body.bookLayout;
+  }
+  if ('bookOrder' in body) {
+    if (!store.BOOK_ORDERS.includes(body.bookOrder)) throw httpError(400, 'invalid');
+    d.bookOrder = body.bookOrder;
   }
   if ('sort' in body) {
     if (!store.SORTS.includes(body.sort)) throw httpError(400, 'invalid');
@@ -167,17 +176,59 @@ function groupWorks(views, preferLibrary) {
 function editionsOf(s, user) {
   const key = store.seriesMeta(s).workKey;
   const groups = splitByEdition(Object.values(db.series)
-    .filter(x => store.canAccessLibrary(user, x.libraryId) && store.seriesMeta(x).workKey === key)
+    .filter(x => store.canAccessLibrary(user, x.libraryId) && (shown(x) || x.id === s.id) && store.seriesMeta(x).workKey === key)
     .map(x => store.seriesView(x, user)));
   return (groups.find(g => g.some(v => v.id === s.id)) || []).map(editionSummary);
 }
 
+// Every version (series) of the same work, hidden ones included, in libraries the user can see
+function versionsOf(s, user) {
+  const key = store.seriesMeta(s).workKey;
+  return Object.values(db.series).filter(x => store.canAccessLibrary(user, x.libraryId) && store.seriesMeta(x).workKey === key);
+}
+// Physically deletes the book files of these works. A work whose files are all gone is removed (and its
+// folder too, if nothing else is left in it). Files that can't be deleted (read-only library folder, no
+// permission) are reported and their books kept.
+async function deleteWorkFiles(targets) {
+  const failed = [];
+  let deletedBooks = 0, deletedWorks = 0;
+  for (const s of targets) {
+    const lib = db.libraries[s.libraryId];
+    if (!lib) continue;
+    const root = path.resolve(lib.root);
+    for (const b of store.booksOf(s.id).slice()) {
+      const abs = path.resolve(root, b.relPath);
+      if (!abs.startsWith(root + path.sep)) { failed.push({ file: b.relPath, error: 'outside the library folder' }); continue; }
+      try { await fs.promises.unlink(abs); } catch (e) {
+        if (e.code !== 'ENOENT') { failed.push({ file: b.relPath, error: e.code === 'EROFS' ? 'read-only' : e.code === 'EACCES' || e.code === 'EPERM' ? 'no permission' : e.code || e.message }); continue; }
+      }
+      delete db.books[b.id];
+      deletedBooks++;
+    }
+    if (!Object.values(db.books).some(b => b.seriesId === s.id)) {
+      if (!s.oneshot && s.relPath) {
+        const dir = path.resolve(root, s.relPath);
+        if (dir.startsWith(root + path.sep)) await fs.promises.rmdir(dir).catch(() => {}); // only if now empty
+      }
+      metadata.forgetSeries(s);
+      delete db.series[s.id];
+      deletedWorks++;
+    }
+  }
+  for (const c of Object.values(db.collections)) c.seriesIds = c.seriesIds.filter(id => db.series[id]);
+  for (const r of Object.values(db.readlists)) r.bookIds = r.bookIds.filter(id => db.books[id]);
+  store.reindex();
+  store.saveLibrary();
+  return { deletedBooks, deletedWorks, failed };
+}
+
 // Every work the user can see, grouped across libraries (versions may live in different libraries);
 // with a library: the works that have a version in it
-function worksFor(user, library) {
+// deleted: only the hidden works (administrators restoring them)
+function worksFor(user, library, { deleted = false } = {}) {
   const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
   let items = groupWorks(Object.values(db.series)
-    .filter(s => libs.has(s.libraryId))
+    .filter(s => libs.has(s.libraryId) && (deleted ? Boolean(s.hidden) : !s.hidden))
     .map(s => store.seriesView(s, user)), library || null);
   if (library) items = items.filter(w => w.editions.some(e => e.libraryId === library));
   return items;
@@ -187,23 +238,29 @@ const metadataState = s => ((s.localSources && s.localSources.length) || (s.meta
 const same = (a, b) => searchable(a) === searchable(b);
 
 function listSeries(user, q) {
-  let items = worksFor(user, q.get('library'));
+  let items = worksFor(user, q.get('library'), { deleted: isAdmin(user) && q.get('deleted') === '1' });
   const term = searchable(q.get('q'));
   if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term)
     || s.tags.some(t => searchable(t).includes(term)) || s.genres.some(t => searchable(t).includes(term))
     || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)));
   const read = q.get('read');
   if (read) items = items.filter(s => readState(s) === read);
-  const type = q.get('type');
-  if (type) items = items.filter(s => (s.type || 'unknown') === type);
-  const status = q.get('status');
-  if (status) items = items.filter(s => s.status === status);
-  const genre = q.get('genre');
-  if (genre) items = items.filter(s => s.genres.some(g => same(g, genre)));
-  const tag = q.get('tag');
-  if (tag) items = items.filter(s => s.tags.some(t => same(t, tag)));
-  const md = q.get('metadata');
-  if (md) items = items.filter(s => metadataState(s) === md);
+  // Advanced search: include/exclude any number of values (repeated parameters; x… = exclude).
+  //   genre, tag (lists on a work): ALL included values present, NONE of the excluded
+  //   type, status, metadata (one value per work): ANY of the included values, none of the excluded
+  const all = k => q.getAll(k).map(v => String(v).trim()).filter(Boolean).slice(0, 50);
+  const has = (list, v) => list.some(x => same(x, v));
+  const incG = all('genre'), excG = all('xgenre'), incT = all('tag'), excT = all('xtag');
+  if (incG.length || excG.length) items = items.filter(s => incG.every(g => has(s.genres, g)) && !excG.some(g => has(s.genres, g)));
+  if (incT.length || excT.length) items = items.filter(s => incT.every(x => has(s.tags, x)) && !excT.some(x => has(s.tags, x)));
+  const single = (inc, exc, valueOf) => { if (inc.length || exc.length) items = items.filter(s => (!inc.length || inc.includes(valueOf(s))) && !exc.includes(valueOf(s))); };
+  single(all('type'), all('xtype'), s => s.type || 'unknown');
+  single(all('status'), all('xstatus'), s => s.status);
+  single(all('metadata'), all('xmetadata'), metadataState);
+  const yearFrom = Number(q.get('yearFrom')) || 0, yearTo = Number(q.get('yearTo')) || 0;
+  if (yearFrom || yearTo) items = items.filter(s => s.year && (!yearFrom || s.year >= yearFrom) && (!yearTo || s.year <= yearTo));
+  const author = searchable(q.get('author'));
+  if (author) items = items.filter(s => s.authors.some(a => searchable(a.name).includes(author)));
   const sort = q.get('sort') || 'title';
   if (sort === 'added') items.sort((a, b) => b.created.localeCompare(a.created));
   else if (sort === 'updated') items.sort((a, b) => b.updated.localeCompare(a.updated));
@@ -238,8 +295,8 @@ function seriesFacets(user, library) {
 /* ---------------- home ---------------- */
 function home(user) {
   const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-  const books = Object.values(db.books).filter(b => libs.has(b.libraryId));
-  const series = Object.values(db.series).filter(s => libs.has(s.libraryId));
+  const books = Object.values(db.books).filter(b => libs.has(b.libraryId) && bookShown(b));
+  const series = Object.values(db.series).filter(s => libs.has(s.libraryId) && shown(s));
   const keepReading = books
     .map(b => ({ b, p: store.progressOf(user, b.id) }))
     .filter(x => x.p && !x.p.completed)
@@ -265,14 +322,14 @@ function home(user) {
 
 /* ---------------- collections & read lists ---------------- */
 function collectionView(c, user, full) {
-  const series = c.seriesIds.map(id => db.series[id]).filter(s => s && store.canAccessLibrary(user, s.libraryId));
+  const series = c.seriesIds.map(id => db.series[id]).filter(s => shown(s) && store.canAccessLibrary(user, s.libraryId));
   const v = { id: c.id, name: c.name, seriesCount: series.length, created: c.created, updated: c.updated,
     coverSeries: series.slice(0, 4).map(s => store.seriesView(s, user)).map(s => ({ id: s.id, coverBookId: s.coverBookId, coverV: s.coverV, coverFormat: s.coverFormat, coverSource: s.coverSource })) };
   if (full) v.series = series.map(s => store.seriesView(s, user));
   return v;
 }
 function readlistView(r, user, full) {
-  const books = r.bookIds.map(id => db.books[id]).filter(b => b && store.canAccessLibrary(user, b.libraryId));
+  const books = r.bookIds.map(id => db.books[id]).filter(b => bookShown(b) && store.canAccessLibrary(user, b.libraryId));
   const v = { id: r.id, name: r.name, summary: r.summary || '', booksCount: books.length, created: r.created, updated: r.updated,
     booksRead: books.filter(b => (store.progressOf(user, b.id) || {}).completed).length,
     coverBooks: books.slice(0, 4).map(b => ({ id: b.id, format: b.format, v: Math.round(Date.parse(b.fileModified || 0) / 1000) })) };
@@ -433,6 +490,7 @@ async function handle(ctx) {
       for (const k of ['title', 'sortTitle', 'summary', 'publisher']) if (k in body) { const v = clean(body[k], k === 'summary' ? 5000 : 200); if (v) o[k] = v; else delete o[k]; }
       if ('status' in body) { if (body.status && !STATUSES.includes(body.status)) throw httpError(400, 'invalid'); if (body.status) o.status = body.status; else delete o.status; }
       if ('readingDirection' in body) { if (body.readingDirection && !DIRECTIONS.includes(body.readingDirection)) throw httpError(400, 'invalid'); if (body.readingDirection) o.readingDirection = body.readingDirection; else delete o.readingDirection; }
+      if ('bookOrder' in body) { if (body.bookOrder && !store.BOOK_ORDERS.includes(body.bookOrder)) throw httpError(400, 'invalid'); if (body.bookOrder) o.bookOrder = body.bookOrder; else delete o.bookOrder; }
       if ('bookLayout' in body) { if (body.bookLayout && !store.BOOK_LAYOUTS.includes(body.bookLayout)) throw httpError(400, 'invalid'); if (body.bookLayout) o.bookLayout = body.bookLayout; else delete o.bookLayout; }
       if ('cover' in body) { if (body.cover && !['file', 'metadata'].includes(body.cover)) throw httpError(400, 'invalid'); if (body.cover) o.cover = body.cover; else delete o.cover; }
       if ('type' in body) { if (body.type && !metadata.TYPES.includes(body.type)) throw httpError(400, 'invalid'); if (body.type) o.type = body.type; else delete o.type; }
@@ -471,6 +529,37 @@ async function handle(ctx) {
     if (!cover) throw httpError(404, 'noCover');
     await sendPage(req, res, cover, 1);
     return true;
+  }
+
+  // ---- deleting works (admins) ----
+  // POST /api/series/:id/delete { mode: 'hide' | 'files', scope: 'version' | 'work', confirm }
+  //   hide:  logical delete; the work disappears for everyone, its files stay, rescans keep it hidden
+  //   files: physical delete of the book files (and the work's folder if that leaves it empty);
+  //          `confirm` must be the work's title
+  // POST /api/series/:id/restore { scope } brings hidden works back
+  if ((m = /^\/api\/series\/([\w-]+)\/(delete|restore)$/.exec(p)) && method === 'POST') {
+    requireAdmin();
+    const s = getSeries(user, m[1]);
+    const targets = body.scope === 'work' ? versionsOf(s, user) : [s];
+    if (m[2] === 'restore') {
+      let restored = 0;
+      for (const x of targets) if (x.hidden) { delete x.hidden; restored++; }
+      store.saveLibrary();
+      console.log(`[library] ${user.username} restored ${restored} hidden work(s): "${store.seriesMeta(s).title}"`);
+      return send(200, { restored, series: store.seriesView(s, user, { admin }) });
+    }
+    if (body.mode === 'files') {
+      const title = store.seriesMeta(s).title;
+      if (searchable(clean(body.confirm, 300)) !== searchable(title.trim())) throw httpError(400, 'confirmMismatch');
+      const result = await deleteWorkFiles(targets);
+      console.log(`[library] ${user.username} deleted the files of "${title}": ${result.deletedBooks} book(s), ${result.deletedWorks} work(s) removed, ${result.failed.length} failed`);
+      return send(200, result);
+    }
+    const at = new Date().toISOString();
+    for (const x of targets) x.hidden = { at, by: user.username };
+    store.saveLibrary();
+    console.log(`[library] ${user.username} hid ${targets.length} work(s): "${store.seriesMeta(s).title}"`);
+    return send(200, { hidden: targets.length });
   }
 
   // ---- online metadata (admins) ----
@@ -605,11 +694,11 @@ async function handle(ctx) {
     const term = searchable(q.get('q'));
     if (!term) return send(200, { series: [], books: [], collections: [], readlists: [] });
     const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-    const series = groupWorks(Object.values(db.series).filter(s => libs.has(s.libraryId)).map(s => store.seriesView(s, user)))
+    const series = groupWorks(Object.values(db.series).filter(s => libs.has(s.libraryId) && shown(s)).map(s => store.seriesView(s, user)))
       .filter(s => searchable(s.title).includes(term) || s.tags.some(t => searchable(t).includes(term)) || s.genres.some(t => searchable(t).includes(term))
         || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)))
       .sort((a, b) => store.collator.compare(a.sortTitle, b.sortTitle)).slice(0, 30);
-    const books = Object.values(db.books).filter(b => libs.has(b.libraryId))
+    const books = Object.values(db.books).filter(b => libs.has(b.libraryId) && bookShown(b))
       .map(b => store.bookView(b, user)).filter(b => searchable(b.title).includes(term) || searchable(b.fileName).includes(term) || b.authors.some(a => searchable(a.name).includes(term)))
       .slice(0, 30);
     const collections = visibleCollections(user).filter(c => searchable(c.name).includes(term)).slice(0, 20);

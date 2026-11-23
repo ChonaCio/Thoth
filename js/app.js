@@ -148,7 +148,11 @@
     } catch (e) {
       state.libraries = [];
     }
-    if (state.user) { renderSidebar(); applyTranslations(); }
+    if (state.user) {
+      renderSidebar(); applyTranslations();
+      // Library pages show per-library details (scan button, hidden works link): bring them up to date
+      if (currentRoute() === 'library') renderPage();
+    }
     return state.libraries;
   }
 

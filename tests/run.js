@@ -19,6 +19,7 @@ const SUITES = {
   display: { file: 'test-display.js', quick: true },   // library/work defaults, filters & facets, scan progress
   folders: { file: 'test-folder-sources.js', quick: true }, // folder metadata sources (JSON files matched to books/works)
   scans: { file: 'test-scans.js', quick: true },       // quick/changes/full scans, saved scan index, default order
+  works: { file: 'test-works.js', quick: true },       // chapter order, advanced search, hiding/deleting works
   processes: { file: 'test-processes.js' },            // scan pool, server settings, restarts (slow, big temp files)
   metadata: { file: 'test-metadata.js' },              // online metadata end to end (network)
   providers: { file: 'test-providers-live.js' },       // each metadata site answers (network)

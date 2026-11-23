@@ -386,6 +386,8 @@ a { color: var(--primary); text-decoration: none; }
 .toolbar__group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .select--compact { width: auto; padding: 8px 12px; }
 .section-title { font-size: 18px; font-weight: 500; margin: 32px 0 12px; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; margin: 32px 0 12px; }
+.section-head .section-title { margin: 0; }
 .grid-count { margin: 0 0 12px; }
 .load-more { display: flex; justify-content: center; margin: 24px 0; }
 .btn--danger { color: var(--danger); }
@@ -477,6 +479,30 @@ a { color: var(--primary); text-decoration: none; }
 a.chip--filter { text-decoration: none; }
 a.chip--filter:hover { background: var(--hover); color: var(--text); }
 .chip--genre { background: var(--primary-soft); color: var(--on-primary-soft); }
+
+/* ---- Advanced search (library pages) ---- */
+.adv-active { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.chip--crit { display: inline-flex; align-items: center; gap: 4px; border: 0; cursor: pointer; font: inherit; font-size: 12px; font-weight: 500; }
+.chip--crit [data-icon] svg { width: 14px; height: 14px; }
+.chip--inc { background: var(--ok-soft); color: var(--ok); }
+.chip--exc { background: var(--danger-soft); color: var(--danger); }
+.chip--val { background: var(--primary-soft); color: var(--on-primary-soft); }
+.btn.is-active { border-color: var(--primary); color: var(--primary); }
+.adv-panel { border: 1px solid var(--border); border-radius: var(--radius); padding: 16px; margin: -4px 0 16px; display: flex; flex-direction: column; gap: 14px; background: var(--surface); }
+.adv-help { margin: 0; }
+.adv-section { display: flex; flex-direction: column; gap: 6px; }
+.adv-section__head { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+.adv-section__title { font-size: 13px; font-weight: 500; color: var(--text-muted); }
+.adv-section__find { max-width: 220px; padding: 4px 10px; font-size: 13px; }
+.adv-chips { display: flex; flex-wrap: wrap; gap: 6px; max-height: 170px; overflow-y: auto; }
+.chip--adv { border: 1px solid var(--border); background: transparent; color: var(--text); cursor: pointer; font: inherit; font-size: 12px; padding: 3px 10px; }
+.chip--adv:hover { background: var(--hover); }
+.chip--adv.is-inc { background: var(--ok-soft); border-color: var(--ok); color: var(--ok); }
+.chip--adv.is-exc { background: var(--danger-soft); border-color: var(--danger); color: var(--danger); text-decoration: line-through; }
+.chip__count { color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.adv-fields { flex-direction: row; flex-wrap: wrap; gap: 12px; }
+.adv-field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--text-muted); }
+.adv-field--grow { flex: 1 1 200px; }
 
 /* ---- Library filters ---- */
 .toolbar--filters { justify-content: flex-start; gap: 8px; margin-top: -4px; }

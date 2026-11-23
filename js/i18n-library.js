@@ -1208,4 +1208,86 @@
     'meta.update': 'Atualizar metadados', 'meta.updateHelp': 'Buscar só o necessário: obras novas, obras com arquivos alterados, capas faltando e obras não verificadas há 30 dias',
     'upd.modeDelta': 'Só as mudanças foram baixadas: {files} arquivos atualizados, {removed} removidos.', 'upd.modeFull': 'A versão inteira foi baixada; {files} arquivos eram diferentes.'
   });
+
+  // Chapter order, advanced search, deleting works
+  add('en', {
+    'order.asc': 'First chapter first', 'order.desc': 'Last chapter first', 'order.label': 'Chapter order', 'order.libraryLabel': 'Chapter order on work pages',
+    'order.help': 'Each work can change it in its Edit dialog; readers can flip it on the work page.', 'order.toggle': 'Change the chapter order (remembered for this work in this browser)',
+    'adv.button': 'Search & filters', 'adv.help': 'Click a value once to include it, twice to exclude it, a third time to clear it. Works need all included genres and tags and none of the excluded ones; for type, status and metadata any included value matches.',
+    'adv.find': 'Find…', 'adv.remove': 'Remove', 'adv.yearFrom': 'From year', 'adv.yearTo': 'To year', 'adv.author': 'Author', 'adv.authorPlaceholder': 'Name contains…',
+    'adv.stateNone': 'Click to include', 'adv.stateInc': 'Included (click to exclude)', 'adv.stateExc': 'Excluded (click to clear)',
+    'del.button': 'Delete', 'del.title': 'Delete “{title}”', 'del.how': 'How',
+    'del.modeHide': 'Hide it (the files stay; it can be restored)', 'del.modeFiles': 'Delete its files from the disk (can’t be undone)',
+    'del.scope': 'What', 'del.scopeVersion': 'This version only ({version})', 'del.scopeWork': 'All {count} versions',
+    'del.confirmLabel': 'Type “{title}” to confirm', 'del.filesWarning': 'The book files are deleted from the library folder, and the work’s folder too if nothing else is left in it. The server needs permission to delete them.',
+    'del.hideNote': 'Hidden works disappear for everyone and stay hidden after scans. Administrators can see and restore them from the library page.',
+    'del.hidden': '“{title}” hidden', 'del.filesDone': 'Files of “{title}” deleted', 'del.someFailed': '{count} files couldn’t be deleted ({error})',
+    'del.restore': 'Restore', 'del.restored': 'Work restored', 'del.hiddenBanner': 'This work is hidden (deleted on {time} by {by}). Only administrators can see it.',
+    'del.hiddenLink': 'Hidden works ({count})', 'del.hiddenTitle': 'Hidden works', 'del.hiddenIntro': 'Works deleted by hiding them. Open one to restore it.',
+    'err.confirmMismatch': 'The title you typed doesn’t match.'
+  });
+  add('es', {
+    'order.asc': 'Primer capítulo primero', 'order.desc': 'Último capítulo primero', 'order.label': 'Orden de capítulos', 'order.libraryLabel': 'Orden de capítulos en las obras',
+    'order.help': 'Cada obra puede cambiarlo en Editar; los lectores pueden invertirlo en la página de la obra.', 'order.toggle': 'Cambiar el orden de capítulos (se recuerda para esta obra en este navegador)',
+    'adv.button': 'Búsqueda y filtros', 'adv.help': 'Haz clic una vez en un valor para incluirlo, dos para excluirlo y tres para quitarlo. Las obras deben tener todos los géneros y etiquetas incluidos y ninguno excluido; en tipo, estado y metadatos basta con uno de los incluidos.',
+    'adv.find': 'Buscar…', 'adv.remove': 'Quitar', 'adv.yearFrom': 'Desde el año', 'adv.yearTo': 'Hasta el año', 'adv.author': 'Autor', 'adv.authorPlaceholder': 'El nombre contiene…',
+    'adv.stateNone': 'Clic para incluir', 'adv.stateInc': 'Incluido (clic para excluir)', 'adv.stateExc': 'Excluido (clic para quitar)',
+    'del.button': 'Eliminar', 'del.title': 'Eliminar «{title}»', 'del.how': 'Cómo',
+    'del.modeHide': 'Ocultarla (los archivos se mantienen; se puede restaurar)', 'del.modeFiles': 'Borrar sus archivos del disco (no se puede deshacer)',
+    'del.scope': 'Qué', 'del.scopeVersion': 'Solo esta versión ({version})', 'del.scopeWork': 'Las {count} versiones',
+    'del.confirmLabel': 'Escribe «{title}» para confirmar', 'del.filesWarning': 'Se borran los archivos de la carpeta de la biblioteca, y la carpeta de la obra si queda vacía. El servidor necesita permiso para borrarlos.',
+    'del.hideNote': 'Las obras ocultas desaparecen para todos y siguen ocultas tras los escaneos. Los administradores pueden verlas y restaurarlas desde la página de la biblioteca.',
+    'del.hidden': '«{title}» oculta', 'del.filesDone': 'Archivos de «{title}» borrados', 'del.someFailed': 'No se pudieron borrar {count} archivos ({error})',
+    'del.restore': 'Restaurar', 'del.restored': 'Obra restaurada', 'del.hiddenBanner': 'Esta obra está oculta (eliminada el {time} por {by}). Solo la ven los administradores.',
+    'del.hiddenLink': 'Obras ocultas ({count})', 'del.hiddenTitle': 'Obras ocultas', 'del.hiddenIntro': 'Obras eliminadas ocultándolas. Abre una para restaurarla.',
+    'err.confirmMismatch': 'El título escrito no coincide.'
+  });
+  add('fr', {
+    'order.asc': 'Premier chapitre d’abord', 'order.desc': 'Dernier chapitre d’abord', 'order.label': 'Ordre des chapitres', 'order.libraryLabel': 'Ordre des chapitres sur les œuvres',
+    'order.help': 'Chaque œuvre peut le changer dans Modifier ; les lecteurs peuvent l’inverser sur la page de l’œuvre.', 'order.toggle': 'Changer l’ordre des chapitres (retenu pour cette œuvre dans ce navigateur)',
+    'adv.button': 'Recherche et filtres', 'adv.help': 'Cliquez une fois sur une valeur pour l’inclure, deux fois pour l’exclure, une troisième fois pour l’effacer. Les œuvres doivent avoir tous les genres et tags inclus et aucun exclu ; pour le type, le statut et les métadonnées, une valeur incluse suffit.',
+    'adv.find': 'Chercher…', 'adv.remove': 'Retirer', 'adv.yearFrom': 'À partir de', 'adv.yearTo': 'Jusqu’à', 'adv.author': 'Auteur', 'adv.authorPlaceholder': 'Le nom contient…',
+    'adv.stateNone': 'Cliquer pour inclure', 'adv.stateInc': 'Inclus (cliquer pour exclure)', 'adv.stateExc': 'Exclu (cliquer pour effacer)',
+    'del.button': 'Supprimer', 'del.title': 'Supprimer « {title} »', 'del.how': 'Comment',
+    'del.modeHide': 'La masquer (les fichiers restent ; restaurable)', 'del.modeFiles': 'Supprimer ses fichiers du disque (irréversible)',
+    'del.scope': 'Quoi', 'del.scopeVersion': 'Cette version seulement ({version})', 'del.scopeWork': 'Les {count} versions',
+    'del.confirmLabel': 'Tapez « {title} » pour confirmer', 'del.filesWarning': 'Les fichiers sont supprimés du dossier de la bibliothèque, ainsi que le dossier de l’œuvre s’il devient vide. Le serveur doit avoir le droit de les supprimer.',
+    'del.hideNote': 'Les œuvres masquées disparaissent pour tous et le restent après les analyses. Les administrateurs peuvent les voir et les restaurer depuis la page de la bibliothèque.',
+    'del.hidden': '« {title} » masquée', 'del.filesDone': 'Fichiers de « {title} » supprimés', 'del.someFailed': '{count} fichiers n’ont pas pu être supprimés ({error})',
+    'del.restore': 'Restaurer', 'del.restored': 'Œuvre restaurée', 'del.hiddenBanner': 'Cette œuvre est masquée (supprimée le {time} par {by}). Seuls les administrateurs la voient.',
+    'del.hiddenLink': 'Œuvres masquées ({count})', 'del.hiddenTitle': 'Œuvres masquées', 'del.hiddenIntro': 'Œuvres supprimées en les masquant. Ouvrez-en une pour la restaurer.',
+    'err.confirmMismatch': 'Le titre saisi ne correspond pas.'
+  });
+  add('de', {
+    'order.asc': 'Erstes Kapitel zuerst', 'order.desc': 'Letztes Kapitel zuerst', 'order.label': 'Kapitelreihenfolge', 'order.libraryLabel': 'Kapitelreihenfolge auf Werkseiten',
+    'order.help': 'Jedes Werk kann sie in „Bearbeiten“ ändern; Leser können sie auf der Werkseite umdrehen.', 'order.toggle': 'Kapitelreihenfolge ändern (für dieses Werk in diesem Browser gemerkt)',
+    'adv.button': 'Suche & Filter', 'adv.help': 'Einmal auf einen Wert klicken schließt ihn ein, zweimal aus, ein drittes Mal entfernt ihn. Werke brauchen alle eingeschlossenen Genres und Tags und keines der ausgeschlossenen; bei Typ, Status und Metadaten reicht einer der eingeschlossenen Werte.',
+    'adv.find': 'Suchen…', 'adv.remove': 'Entfernen', 'adv.yearFrom': 'Ab Jahr', 'adv.yearTo': 'Bis Jahr', 'adv.author': 'Autor', 'adv.authorPlaceholder': 'Name enthält…',
+    'adv.stateNone': 'Klicken zum Einschließen', 'adv.stateInc': 'Eingeschlossen (klicken zum Ausschließen)', 'adv.stateExc': 'Ausgeschlossen (klicken zum Entfernen)',
+    'del.button': 'Löschen', 'del.title': '„{title}“ löschen', 'del.how': 'Wie',
+    'del.modeHide': 'Ausblenden (Dateien bleiben; wiederherstellbar)', 'del.modeFiles': 'Dateien von der Festplatte löschen (nicht rückgängig zu machen)',
+    'del.scope': 'Was', 'del.scopeVersion': 'Nur diese Version ({version})', 'del.scopeWork': 'Alle {count} Versionen',
+    'del.confirmLabel': 'Zum Bestätigen „{title}“ eingeben', 'del.filesWarning': 'Die Dateien werden aus dem Bibliotheksordner gelöscht, der Werkordner auch, wenn er danach leer ist. Der Server braucht dafür Schreibrechte.',
+    'del.hideNote': 'Ausgeblendete Werke verschwinden für alle und bleiben auch nach Scans ausgeblendet. Administratoren können sie auf der Bibliotheksseite sehen und wiederherstellen.',
+    'del.hidden': '„{title}“ ausgeblendet', 'del.filesDone': 'Dateien von „{title}“ gelöscht', 'del.someFailed': '{count} Dateien konnten nicht gelöscht werden ({error})',
+    'del.restore': 'Wiederherstellen', 'del.restored': 'Werk wiederhergestellt', 'del.hiddenBanner': 'Dieses Werk ist ausgeblendet (gelöscht am {time} von {by}). Nur Administratoren sehen es.',
+    'del.hiddenLink': 'Ausgeblendete Werke ({count})', 'del.hiddenTitle': 'Ausgeblendete Werke', 'del.hiddenIntro': 'Durch Ausblenden gelöschte Werke. Öffne eines, um es wiederherzustellen.',
+    'err.confirmMismatch': 'Der eingegebene Titel stimmt nicht überein.'
+  });
+  add('pt', {
+    'order.asc': 'Primeiro capítulo primeiro', 'order.desc': 'Último capítulo primeiro', 'order.label': 'Ordem dos capítulos', 'order.libraryLabel': 'Ordem dos capítulos nas obras',
+    'order.help': 'Cada obra pode mudar em Editar; os leitores podem inverter na página da obra.', 'order.toggle': 'Mudar a ordem dos capítulos (lembrada para esta obra neste navegador)',
+    'adv.button': 'Busca e filtros', 'adv.help': 'Clique uma vez num valor para incluí-lo, duas para excluí-lo e uma terceira para limpar. As obras precisam ter todos os gêneros e tags incluídos e nenhum excluído; em tipo, situação e metadados basta um dos incluídos.',
+    'adv.find': 'Procurar…', 'adv.remove': 'Remover', 'adv.yearFrom': 'A partir do ano', 'adv.yearTo': 'Até o ano', 'adv.author': 'Autor', 'adv.authorPlaceholder': 'O nome contém…',
+    'adv.stateNone': 'Clique para incluir', 'adv.stateInc': 'Incluído (clique para excluir)', 'adv.stateExc': 'Excluído (clique para limpar)',
+    'del.button': 'Excluir', 'del.title': 'Excluir “{title}”', 'del.how': 'Como',
+    'del.modeHide': 'Ocultar (os arquivos ficam; pode ser restaurada)', 'del.modeFiles': 'Apagar os arquivos do disco (não pode ser desfeito)',
+    'del.scope': 'O quê', 'del.scopeVersion': 'Só esta versão ({version})', 'del.scopeWork': 'Todas as {count} versões',
+    'del.confirmLabel': 'Digite “{title}” para confirmar', 'del.filesWarning': 'Os arquivos são apagados da pasta da biblioteca, e a pasta da obra também se ficar vazia. O servidor precisa de permissão para apagá-los.',
+    'del.hideNote': 'Obras ocultas somem para todos e continuam ocultas após as varreduras. Administradores podem vê-las e restaurá-las na página da biblioteca.',
+    'del.hidden': '“{title}” ocultada', 'del.filesDone': 'Arquivos de “{title}” apagados', 'del.someFailed': 'Não foi possível apagar {count} arquivos ({error})',
+    'del.restore': 'Restaurar', 'del.restored': 'Obra restaurada', 'del.hiddenBanner': 'Esta obra está oculta (excluída em {time} por {by}). Só administradores a veem.',
+    'del.hiddenLink': 'Obras ocultas ({count})', 'del.hiddenTitle': 'Obras ocultas', 'del.hiddenIntro': 'Obras excluídas ocultando-as. Abra uma para restaurá-la.',
+    'err.confirmMismatch': 'O título digitado não confere.'
+  });
 })();

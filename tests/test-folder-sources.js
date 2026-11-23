@@ -17,9 +17,10 @@ write(path.join(MEDIA, 'Naruto', '11.cbz'), cbz(3));
 write(path.join(MEDIA, 'Short.cbz'), cbz(4));
 // Source A, same structure as the library
 const COVER = png(60, 90, [200, 30, 30], 1);
-write(path.join(SRC_A, 'One Piece.json'), { Summary: 'Pirates!', Genres: ['Adventure', 'Action'], Tags: 'Pirates, Ships', Status: 'Completed', Type: 'manga', Year: 1997, Rating: 9.1, Writer: 'Eiichiro Oda', cover: 'covers/op.png', Title: 'Ignored title' });
+// The list format: title = [main title, …alternative titles], tags and artists as lists
+write(path.join(SRC_A, 'One Piece.json'), { Summary: 'Pirates!', Genres: ['Adventure', 'Action'], tags: ['Pirates', 'Ships'], Status: 'Completed', Type: 'manga', Year: 1997, Rating: 9.1, Writer: 'Eiichiro Oda', artists: ['Eiichiro Oda', 'Assistant A'], cover: 'covers/op.png', title: ['One Piece', 'ワンピース', 'OP'] });
 write(path.join(SRC_A, 'covers', 'op.png'), COVER);
-write(path.join(SRC_A, 'One Piece', '11.json'), { title: 'The Eleventh', number: '11', date: '1998-03-04', summary: 'Chapter 11 from JSON' });
+write(path.join(SRC_A, 'One Piece', '11.json'), { title: ['The Eleventh', 'Chapitre onze'], number: '11', date: '1998-03-04', summary: 'Chapter 11 from JSON', tags: ['Fight', 'Sea'], artists: ['Inker X'] });
 write(path.join(SRC_A, 'Short.json'), { title: 'A Short Story', summary: 'Short from JSON', genre: 'Drama' });
 write(path.join(SRC_A, 'Short.jpg'), COVER);
 // Source B, flat, matched by file name
@@ -69,14 +70,16 @@ const books = async seriesId => (await call('GET', `/api/series/${seriesId}`)).d
   op = await until(async () => { const w = await work('One Piece'); return w.localSources.length && w; });
   ok(op.summary === 'Pirates!' && op.genres.join() === 'Adventure,Action' && op.tags.join() === 'Pirates,Ships' && op.status === 'ended' && op.type === 'manga' && op.year === 1997 && op.rating === 91,
     'work JSON: summary, genres, tags, status (Completed → ended), type, year, rating (9.1 → 91)');
-  ok(op.authors.some(a => a.name === 'Eiichiro Oda') && op.title === 'One Piece' && op.localSources[0].name === 'My JSON (paths)', 'authors; the title stays the library’s; source named on the work');
+  ok(op.authors.some(a => a.name === 'Eiichiro Oda' && a.role === 'writer') && op.authors.some(a => a.name === 'Assistant A' && a.role === 'penciller') && op.localSources[0].name === 'My JSON (paths)', 'writer + "artists" list (as artists); source named on the work');
+  ok(op.title === 'One Piece' && op.altTitles.join() === 'ワンピース,OP', 'title list: first = main title, the rest = alternative titles');
   const opBooks = await books(op.id);
   const b11 = opBooks.find(b => b.fileName === '11.cbz'), b12 = opBooks.find(b => b.fileName === '12.cbz');
   ok(b11.title === 'The Eleventh' && b11.summary === 'Chapter 11 from JSON' && b11.releaseDate === '1998-03-04' && b11.localSource.id === A.id, '11.json → 11.cbz: title, summary, date (beats ComicInfo)');
+  ok(b11.altTitles.join() === 'Chapitre onze' && b11.tags.join() === 'Fight,Sea' && b11.authors.some(a => a.name === 'Inker X' && a.role === 'penciller'), 'book JSON lists: alternative titles, tags, artists');
   ok(!b12.localSource && b12.title === '12', 'a book without a JSON is untouched');
   const naruto = await work('Naruto');
   ok(!naruto.localSources.length && (await books(naruto.id))[0].title === '11', 'path mode: Naruto/11.cbz is not matched by One Piece/11.json');
-  const short = await work('Short');
+  const short = await work('A Short Story');
   ok(short.summary === 'Short from JSON' && short.genres.join() === 'Drama' && (await books(short.id))[0].title === 'A Short Story', 'one-shot: Short.json fills the work and its book');
 
   // ---- covers ----
@@ -84,7 +87,7 @@ const books = async seriesId => (await call('GET', `/api/series/${seriesId}`)).d
   await call('PATCH', `/api/series/${op.id}`, { cover: 'metadata' });
   const th = await fetch(`${BASE}/api/series/${op.id}/thumbnail`, { headers: { Cookie: cookie } });
   ok(th.ok && Buffer.from(await th.arrayBuffer()).equals(COVER), 'work set to "downloaded/metadata cover": serves the folder’s image');
-  ok((await work('Short')).localCover, 'an image named like the JSON (Short.jpg) is a cover too');
+  ok((await work('A Short Story')).localCover, 'an image named like the JSON (Short.jpg) is a cover too');
 
   // ---- precedence ----
   await call('PATCH', `/api/series/${op.id}`, { summary: 'Admin summary' });
@@ -105,9 +108,15 @@ const books = async seriesId => (await call('GET', `/api/series/${seriesId}`)).d
   const chkA = (await call('GET', `/api/metadata/sources/${A.id}/check`)).data;
   ok(chkA.libraries[0].works === 2 && chkA.libraries[0].books === 2 && chkA.unusedCount === 0 && chkA.errors.length === 0, 'check of source A: 2 works, 2 books, nothing unused');
 
+  // ---- in memory: unchanged JSON files aren't read again ----
+  let ap = (await call('POST', `/api/metadata/sources/${A.id}/apply`)).data.applied[L.id];
+  ok(ap.jsonRead === 0 && ap.jsonReused > 0, `nothing changed: no JSON file read again (${ap.jsonReused} reused from memory)`);
+
   // ---- editing JSON / new chapters ----
+  await wait(20);
   write(path.join(SRC_A, 'One Piece', '11.json'), { title: 'Renamed Eleventh' });
-  ok((await call('POST', `/api/metadata/sources/${A.id}/apply`)).status === 200 && (await books(op.id)).find(b => b.fileName === '11.cbz').title === 'Renamed Eleventh', '"Apply now" re-reads changed JSON files');
+  ap = (await call('POST', `/api/metadata/sources/${A.id}/apply`)).data.applied[L.id];
+  ok(ap.jsonRead >= 1 && (await books(op.id)).find(b => b.fileName === '11.cbz').title === 'Renamed Eleventh', `"Apply now" reads only changed JSON files (${ap.jsonRead} read)`);
   write(path.join(MEDIA, 'One Piece', '13.cbz'), cbz(5));
   write(path.join(SRC_A, 'One Piece', '13.json'), { title: 'Brand new 13' });
   await call('POST', `/api/libraries/${L.id}/scan`, {});
@@ -132,7 +141,7 @@ const books = async seriesId => (await call('GET', `/api/series/${seriesId}`)).d
   // ---- lists, filters, permissions ----
   const srcs = (await call('GET', '/api/metadata/sources')).data;
   ok(srcs.folder.length === 1 && srcs.online.length === 8 && srcs.online.every(o => Array.isArray(o.usedBy)) && srcs.matchModes.join() === 'path,name', 'sources list: folder sources + 8 online sites with the libraries using them');
-  ok((await works('&metadata=matched')).map(s => s.title).sort().join() === 'One Piece,Short', 'metadata filter counts folder matches as matched');
+  ok((await works('&metadata=matched')).map(s => s.title).sort().join() === 'A Short Story,One Piece', 'metadata filter counts folder matches as matched');
   ok((await call('POST', `/api/series/${op.id}/metadata/identify`, { provider: A.id, id: 'x' })).status === 400, 'Identify only uses online sites');
   await call('POST', '/api/users', { username: 'bob', password: 'bobpass12' });
   const bob = (await call('POST', '/api/login', { username: 'bob', password: 'bobpass12' }, null)).cookie;

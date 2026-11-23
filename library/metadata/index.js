@@ -89,37 +89,56 @@ function providerList() {
 // Reads the library's enabled folder sources and stores what matches on each work (s.local) and book
 // (b.local). Cheap (no network): runs after every scan, on Refresh metadata and when sources change.
 // onlySeriesId: just that work. Returns { works, books } matched.
+// Each source's folder index (JSON files and their parsed contents) stays in memory between runs; a refresh
+// re-reads only JSON files that are new or changed (size/date), so matching never reads files.
+const indexCache = new Map(); // sourceId → index (local.buildIndex)
+async function sourceIndex(src) {
+  const index = await local.buildIndex(src.folder, indexCache.get(src.id));
+  indexCache.set(src.id, index);
+  return index;
+}
+const relOf = (src, file) => path.relative(src.folder, file).split(path.sep).join('/');
+
 async function applyLocal(libraryId, onlySeriesId) {
+  const t0 = Date.now();
   const lib = db.libraries[libraryId];
   if (!lib) return { works: 0, books: 0 };
   const sources = librarySettings(lib).providers.filter(p => p.enabled && db.metadataSources[p.id]).map(p => db.metadataSources[p.id]);
+  // 1. Refresh the in-memory indexes (the only file reading, and only of new/changed JSON files)
   const indexes = [];
-  for (const src of sources) indexes.push({ src, index: await local.buildIndex(src.folder) });
+  let parsed = 0, reused = 0;
+  for (const src of sources) {
+    const index = await sourceIndex(src);
+    parsed += index.parsed; reused += index.reused;
+    indexes.push({ src, index });
+  }
+  // 2. Match in memory: the library's works and books against the indexes
   let works = 0, books = 0, changed = false;
   const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
-  for (const s of Object.values(db.series)) {
-    if (s.libraryId !== libraryId || (onlySeriesId && s.id !== onlySeriesId)) continue;
+  const covers = []; // works whose cover image needs its date (step 3)
+  const libSeries = Object.values(db.series).filter(s => s.libraryId === libraryId && (!onlySeriesId || s.id === onlySeriesId));
+  for (const s of libSeries) {
     // The work: first source with data fills each field
     const merged = {}, fields = {}, ids = [];
     let file = null, coverPath = null;
+    const sk = local.seriesKeys(s);
     for (const { src, index } of indexes) {
-      const { pathKeys, nameKey } = local.seriesKeys(s);
-      const key = local.findKey(index, src.match, pathKeys, nameKey);
+      const key = local.findKey(index, src.match, sk.pathKeys, sk.nameKey);
       if (!key) continue;
-      const jf = index.files.get(key).json;
-      const r = await local.readJson(jf);
-      if (!r.data) continue;
-      const rec = local.seriesRecord(r.data);
+      const entry = index.files.get(key);
+      if (!entry.data) continue;
+      const rec = local.seriesRecord(entry.data);
       for (const [k, v] of Object.entries(rec)) if (k !== 'coverRel' && merged[k] === undefined) { merged[k] = v; fields[k] = src.id; }
-      if (!coverPath) coverPath = local.coverFor(index, key, rec, jf, src.folder);
+      if (!coverPath) coverPath = local.coverFor(index, key, rec, entry.json, src.folder);
       ids.push(src.id);
-      if (!file) file = path.relative(src.folder, jf).split(path.sep).join('/');
+      if (!file) file = relOf(src, entry.json);
     }
     let next = null;
     if (ids.length) {
-      let coverVersion = 0;
-      if (coverPath) { try { coverVersion = Math.round((await fs.promises.stat(coverPath)).mtimeMs / 1000); } catch { coverPath = null; } }
+      // Same cover as before: keep its version; a new one gets its date below
+      const coverVersion = coverPath && s.local && s.local.coverPath === coverPath ? s.local.coverVersion : 0;
       next = { merged, fields, sourceIds: ids, file, coverPath, coverVersion };
+      if (coverPath && !coverVersion) covers.push(next);
       works++;
     }
     if (!same(next, s.local)) { if (next) s.local = next; else delete s.local; changed = true; }
@@ -127,26 +146,29 @@ async function applyLocal(libraryId, onlySeriesId) {
     for (const b of store.booksOf(s.id)) {
       const bm = {};
       let first = null, bfile = null;
+      const bk = local.bookKeys(b);
       for (const { src, index } of indexes) {
-        const { pathKeys, nameKey } = local.bookKeys(b);
-        const key = local.findKey(index, src.match, pathKeys, nameKey);
+        const key = local.findKey(index, src.match, bk.pathKeys, bk.nameKey);
         if (!key) continue;
-        const jf = index.files.get(key).json;
-        const r = await local.readJson(jf);
-        if (!r.data) continue;
-        for (const [k, v] of Object.entries(local.bookRecord(r.data))) if (bm[k] === undefined) bm[k] = v;
-        if (!first) { first = src.id; bfile = path.relative(src.folder, jf).split(path.sep).join('/'); }
+        const entry = index.files.get(key);
+        if (!entry.data) continue;
+        for (const [k, v] of Object.entries(local.bookRecord(entry.data))) if (bm[k] === undefined) bm[k] = v;
+        if (!first) { first = src.id; bfile = relOf(src, entry.json); }
       }
       const bnext = first ? { merged: bm, sourceId: first, file: bfile } : null;
       if (bnext) books++;
       if (!same(bnext, b.local)) { if (bnext) b.local = bnext; else delete b.local; changed = true; }
     }
   }
+  // 3. Dates of new cover images (for the browser cache)
+  for (const c of covers) {
+    try { c.coverVersion = Math.round((await fs.promises.stat(c.coverPath)).mtimeMs / 1000); } catch { c.coverPath = null; }
+  }
   if (changed) {
     store.reindex(); // book numbers may have changed
     store.saveLibrary();
   }
-  return { works, books };
+  return { works, books, jsonRead: parsed, jsonReused: reused, ms: Date.now() - t0 };
 }
 async function applyLocalEverywhere() {
   const out = {};
@@ -179,7 +201,7 @@ function updateSource(id, { name, folder, match }) {
   if (!src) throw Object.assign(new Error('Source not found'), { status: 404, code: 'notFound' });
   if (name !== undefined) { const n = String(name || '').trim().slice(0, 80); if (!n) throw invalid('A name is needed', 'name'); src.name = n; }
   if (match !== undefined) { if (!local.MATCH_MODES.includes(match)) throw invalid('Unknown match mode', 'match'); src.match = match; }
-  if (folder !== undefined) src.folder = folder;
+  if (folder !== undefined) { if (folder !== src.folder) indexCache.delete(id); src.folder = folder; }
   src.updated = new Date().toISOString();
   store.saveLibrary();
   applyLocalEverywhere().catch(() => {});
@@ -188,6 +210,7 @@ function updateSource(id, { name, folder, match }) {
 async function removeSource(id) {
   if (!db.metadataSources[id]) throw Object.assign(new Error('Source not found'), { status: 404, code: 'notFound' });
   delete db.metadataSources[id];
+  indexCache.delete(id);
   for (const lib of Object.values(db.libraries)) {
     if (lib.metadata && Array.isArray(lib.metadata.providers)) lib.metadata.providers = lib.metadata.providers.filter(p => p.id !== id);
   }
@@ -199,7 +222,7 @@ async function removeSource(id) {
 async function checkSource(id) {
   const src = db.metadataSources[id];
   if (!src) throw Object.assign(new Error('Source not found'), { status: 404, code: 'notFound' });
-  const index = await local.buildIndex(src.folder);
+  const index = await sourceIndex(src);
   const used = new Set(), ambiguous = new Set(), errors = [];
   const libraries = [];
   for (const lib of Object.values(db.libraries)) {
@@ -221,14 +244,13 @@ async function checkSource(id) {
     libraries.push(r);
   }
   const jsonKeys = [...index.files.entries()].filter(([, e]) => e.json);
-  for (const [, e] of jsonKeys.slice(0, 5000)) {
-    const r = await local.readJson(e.json);
-    if (r.error && errors.length < 20) errors.push({ file: path.relative(src.folder, e.json).split(path.sep).join('/'), error: r.error });
+  for (const [, e] of jsonKeys) {
+    if (e.error && errors.length < 20) errors.push({ file: relOf(src, e.json), error: e.error });
   }
   const unused = jsonKeys.filter(([k]) => !used.has(k)).map(([, e]) => path.relative(src.folder, e.json).split(path.sep).join('/'));
   let folderOk = true;
   try { await fs.promises.access(src.folder, fs.constants.R_OK); } catch { folderOk = false; }
-  return { id, folderOk, files: jsonKeys.length, truncated: index.truncated, libraries, unused: unused.slice(0, 20), unusedCount: unused.length,
+  return { id, folderOk, files: jsonKeys.length, truncated: index.truncated, jsonRead: index.parsed, jsonReused: index.reused, libraries, unused: unused.slice(0, 20), unusedCount: unused.length,
     ambiguous: [...ambiguous].slice(0, 20), errors };
 }
 
@@ -446,7 +468,7 @@ function needsUpdate(s) {
 // 'stale': the delta — works needsUpdate() picks; 'all': every work
 function enqueueLibrary(libraryId, mode = 'missing') {
   const ids = Object.values(db.series)
-    .filter(s => s.libraryId === libraryId && (mode === 'all' || (mode === 'stale' ? needsUpdate(s) : !s.provider || (missingCover(s) && s.provider.coverUrl))))
+    .filter(s => s.libraryId === libraryId && !s.hidden && (mode === 'all' || (mode === 'stale' ? needsUpdate(s) : !s.provider || (missingCover(s) && s.provider.coverUrl))))
     .sort((a, b) => store.collator.compare(store.seriesMeta(a).sortTitle, store.seriesMeta(b).sortTitle))
     .map(s => s.id);
   return enqueue(ids);

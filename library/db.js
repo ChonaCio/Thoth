@@ -103,13 +103,15 @@ function splitEdition(name) {
 const BOOK_LAYOUTS = ['tiles', 'list'];
 const DIRECTIONS = ['ltr', 'rtl', 'vertical'];
 const SORTS = ['title', 'added', 'updated'];
+const BOOK_ORDERS = ['asc', 'desc'];
 // A library's defaults for its works: { bookLayout: 'tiles'|'list', readingDirection: null (automatic)|'ltr'|'rtl'|'vertical' }
 function libraryDefaults(lib) {
   const d = (lib && lib.defaults) || {};
   return {
     bookLayout: BOOK_LAYOUTS.includes(d.bookLayout) ? d.bookLayout : 'tiles',
     readingDirection: DIRECTIONS.includes(d.readingDirection) ? d.readingDirection : null,
-    sort: SORTS.includes(d.sort) ? d.sort : 'title' // how the library page orders works by default
+    sort: SORTS.includes(d.sort) ? d.sort : 'title', // how the library page orders works by default
+    bookOrder: BOOK_ORDERS.includes(d.bookOrder) ? d.bookOrder : 'asc' // chapters on a work page: first (asc) or last (desc) first
   };
 }
 // (a function declaration: bookMeta uses it during the first reindex(), before this line runs)
@@ -117,9 +119,9 @@ function filled(o) { return Object.fromEntries(Object.entries(o || {}).filter(([
 function seriesMeta(s) {
   const online = filled(s.provider && s.provider.merged);
   delete online.title;
-  // Folder sources (JSON files the admin keeps) beat the files' ComicInfo.xml and online sites
+  // Folder sources (JSON files the admin keeps) beat the files' ComicInfo.xml and online sites. Their main
+  // title is shown as the work's title (grouping of versions still uses the folder name).
   const local = filled(s.local && s.local.merged);
-  delete local.title;
   const overrides = filled(s.overrides);
   const m = Object.assign({}, online, filled(s.meta), local, overrides);
   const defaults = libraryDefaults(db.libraries[s.libraryId]);
@@ -144,17 +146,35 @@ function seriesMeta(s) {
     detectedDirection: Object.assign({}, online, filled(s.meta), local).readingDirection || 'ltr',
     // How the work page lists chapters/books: the work's own setting > the library default
     bookLayout: BOOK_LAYOUTS.includes(overrides.bookLayout) ? overrides.bookLayout : defaults.bookLayout,
+    // Chapter order on the work page: the work's own setting > the library default
+    bookOrder: BOOK_ORDERS.includes(overrides.bookOrder) ? overrides.bookOrder : defaults.bookOrder,
     // Which cover to show: 'file' (first page), 'metadata' (downloaded) or null (library setting decides)
     coverChoice: ['file', 'metadata'].includes(overrides.cover) ? overrides.cover : null,
     genres: Array.isArray(m.genres) ? m.genres : [],
     tags: Array.isArray(m.tags) ? m.tags : [],
     ageRating: m.ageRating || null,
     type: m.type || null, // manga | manhwa | manhua | webcomic | comic | novel | book | other
-    year: Number.isInteger(Number(m.year)) && m.year ? Number(m.year) : null,
+    // Year and authors: the work's own, else from its books (ComicInfo puts them on each book)
+    year: Number.isInteger(Number(m.year)) && m.year ? Number(m.year) : fromBooks(s).year,
     rating: m.rating != null && Number.isFinite(Number(m.rating)) ? Number(m.rating) : null, // 0–100
-    authors: Array.isArray(m.authors) ? m.authors : [],
+    authors: Array.isArray(m.authors) && m.authors.length ? m.authors : fromBooks(s).authors,
     altTitles: Array.isArray(m.altTitles) ? m.altTitles : []
   };
+}
+// The earliest release year and the authors (up to 12) of a work's books
+function fromBooks(s) {
+  let year = null;
+  const authors = [], seen = new Set();
+  for (const b of booksBySeries.get(s.id) || []) {
+    const m = Object.assign({}, filled(b.meta), filled(b.local && b.local.merged), filled(b.overrides));
+    const y = /^(\d{4})/.exec(m.releaseDate || '');
+    if (y && (!year || Number(y[1]) < year)) year = Number(y[1]);
+    for (const a of Array.isArray(m.authors) ? m.authors : []) {
+      const k = a.name + '\0' + a.role;
+      if (authors.length < 12 && !seen.has(k)) { seen.add(k); authors.push(a); }
+    }
+  }
+  return { year, authors };
 }
 // Book precedence: admin edits > folder source JSON (e.g. 11.json for 11.cbz) > ComicInfo.xml
 function bookMeta(b) {
@@ -167,7 +187,10 @@ function bookMeta(b) {
     numberSort: Number.isFinite(parsed) ? parsed : b.index + 1,
     summary: m.summary || '',
     releaseDate: m.releaseDate || '',
-    authors: Array.isArray(m.authors) ? m.authors : []
+    authors: Array.isArray(m.authors) ? m.authors : [],
+    altTitles: Array.isArray(m.altTitles) ? m.altTitles : [],
+    genres: Array.isArray(m.genres) ? m.genres : [],
+    tags: Array.isArray(m.tags) ? m.tags : []
   };
 }
 
@@ -208,6 +231,7 @@ function bookView(b, user, { admin = false } = {}) {
   const v = {
     id: b.id, seriesId: b.seriesId, libraryId: b.libraryId,
     title: m.title, number: m.number, summary: m.summary, releaseDate: m.releaseDate, authors: m.authors,
+    altTitles: m.altTitles, genres: m.genres, tags: m.tags,
     fileName: b.fileName, format: b.format, size: b.size, pageCount: b.pageCount,
     created: b.created, modified: b.fileModified, v: Math.round(b.fileModified ? Date.parse(b.fileModified) / 1000 : 0),
     progress: progressOf(user, b.id), error: b.error || null,
@@ -243,7 +267,7 @@ function seriesView(s, user, { admin = false } = {}) {
     depth: String(s.relPath || '').split(/[\\/]/).filter(Boolean).length, // folder depth in the library (tie-breaker when grouping versions)
     readingDirection: m.readingDirection, tags: m.tags, ageRating: m.ageRating,
     type: m.type, year: m.year, rating: m.rating, authors: m.authors, altTitles: m.altTitles, genres: m.genres,
-    bookLayout: m.bookLayout, detectedDirection: m.detectedDirection, coverChoice: m.coverChoice,
+    bookLayout: m.bookLayout, bookOrder: m.bookOrder, detectedDirection: m.detectedDirection, coverChoice: m.coverChoice,
     libraryDirection: libraryDefaults(db.libraries[s.libraryId]).readingDirection,
     created: s.created, updated: s.updated,
     coverBookId: cover ? cover.id : null, coverV: cover ? Math.round(Date.parse(cover.fileModified || 0) / 1000) : 0,
@@ -257,6 +281,8 @@ function seriesView(s, user, { admin = false } = {}) {
       cover: Boolean(s.provider.coverFile), coverProvider: s.provider.coverFile ? s.provider.coverProvider || null : null, errors: admin ? s.provider.errors || [] : undefined
     } : null,
     // Folder sources that gave this work data ({ id, name } each), and whether one gave its cover
+    // Logically deleted (hidden from everyone but administrators): { at, by }
+    hidden: s.hidden ? { at: s.hidden.at, by: admin ? s.hidden.by : undefined } : null,
     localSources: s.local ? (s.local.sourceIds || []).map(id => ({ id, name: (db.metadataSources[id] || {}).name || id })) : [],
     localCover: Boolean(s.local && s.local.coverPath),
     localFile: admin && s.local ? s.local.file || null : undefined,
@@ -290,5 +316,5 @@ module.exports = {
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
-  bookView, seriesView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS, SORTS
+  bookView, seriesView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS, SORTS, BOOK_ORDERS
 };
