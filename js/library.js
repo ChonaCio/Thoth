@@ -387,7 +387,11 @@
   // Online metadata: links to the sites it came from; admins can refresh, pick the right match or clear it
   var PROVIDER_NAMES = { anilist: 'AniList', mangadex: 'MangaDex', mangaupdates: 'MangaUpdates', kitsu: 'Kitsu', myanimelist: 'MyAnimeList',
     openlibrary: 'Open Library', googlebooks: 'Google Books', comicvine: 'Comic Vine' };
-  function providerName(id) { return PROVIDER_NAMES[id] || id; }
+  function providerName(id) {
+    if (PROVIDER_NAMES[id]) return PROVIDER_NAMES[id];
+    var p = (providersCache || []).filter(function (x) { return x.id === id; })[0]; // folder sources have their own names
+    return p ? p.name : id;
+  }
   // "Eiichiro Oda (writer, penciller), …": one entry per person
   function authorsLine(list) {
     if (!list || !list.length) return '';
@@ -401,19 +405,20 @@
     }).join(', ') + '</p>';
   }
   function metadataBlock(s) {
-    var md = s.metadata;
-    if (!md && !isAdmin()) return '';
-    var links = md && md.links.length
-      ? chips(md.links.map(function (l) {
-          return '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(providerName(l.provider)) + ' ' + icon('open_in_new') + '</a>';
-        }), 'chip--link')
-      : '';
+    var md = s.metadata, loc = s.localSources || [];
+    if (!md && !loc.length && !isAdmin()) return '';
+    var chipsHtml = loc.map(function (l) { return icon('description') + ' ' + esc(l.name); })
+      .concat(md && md.links.length ? md.links.map(function (l) {
+        return '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(providerName(l.provider)) + ' ' + icon('open_in_new') + '</a>';
+      }) : []);
+    var links = chipsHtml.length ? chips(chipsHtml, 'chip--link') : '';
+    var localLine = loc.length && isAdmin() && s.localFile ? '<p class="muted small">' + esc(t('msrc.fromFile', { file: s.localFile })) + (s.localCover ? ' · ' + esc(t('msrc.withCover')) : '') + '</p>' : '';
     var status = !md ? t('meta.never')
       : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (md.locked ? ' · ' + t('meta.lockedTo', { provider: providerName(md.locked.provider) }) : '') +
           (md.cover ? ' · ' + (md.coverProvider ? t('meta.coverFrom', { provider: providerName(md.coverProvider) }) : t('meta.coverDownloaded')) + (s.coverSource === 'metadata' ? '' : ' (' + t('meta.coverNotShown') + ')') : ' · ' + t('meta.noCover'))
       : t('meta.noMatch', { time: A().fmtDate(md.fetchedAt) });
     return '<div class="detail__in detail__meta-src">' +
-      '<span class="muted small">' + esc(t('meta.sources')) + '</span>' + links +
+      '<span class="muted small">' + esc(t('meta.sources')) + '</span>' + links + localLine +
       (isAdmin() ? '<p class="muted small">' + esc(status) + '</p>' +
         (md && md.errors && md.errors.length ? '<p class="notice notice--error small">' + esc(md.errors.slice(0, 2).join('; ')) + '</p>' : '') +
         '<div class="detail__actions detail__actions--small">' +
@@ -509,7 +514,8 @@
         ['book.size', fmtSize(b.size)],
         b.releaseDate ? ['book.released', b.releaseDate] : null,
         ['book.status', status],
-        isAdmin() && b.path ? ['book.file', b.path] : null
+        isAdmin() && b.path ? ['book.file', b.path] : null,
+        b.localSource ? ['msrc.bookSource', b.localSource.name + (isAdmin() && b.localFile ? ' (' + b.localFile + ')' : '')] : null
       ].filter(Boolean);
       var authors = b.authors.map(function (a) { return esc(a.name) + ' <span class="muted small">(' + esc(t('author.' + a.role)) + ')</span>'; });
       var seriesLabel = s ? s.title + (s.edition !== 'base' ? ' (' + editionLabel(s.edition) + ')' : '') : '';
@@ -798,7 +804,8 @@
     enter: function (route) {
       clearTimeout(pollTimer);
       load(route.hash, function () {
-        return Promise.all([api('GET', '/api/libraries'), api('GET', '/api/library-settings')]).then(function (r) {
+        // (sources: so folder sources show their names on the cards)
+        return Promise.all([api('GET', '/api/libraries'), api('GET', '/api/library-settings'), loadProviders()]).then(function (r) {
           var wasScanning = cache.manage && cache.manage.libraries.some(function (l) { return l.scanning; });
           cache.manage = { libraries: r[0].libraries, settings: r[1] };
           var scanning = r[0].libraries.some(function (l) { return l.scanning; });
@@ -809,6 +816,146 @@
       });
     }
   };
+
+  /* ================= METADATA SOURCES (admins) ================= */
+  // Folder sources (JSON files the admin keeps) can be added, edited, checked and deleted; online sites are
+  // listed with their key status, the libraries using them and a test search.
+  function usedByLine(list) {
+    return '<p class="muted small">' + esc(list && list.length ? t('msrc.usedBy', { libraries: list.map(function (l) { return l.name; }).join(', ') }) : t('msrc.usedByNone')) + '</p>';
+  }
+  function checkReport(r) {
+    if (!r) return '';
+    if (r.loading) return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc(t('msrc.checking')) + '</p>';
+    if (r.error) return errorBanner(r.error);
+    var html = '<div class="msrc-report">';
+    if (!r.folderOk) html += '<p class="notice notice--error">' + esc(t('msrc.folderMissing')) + '</p>';
+    html += '<p class="small"><strong>' + esc(t('msrc.jsonFiles', { count: r.files })) + '</strong>' + (r.truncated ? ' ' + esc(t('msrc.truncated')) : '') + '</p>';
+    html += '<ul class="msrc-libs">' + r.libraries.map(function (l) {
+      return '<li><strong>' + esc(l.name) + '</strong>: ' + esc(t('msrc.matchedLine', { works: l.works, worksTotal: l.worksTotal, books: l.books, booksTotal: l.booksTotal })) +
+        (l.enabled ? '' : ' <span class="badge">' + esc(t('msrc.offHere')) + '</span>') +
+        (l.examples.length ? '<ul class="msrc-examples">' + l.examples.map(function (x) {
+          return '<li><code>' + esc(x.file) + '</code> → <code>' + esc(x.what) + '</code></li>';
+        }).join('') + '</ul>' : '') + '</li>';
+    }).join('') + '</ul>';
+    if (r.ambiguous.length) html += '<p class="notice">' + esc(t('msrc.ambiguous', { names: r.ambiguous.join(', ') })) + '</p>';
+    if (r.errors.length) html += '<p class="notice notice--error">' + esc(t('msrc.unreadable')) + '</p><ul class="msrc-examples">' +
+      r.errors.map(function (e) { return '<li><code>' + esc(e.file) + '</code> — ' + esc(e.error) + '</li>'; }).join('') + '</ul>';
+    if (r.unusedCount) html += '<p class="muted small">' + esc(t('msrc.unused', { count: r.unusedCount })) + '</p><ul class="msrc-examples">' +
+      r.unused.map(function (f) { return '<li><code>' + esc(f) + '</code></li>'; }).join('') + (r.unusedCount > r.unused.length ? '<li>…</li>' : '') + '</ul>';
+    return html + '</div>';
+  }
+  function searchReport(r) {
+    if (!r) return '';
+    if (r.loading) return '<p class="muted small"><span class="spinner spinner--sm"></span> ' + esc(t('msrc.searching')) + '</p>';
+    if (r.error) return '<p class="notice notice--error small">' + esc(A().errMsg(r.error)) + '</p>';
+    if (!r.items.length) return '<p class="muted small">' + esc(t('meta.noResults')) + '</p>';
+    return '<p class="muted small">' + esc(t('msrc.answeredIn', { ms: r.ms })) + '</p><ul class="msrc-results">' + r.items.map(function (x) {
+      return '<li>' + (x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + esc(x.title) + '</a>' : esc(x.title)) +
+        ' <span class="muted small">' + esc([x.type ? t('type.' + x.type) : '', x.year || '', Math.round((x.score || 0) * 100) + '%'].filter(Boolean).join(' · ')) + '</span></li>';
+    }).join('') + '</ul>';
+  }
+  var metadataSources = {
+    title: function () { return t('nav.metadataSources'); },
+    render: function () {
+      var d = cache.msrc;
+      var head = '<div class="page-head"><h1 class="page-title">' + esc(t('nav.metadataSources')) + '</h1>' +
+        '<button class="btn btn--primary" data-lib="msrc-add">' + icon('add') + esc(t('msrc.add')) + '</button></div>' +
+        '<p class="page-lead">' + esc(t('msrc.intro')) + '</p>';
+      if (!d) return head + spinner;
+      if (d.error) return head + errorBanner(d.error);
+      var checks = cache.msrcCheck || {}, searches = cache.msrcSearch || {};
+      var folders = d.folder.length ? '<div class="lib-list">' + d.folder.map(function (s) {
+        return '<section class="card lib-card">' +
+          '<div class="lib-card__head"><span class="lib-card__icon">' + icon('description') + '</span>' +
+            '<div class="lib-card__text"><h3 class="card__title">' + esc(s.name) + '</h3>' +
+            '<p class="muted small lib-card__path">' + icon('folder_open') + '<span>' + esc(s.folder) + '</span></p></div></div>' +
+          '<p class="small">' + esc(t('msrc.match.' + s.match)) + '</p>' +
+          usedByLine(s.usedBy) +
+          '<div class="lib-card__actions">' +
+            '<button class="btn btn--outline btn--pill" data-lib="msrc-check" data-id="' + s.id + '">' + icon('search') + esc(t('msrc.check')) + '</button>' +
+            '<button class="btn btn--text" data-lib="msrc-apply" data-id="' + s.id + '" title="' + esc(t('msrc.applyHelp')) + '">' + icon('sync') + esc(t('msrc.apply')) + '</button>' +
+            '<button class="btn btn--text" data-lib="msrc-edit" data-id="' + s.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' +
+            '<button class="btn btn--text btn--danger" data-lib="msrc-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('manage.delete')) + '</button>' +
+          '</div>' + checkReport(checks[s.id]) +
+        '</section>';
+      }).join('') + '</div>' : emptyState('description', t('msrc.noneTitle'), t('msrc.none'), '<button class="btn btn--outline" data-lib="msrc-add">' + icon('add') + esc(t('msrc.add')) + '</button>');
+      var how = '<details class="card card--wide msrc-how"><summary class="card__title">' + esc(t('msrc.howTitle')) + '</summary>' +
+        '<p class="small">' + esc(t('msrc.howPath')) + '</p>' +
+        '<pre class="msrc-pre">metadata/One Piece.json        → library/One Piece/      (work)\nmetadata/One Piece/11.json     → library/One Piece/11.cbz (chapter)\nmetadata/One Piece.jpg         → cover of One Piece</pre>' +
+        '<p class="small">' + esc(t('msrc.howName')) + '</p>' +
+        '<pre class="msrc-pre">metadata/11.json → every book named 11.cbz / 11.pdf</pre>' +
+        '<p class="small">' + esc(t('msrc.howJson')) + '</p>' +
+        '<pre class="msrc-pre">{\n  "title": "Romance Dawn",          ← books\n  "number": "1", "date": "1997-07-22",\n  "summary": "…", "genres": ["Adventure"], "tags": ["Pirates"],\n  "status": "ongoing", "type": "manga", "year": 1997, "rating": 9.1,\n  "writer": "Eiichiro Oda", "readingDirection": "rtl", "cover": "op.jpg"\n}</pre>' +
+        '<p class="small muted">' + esc(t('msrc.howOrder')) + '</p></details>';
+      var online = '<div class="cards">' + d.online.map(function (p) {
+        var key = p.needsKey ? (p.keySet ? '<span class="badge badge--ok">' + esc(t('cfg.keySet')) + '</span>' : '<span class="badge badge--danger">' + esc(t('meta.needsKey')) + '</span>')
+          : p.optionalKey ? (p.keySet ? '<span class="badge badge--ok">' + esc(t('cfg.keySet')) + '</span>' : '<span class="badge">' + esc(t('msrc.keyOptional')) + '</span>') : '';
+        return '<section class="card proc-card">' +
+          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('open_in_new') + '</span><div>' +
+            '<h3 class="card__title"><a href="' + esc(p.homepage) + '" target="_blank" rel="noopener noreferrer">' + esc(p.name) + '</a></h3>' + key + '</div></div>' +
+          '<p class="small">' + esc(p.types.map(function (ty) { return t('type.' + ty); }).join(', ')) + '</p>' +
+          usedByLine(p.usedBy) +
+          (p.needsKey || p.optionalKey ? '<p class="field__help"><a href="#server-settings">' + esc(t('msrc.keysIn')) + '</a></p>' : '') +
+          '<div class="msrc-search"><input type="search" placeholder="' + esc(t('msrc.tryPlaceholder')) + '" data-msrc-q="' + p.id + '" aria-label="' + esc(t('msrc.try')) + ' ' + esc(p.name) + '" />' +
+            '<button class="btn btn--outline btn--small" data-lib="msrc-search" data-id="' + p.id + '">' + esc(t('msrc.try')) + '</button></div>' +
+          '<div data-msrc-results="' + p.id + '">' + searchReport(searches[p.id]) + '</div>' +
+        '</section>';
+      }).join('') + '</div>';
+      return head +
+        '<h2 class="section-title">' + esc(t('msrc.folderTitle')) + '</h2>' + folders + how +
+        '<h2 class="section-title">' + esc(t('msrc.onlineTitle')) + '</h2><p class="muted small">' + esc(t('msrc.onlineIntro')) + '</p>' + online;
+    },
+    mount: function (el) {
+      // Enter in a search box = Try
+      el.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || !e.target.dataset.msrcQ) return;
+        e.preventDefault();
+        var b = el.querySelector('[data-lib="msrc-search"][data-id="' + e.target.dataset.msrcQ + '"]');
+        if (b) b.click();
+      });
+    },
+    enter: function (route) {
+      load(route.hash, function () {
+        return api('GET', '/api/metadata/sources').then(function (r) { cache.msrc = r; }, function (e) {
+          if (e && e.status === 404) e = { code: 'unknownEndpoint', status: 404 };
+          cache.msrc = { error: e }; throw e;
+        });
+      });
+    }
+  };
+  function folderSourceForm(src) {
+    var modes = (cache.msrc && cache.msrc.matchModes) || ['path', 'name'];
+    openForm({
+      title: t(src ? 'msrc.editTitle' : 'msrc.add'),
+      submitLabel: src ? t('common.save') : t('common.add'),
+      fields: [
+        { name: 'name', label: t('manage.name'), value: src ? src.name : '', placeholder: t('msrc.namePlaceholder') },
+        // named "root" so the dialog's folder browser fills it
+        { name: 'root', label: t('msrc.folder'), type: 'folder', value: src ? src.folder : '', placeholder: '/srv/metadata', help: t('msrc.folderHelp') },
+        { name: 'match', label: t('msrc.matchLabel'), type: 'select', value: src ? src.match : 'path', help: t('msrc.matchHelp'),
+          options: modes.map(function (m) { return { value: m, label: t('msrc.match.' + m) }; }) }
+      ],
+      onSubmit: function (v) {
+        if (!v.name) return Promise.reject({ code: 'nameRequired' });
+        var body = { name: v.name, folder: v.root, match: v.match };
+        return (src ? api('PATCH', '/api/metadata/sources/' + src.id, body) : api('POST', '/api/metadata/sources', body)).then(function (r) {
+          A().toast(t(src ? 'msrc.saved' : 'msrc.created'));
+          providersCache = null; invalidate(); cache.series = {}; cache.book = {};
+          if (!cache.msrcCheck) cache.msrcCheck = {};
+          refreshCurrent();
+          // Show right away what it matches
+          runCheck(r.source.id);
+        });
+      }
+    });
+  }
+  function runCheck(id) {
+    cache.msrcCheck = cache.msrcCheck || {};
+    cache.msrcCheck[id] = { loading: true };
+    A().renderPage();
+    api('GET', '/api/metadata/sources/' + id + '/check').then(function (r) { cache.msrcCheck[id] = r; }, function (e) { cache.msrcCheck[id] = { error: e }; })
+      .then(function () { if (A().parseRoute().name === 'metadata-sources') A().renderPage(); });
+  }
 
   /* ================= PROCESSES (admins) ================= */
   var procTimer = null;
@@ -1234,7 +1381,7 @@
     identifyFor = id;
     var lib = (A().state.libraries || []).filter(function (l) { return l.id === d.series.libraryId; })[0];
     loadProviders().then(function (all) {
-      var order = libraryProviders(lib, all);
+      var order = libraryProviders(lib, all).filter(function (p) { return p.kind !== 'folder'; }); // Identify searches online sites
       $('#identify-provider').innerHTML = '<option value="">' + esc(t('meta.allEnabled')) + '</option>' +
         order.map(function (p) { return '<option value="' + esc(p.id) + '"' + (p.needsKey && !p.keySet ? ' disabled' : '') + '>' + esc(p.name) + '</option>'; }).join('');
       $('#identify-q').value = d.workTitle || d.series.title;
@@ -1288,10 +1435,11 @@
   }
   function providerRow(p) {
     var keyNote = p.needsKey && !p.keySet ? t('meta.needsKey') : p.optionalKey && !p.keySet ? t('meta.optionalKey') : '';
-    return '<li class="prov-item" data-id="' + esc(p.id) + '">' +
+    var folder = p.kind === 'folder';
+    return '<li class="prov-item' + (folder ? ' prov-item--folder' : '') + '" data-id="' + esc(p.id) + '">' +
       '<label class="checkbox prov-item__check"><input type="checkbox"' + (p.enabled ? ' checked' : '') + ' aria-label="' + esc(p.name) + '" />' +
-        '<span><strong>' + esc(p.name) + '</strong>' +
-        '<span class="prov-item__types">' + p.types.map(function (ty) { return esc(t('type.' + ty)); }).join(', ') + '</span>' +
+        '<span><strong>' + (folder ? icon('description') + ' ' : '') + esc(p.name) + '</strong>' +
+        '<span class="prov-item__types">' + (folder ? esc(t('msrc.folderSourceNote', { folder: p.folder })) : p.types.map(function (ty) { return esc(t('type.' + ty)); }).join(', ')) + '</span>' +
         (keyNote ? '<span class="prov-item__note">' + esc(keyNote) + '</span>' : '') + '</span></label>' +
       '<span class="prov-item__move">' +
         '<button type="button" class="icon-btn icon-btn--sm" data-fd="prov-up" data-icon="arrow_upward" title="' + esc(t('meta.moveUp')) + '" aria-label="' + esc(t('meta.moveUp')) + '"></button>' +
@@ -1382,6 +1530,32 @@
         if (!confirm(t('cfg.keyRemoveConfirm'))) return;
         var patch = {}; patch[btn.dataset.key] = null;
         return api('PATCH', '/api/config', patch).then(function (r) { cache.config = r; providersCache = null; A().toast(t('cfg.saved')); A().renderPage(); }, fail);
+      }
+      case 'msrc-add': return folderSourceForm(null);
+      case 'msrc-edit': return folderSourceForm(cache.msrc.folder.filter(function (s) { return s.id === id; })[0]);
+      case 'msrc-check': return runCheck(id);
+      case 'msrc-apply':
+        btn.disabled = true;
+        return api('POST', '/api/metadata/sources/' + id + '/apply').then(function () {
+          A().toast(t('msrc.applied')); invalidate(); cache.series = {}; cache.book = {}; btn.disabled = false;
+        }, function (e) { btn.disabled = false; fail(e); });
+      case 'msrc-delete': {
+        var src = cache.msrc.folder.filter(function (s) { return s.id === id; })[0];
+        if (!confirm(t('msrc.confirmDelete', { name: src.name }))) return;
+        return api('DELETE', '/api/metadata/sources/' + id).then(function () {
+          A().toast(t('msrc.deleted')); providersCache = null; invalidate(); cache.series = {}; cache.book = {}; refreshCurrent();
+        }, fail);
+      }
+      case 'msrc-search': {
+        var input = document.querySelector('[data-msrc-q="' + id + '"]');
+        var q = input ? input.value.trim() : '';
+        if (!q) { if (input) input.focus(); return; }
+        cache.msrcSearch = cache.msrcSearch || {};
+        var box = document.querySelector('[data-msrc-results="' + id + '"]');
+        cache.msrcSearch[id] = { loading: true };
+        if (box) box.innerHTML = searchReport(cache.msrcSearch[id]);
+        return api('GET', '/api/metadata/sources/' + id + '/search?q=' + encodeURIComponent(q)).then(function (r) { cache.msrcSearch[id] = r.results; }, function (e) { cache.msrcSearch[id] = { error: e }; })
+          .then(function () { var b2 = document.querySelector('[data-msrc-results="' + id + '"]'); if (b2) b2.innerHTML = searchReport(cache.msrcSearch[id]); });
       }
       case 'library-metadata':
         btn.disabled = true;
@@ -1526,6 +1700,9 @@
       if (b.dataset.fd === 'prov-up' || b.dataset.fd === 'prov-down') {
         var li = b.closest('.prov-item');
         var other = b.dataset.fd === 'prov-up' ? li.previousElementSibling : li.nextElementSibling;
+        // Folder sources stay above online sites (the server keeps that order anyway)
+        var isFolder = function (x) { return x && x.classList.contains('prov-item--folder'); };
+        if (other && isFolder(li) !== isFolder(other)) { A().toast(t('msrc.foldersFirst')); return; }
         if (other) { if (b.dataset.fd === 'prov-up') li.parentNode.insertBefore(li, other); else li.parentNode.insertBefore(other, li); }
         b.focus();
         return;
@@ -1541,6 +1718,7 @@
     home: home, library: library, series: series, book: book, search: search,
     collections: collections, collection: collection, readlists: readlists, readlist: readlist,
     'manage-libraries': manage,
+    'metadata-sources': metadataSources,
     processes: processes,
     'server-settings': serverSettings,
     read: { render: function () { return ''; }, title: function () { return t('reader.title'); } },

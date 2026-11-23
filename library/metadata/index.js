@@ -12,9 +12,26 @@ const fs = require('fs');
 const path = require('path');
 const store = require('../db');
 const config = require('../../config');
+const crypto = require('crypto');
 const { PROVIDERS, BY_ID, matchScore } = require('./providers');
+const local = require('./local');
 
 const { db } = store;
+if (!db.metadataSources) db.metadataSources = {};
+
+/* ---------------- the sources: online sites + folder sources ---------------- */
+// Folder sources (db.metadataSources) look like providers to the library settings, marked local: true
+function folderSources() {
+  return Object.values(db.metadataSources).sort((a, b) => String(a.created).localeCompare(String(b.created)));
+}
+function asProvider(src) {
+  return { id: src.id, name: src.name, kind: 'folder', local: true, types: [], folder: src.folder, match: src.match };
+}
+function byId(id) {
+  return BY_ID[id] || (db.metadataSources[id] ? asProvider(db.metadataSources[id]) : null);
+}
+// Folder sources always come before online sites (an admin's own data is more specific than a search)
+const localFirst = list => list.filter(p => db.metadataSources[p.id]).concat(list.filter(p => !db.metadataSources[p.id]));
 const COVERS_DIR = path.join(store.DATA_DIR, 'covers');
 const MATCH_THRESHOLD = 0.85;
 const FIELDS = ['summary', 'status', 'year', 'type', 'publisher', 'authors', 'genres', 'tags', 'rating', 'cover', 'altTitles', 'readingDirection', 'ageRating'];
@@ -30,11 +47,13 @@ const keys = () => { const c = config.get(); return { comicVineApiKey: c.comicVi
 // lib.metadata = { providers: [{ id, enabled }], autoFetch, cover }  (order = priority)
 function librarySettings(lib) {
   const m = (lib && lib.metadata) || {};
-  const saved = Array.isArray(m.providers) ? m.providers.filter(p => BY_ID[p.id]) : [];
+  const saved = Array.isArray(m.providers) ? m.providers.filter(p => byId(p.id)) : [];
   const seen = new Set(saved.map(p => p.id));
-  // Providers added in a later version are appended with their default on/off
-  const providers = saved.map(p => ({ id: p.id, enabled: p.enabled !== false }))
-    .concat(PROVIDERS.filter(p => !seen.has(p.id)).map(p => ({ id: p.id, enabled: !p.defaultOff })));
+  // Sources the library hasn't seen yet: new folder sources are on; online providers added in a later
+  // version get their default on/off
+  const providers = localFirst(saved.map(p => ({ id: p.id, enabled: p.enabled !== false }))
+    .concat(folderSources().filter(s => !seen.has(s.id)).map(s => ({ id: s.id, enabled: true })))
+    .concat(PROVIDERS.filter(p => !seen.has(p.id)).map(p => ({ id: p.id, enabled: !p.defaultOff }))));
   return { providers, autoFetch: m.autoFetch !== false, cover: COVER_MODES.includes(m.cover) ? m.cover : 'missing' };
 }
 function parseLibrarySettings(body, current) {
@@ -43,11 +62,11 @@ function parseLibrarySettings(body, current) {
   if (Array.isArray(body.providers)) {
     const list = [], seen = new Set();
     for (const p of body.providers) {
-      if (!p || !BY_ID[p.id] || seen.has(p.id)) continue;
+      if (!p || !byId(p.id) || seen.has(p.id)) continue;
       seen.add(p.id);
       list.push({ id: p.id, enabled: p.enabled !== false });
     }
-    out.providers = list.concat(cur.providers.filter(p => !seen.has(p.id)));
+    out.providers = localFirst(list.concat(cur.providers.filter(p => !seen.has(p.id))));
   }
   if ('autoFetch' in body) out.autoFetch = Boolean(body.autoFetch);
   if ('cover' in body) {
@@ -58,11 +77,159 @@ function parseLibrarySettings(body, current) {
 }
 function providerList() {
   const k = keys();
-  return PROVIDERS.map(p => ({
-    id: p.id, name: p.name, homepage: p.homepage, types: p.types, defaultOn: !p.defaultOff,
-    needsKey: p.needsKey || null, optionalKey: p.optionalKey || null,
-    keySet: Boolean((p.needsKey && k[p.needsKey]) || (p.optionalKey && k[p.optionalKey]))
-  }));
+  return folderSources().map(s => ({ id: s.id, name: s.name, kind: 'folder', folder: s.folder, match: s.match, types: [], defaultOn: true }))
+    .concat(PROVIDERS.map(p => ({
+      id: p.id, name: p.name, kind: 'online', homepage: p.homepage, types: p.types, defaultOn: !p.defaultOff,
+      needsKey: p.needsKey || null, optionalKey: p.optionalKey || null,
+      keySet: Boolean((p.needsKey && k[p.needsKey]) || (p.optionalKey && k[p.optionalKey]))
+    })));
+}
+
+/* ---------------- folder sources: applying them ---------------- */
+// Reads the library's enabled folder sources and stores what matches on each work (s.local) and book
+// (b.local). Cheap (no network): runs after every scan, on Refresh metadata and when sources change.
+// onlySeriesId: just that work. Returns { works, books } matched.
+async function applyLocal(libraryId, onlySeriesId) {
+  const lib = db.libraries[libraryId];
+  if (!lib) return { works: 0, books: 0 };
+  const sources = librarySettings(lib).providers.filter(p => p.enabled && db.metadataSources[p.id]).map(p => db.metadataSources[p.id]);
+  const indexes = [];
+  for (const src of sources) indexes.push({ src, index: await local.buildIndex(src.folder) });
+  let works = 0, books = 0, changed = false;
+  const same = (a, b) => JSON.stringify(a || null) === JSON.stringify(b || null);
+  for (const s of Object.values(db.series)) {
+    if (s.libraryId !== libraryId || (onlySeriesId && s.id !== onlySeriesId)) continue;
+    // The work: first source with data fills each field
+    const merged = {}, fields = {}, ids = [];
+    let file = null, coverPath = null;
+    for (const { src, index } of indexes) {
+      const { pathKeys, nameKey } = local.seriesKeys(s);
+      const key = local.findKey(index, src.match, pathKeys, nameKey);
+      if (!key) continue;
+      const jf = index.files.get(key).json;
+      const r = await local.readJson(jf);
+      if (!r.data) continue;
+      const rec = local.seriesRecord(r.data);
+      for (const [k, v] of Object.entries(rec)) if (k !== 'coverRel' && merged[k] === undefined) { merged[k] = v; fields[k] = src.id; }
+      if (!coverPath) coverPath = local.coverFor(index, key, rec, jf, src.folder);
+      ids.push(src.id);
+      if (!file) file = path.relative(src.folder, jf).split(path.sep).join('/');
+    }
+    let next = null;
+    if (ids.length) {
+      let coverVersion = 0;
+      if (coverPath) { try { coverVersion = Math.round((await fs.promises.stat(coverPath)).mtimeMs / 1000); } catch { coverPath = null; } }
+      next = { merged, fields, sourceIds: ids, file, coverPath, coverVersion };
+      works++;
+    }
+    if (!same(next, s.local)) { if (next) s.local = next; else delete s.local; changed = true; }
+    // Its books (chapters/volumes/issues)
+    for (const b of store.booksOf(s.id)) {
+      const bm = {};
+      let first = null, bfile = null;
+      for (const { src, index } of indexes) {
+        const { pathKeys, nameKey } = local.bookKeys(b);
+        const key = local.findKey(index, src.match, pathKeys, nameKey);
+        if (!key) continue;
+        const jf = index.files.get(key).json;
+        const r = await local.readJson(jf);
+        if (!r.data) continue;
+        for (const [k, v] of Object.entries(local.bookRecord(r.data))) if (bm[k] === undefined) bm[k] = v;
+        if (!first) { first = src.id; bfile = path.relative(src.folder, jf).split(path.sep).join('/'); }
+      }
+      const bnext = first ? { merged: bm, sourceId: first, file: bfile } : null;
+      if (bnext) books++;
+      if (!same(bnext, b.local)) { if (bnext) b.local = bnext; else delete b.local; changed = true; }
+    }
+  }
+  if (changed) {
+    store.reindex(); // book numbers may have changed
+    store.saveLibrary();
+  }
+  return { works, books };
+}
+async function applyLocalEverywhere() {
+  const out = {};
+  for (const id of Object.keys(db.libraries)) {
+    try { out[id] = await applyLocal(id); } catch (e) { console.error('[metadata] folder sources:', e.message); }
+  }
+  return out;
+}
+
+/* ---------------- folder sources: managing them ---------------- */
+const invalid = (msg, field) => Object.assign(new Error(msg), { status: 400, code: 'invalid', field });
+function sourceView(src) {
+  const libs = Object.values(db.libraries);
+  const usedBy = libs.filter(l => librarySettings(l).providers.some(p => p.id === src.id && p.enabled)).map(l => ({ id: l.id, name: l.name }));
+  return Object.assign({ kind: 'folder' }, src, { usedBy });
+}
+// folder: already validated by the caller (exists, readable, not the data folder)
+function createSource({ name, folder, match }) {
+  const n = String(name || '').trim().slice(0, 80);
+  if (!n) throw invalid('A name is needed', 'name');
+  if (match && !local.MATCH_MODES.includes(match)) throw invalid('Unknown match mode', 'match');
+  const id = 'folder-' + crypto.randomBytes(5).toString('hex');
+  db.metadataSources[id] = { id, name: n, folder, match: match || 'path', created: new Date().toISOString() };
+  store.saveLibrary();
+  applyLocalEverywhere().catch(() => {});
+  return db.metadataSources[id];
+}
+function updateSource(id, { name, folder, match }) {
+  const src = db.metadataSources[id];
+  if (!src) throw Object.assign(new Error('Source not found'), { status: 404, code: 'notFound' });
+  if (name !== undefined) { const n = String(name || '').trim().slice(0, 80); if (!n) throw invalid('A name is needed', 'name'); src.name = n; }
+  if (match !== undefined) { if (!local.MATCH_MODES.includes(match)) throw invalid('Unknown match mode', 'match'); src.match = match; }
+  if (folder !== undefined) src.folder = folder;
+  src.updated = new Date().toISOString();
+  store.saveLibrary();
+  applyLocalEverywhere().catch(() => {});
+  return src;
+}
+async function removeSource(id) {
+  if (!db.metadataSources[id]) throw Object.assign(new Error('Source not found'), { status: 404, code: 'notFound' });
+  delete db.metadataSources[id];
+  for (const lib of Object.values(db.libraries)) {
+    if (lib.metadata && Array.isArray(lib.metadata.providers)) lib.metadata.providers = lib.metadata.providers.filter(p => p.id !== id);
+  }
+  store.saveLibrary();
+  await applyLocalEverywhere(); // its data disappears from works and books
+}
+// What a folder source would match, without changing anything: per library, works and books matched (with
+// examples), JSON files nothing uses, names used by several files (by-name matching), files that can't be read
+async function checkSource(id) {
+  const src = db.metadataSources[id];
+  if (!src) throw Object.assign(new Error('Source not found'), { status: 404, code: 'notFound' });
+  const index = await local.buildIndex(src.folder);
+  const used = new Set(), ambiguous = new Set(), errors = [];
+  const libraries = [];
+  for (const lib of Object.values(db.libraries)) {
+    const enabled = librarySettings(lib).providers.some(p => p.id === id && p.enabled);
+    const r = { id: lib.id, name: lib.name, enabled, works: 0, worksTotal: 0, books: 0, booksTotal: 0, examples: [] };
+    for (const s of Object.values(db.series)) {
+      if (s.libraryId !== lib.id) continue;
+      r.worksTotal++;
+      const sk = local.seriesKeys(s);
+      const key = local.findKey(index, src.match, sk.pathKeys, sk.nameKey, ambiguous);
+      if (key) { r.works++; used.add(key); if (r.examples.length < 6) r.examples.push({ what: s.relPath.split(/[\\/]/).join('/'), file: path.relative(src.folder, index.files.get(key).json).split(path.sep).join('/') }); }
+      for (const b of store.booksOf(s.id)) {
+        r.booksTotal++;
+        const bk = local.bookKeys(b);
+        const k2 = local.findKey(index, src.match, bk.pathKeys, bk.nameKey, ambiguous);
+        if (k2) { r.books++; used.add(k2); if (r.examples.length < 6) r.examples.push({ what: b.relPath.split(/[\\/]/).join('/'), file: path.relative(src.folder, index.files.get(k2).json).split(path.sep).join('/') }); }
+      }
+    }
+    libraries.push(r);
+  }
+  const jsonKeys = [...index.files.entries()].filter(([, e]) => e.json);
+  for (const [, e] of jsonKeys.slice(0, 5000)) {
+    const r = await local.readJson(e.json);
+    if (r.error && errors.length < 20) errors.push({ file: path.relative(src.folder, e.json).split(path.sep).join('/'), error: r.error });
+  }
+  const unused = jsonKeys.filter(([k]) => !used.has(k)).map(([, e]) => path.relative(src.folder, e.json).split(path.sep).join('/'));
+  let folderOk = true;
+  try { await fs.promises.access(src.folder, fs.constants.R_OK); } catch { folderOk = false; }
+  return { id, folderOk, files: jsonKeys.length, truncated: index.truncated, libraries, unused: unused.slice(0, 20), unusedCount: unused.length,
+    ambiguous: [...ambiguous].slice(0, 20), errors };
 }
 
 /* ---------------- looking a work up ---------------- */
@@ -117,12 +284,16 @@ async function refreshSeries(seriesId, cur) {
   try {
     const lib = db.libraries[s.libraryId];
     const settings = librarySettings(lib);
+    // Folder sources first (local files, instant), then the online sites
+    step('folder');
+    try { await applyLocal(s.libraryId, s.id); } catch (e) { console.error('[metadata] folder sources:', e.message); }
     const query = queryFor(s);
     const year = yearHint(s);
     const locked = s.provider && s.provider.locked;
     const merged = {}, sources = {}, matches = [], errors = [], covers = [];
     for (const { id: pid, enabled } of settings.providers) {
       const provider = BY_ID[pid];
+      if (!provider) continue; // a folder source (applied above)
       const isLocked = locked && locked.provider === pid;
       if (!enabled && !isLocked) continue;
       if (provider.needsKey && !keys()[provider.needsKey]) continue;
@@ -206,6 +377,16 @@ async function searchForSeries(seriesId, query, onlyProvider) {
   return { query: q, results: results.slice(0, 40), errors };
 }
 
+// The sources page's "Try a search" for one online site
+async function testSearch(providerId, query) {
+  const p = BY_ID[providerId];
+  if (p.needsKey && !keys()[p.needsKey]) throw Object.assign(new Error(`${p.name}: needs an API key (Server settings)`), { status: 400, code: 'needsKey' });
+  const t0 = Date.now();
+  const results = (await p.search(query, keys())).map(r => Object.assign({ score: matchScore(query, r) }, r));
+  results.sort((a, b) => b.score - a.score);
+  return { ms: Date.now() - t0, items: results.slice(0, 8) };
+}
+
 async function identify(seriesId, providerId, id) {
   const s = db.series[seriesId];
   if (!s) throw Object.assign(new Error('Series not found'), { status: 404, code: 'notFound' });
@@ -254,7 +435,11 @@ function enqueueLibrary(libraryId, mode = 'missing') {
 // After a scan: look up new works if the library fetches metadata automatically
 function afterScan(libraryId) {
   const lib = db.libraries[libraryId];
-  if (lib && librarySettings(lib).autoFetch) enqueueLibrary(libraryId, 'missing');
+  if (!lib) return;
+  // Folder sources are re-read on every scan (new chapters get their JSON right away), then online lookups
+  applyLocal(libraryId)
+    .catch(e => console.error('[metadata] folder sources:', e.message))
+    .then(() => { if (db.libraries[libraryId] && librarySettings(lib).autoFetch) enqueueLibrary(libraryId, 'missing'); });
 }
 // Several works at once (Server settings → metadataConcurrency). Each site still gets its own pause between
 // requests, so more works at once mostly overlaps waiting on different sites and downloads.
@@ -298,6 +483,7 @@ function info() {
 function forgetSeries(s) { removeCover(s); const i = queue.indexOf(s.id); if (i !== -1) { queue.splice(i, 1); batch.done++; } }
 
 module.exports = {
-  TYPES, COVER_MODES, providerList, librarySettings, parseLibrarySettings,
+  TYPES, COVER_MODES, MATCH_MODES: local.MATCH_MODES, providerList, librarySettings, parseLibrarySettings,
+  applyLocal, applyLocalEverywhere, sourceView, testSearch, folderSources, createSource, updateSource, removeSource, checkSource, BY_ID,
   refreshSeries, searchForSeries, identify, clear, enqueueLibrary, afterScan, info, coverPath, forgetSeries
 };

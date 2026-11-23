@@ -10,6 +10,7 @@
     collections: {}, collection: {}, readlists: {}, readlist: {},
     settings: { key: 'nav.settings' },
     'manage-libraries': { adminOnly: true },
+    'metadata-sources': { adminOnly: true },
     processes: { adminOnly: true },
     'server-settings': { adminOnly: true },
     users: { adminOnly: true, key: 'nav.users' },
@@ -270,6 +271,7 @@
     items.push({ divider: true });
     if (isAdmin()) {
       items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
+      items.push({ href: '#metadata-sources', icon: 'dataset', key: 'nav.metadataSources' });
       items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
       items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });

@@ -17,6 +17,8 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   novel, book), authors, genres/tags, rating, alternative titles and covers from AniList, MangaDex,
   MangaUpdates, Kitsu, MyAnimeList, Open Library, Google Books and Comic Vine. Each library chooses which
   sources to use and in what order. See [Online metadata](#online-metadata).
+- **Folder metadata sources**: your own JSON files matched by name (`11.json` → `11.cbz`), managed on the
+  Metadata sources page. See [Metadata sources page and folder sources](#metadata-sources-page-and-folder-sources).
 - **Browse**: Home (*Keep reading*, *On deck* = next book in series you've started, recently added),
   per-library grids with text search, sort, read status and **filters by type, status, genre, tag and
   metadata state** (each option shows how many works have it; genre/tag chips on a work page open the filtered
@@ -181,6 +183,43 @@ order them with the arrows.
   generic user agent. Nothing about your users or server is sent. Turn off every source of a library to keep
   it fully offline.
 - Works can be filtered by **type** on library pages.
+
+### Metadata sources page and folder sources
+
+**Metadata sources** (sidebar, administrators) lists every source: the online sites (with whether their API
+key is set, which libraries use them and a *Try* search to see what a site answers) and your **folder
+sources**.
+
+A **folder source** is a folder of JSON files you keep, matched to your files by name, e.g. `11.json` →
+`11.cbz`. Add one with *Add folder source*: a name, the folder (type it or *Browse*), and how to match:
+
+| Match | JSON file | Describes |
+| --- | --- | --- |
+| **Same structure as the library** (default) | `One Piece.json` or `One Piece/series.json` | the work in the folder `One Piece/` |
+| | `One Piece/11.json` | the book `One Piece/11.cbz` (or `.zip`, `.pdf`) |
+| **By file name** | `11.json` anywhere in the folder | every book named `11.<ext>` (in any work!) |
+| | `One Piece.json` anywhere | the work whose folder is `One Piece` |
+
+- The folder can be the **library folder itself**: JSON files next to the comics (`One Piece/11.json` beside
+  `One Piece/11.cbz`).
+- A one-shot (a book file directly in the library) uses one JSON for the work and its book (`Short.json`).
+- **Covers:** an image named like the work's JSON (`One Piece.jpg`/`.png`/`.webp`), or the JSON's `"cover"`
+  (a path inside the folder). Shown according to the library's/work's cover setting.
+- **JSON keys** (any case; ComicInfo names like `Summary`, `Genre`, `Writer` work too):
+  books: `title`, `number` (or `chapter`, `issue`, `volume`), `summary`, `date`/`releaseDate`, authors;
+  works: `summary`, `status` (ongoing/completed/hiatus/cancelled), `type` (manga, manhwa, …), `year`,
+  `publisher`, `genres`, `tags`, `rating` (0–10 or 0–100), `ageRating`, `readingDirection` (rtl/ltr/
+  continuous), `altTitles`, `sortTitle`, `cover`, and authors as `authors` (names or `{name, role}`) or
+  `writer`/`artist`/`penciller`/`colorist`/`letterer`/`editor`. Other keys are ignored. Work titles always
+  stay the library's.
+- **Precedence:** your edits > folder sources > `ComicInfo.xml` > online sites. Several folder sources:
+  the first in the library's order fills each field. Folder sources always come before online sites.
+- **When it's read:** after every scan (new chapters get their JSON right away), on *Refresh metadata*, and
+  with *Apply now*. Nothing goes over the network.
+- **Check matches** shows, per library, how many works and books a source matches (with examples), JSON files
+  that match nothing, names used by several files (by-name matching) and files that aren't valid JSON.
+- Each library can turn a folder source off (Manage libraries → Edit). Deleting a source removes its data
+  from works and books; the JSON files themselves are never changed.
 
 ### Restarts are automatic
 

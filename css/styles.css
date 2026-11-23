@@ -510,6 +510,21 @@ a.chip--filter:hover { background: var(--hover); color: var(--text); }
 .page-tile img { width: 100%; height: 100%; object-fit: cover; display: block; }
 .page-tile__num { position: absolute; left: 6px; bottom: 6px; padding: 1px 7px; border-radius: 999px; background: rgba(0, 0, 0, 0.65); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; }
 
+/* ---- Metadata sources page ---- */
+.prov-item--folder { background: var(--primary-soft); }
+.prov-item--folder strong [data-icon] svg, .chip [data-icon] svg { width: 14px; height: 14px; vertical-align: -2px; }
+.msrc-how { margin-top: 16px; }
+.msrc-how summary { cursor: pointer; margin: 0; }
+.msrc-how[open] summary { margin-bottom: 8px; }
+.msrc-pre { margin: 0 0 12px; padding: 10px 12px; border-radius: 8px; background: var(--bg-alt); font-size: 12px; line-height: 1.5; overflow-x: auto; white-space: pre; }
+.msrc-report { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
+.msrc-report p { margin: 0; }
+.msrc-libs, .msrc-examples, .msrc-results { margin: 0; padding-left: 18px; font-size: 13px; }
+.msrc-examples { padding-left: 16px; color: var(--text-muted); }
+.msrc-examples code, .msrc-libs code { font-size: 12px; overflow-wrap: anywhere; }
+.msrc-search { display: flex; gap: 8px; }
+.msrc-search input { flex: 1; min-width: 0; }
+
 /* ---- Progress bars (scans, metadata lookups) ---- */
 .progress { display: flex; flex-direction: column; gap: 6px; margin: 4px 0; }
 .progress__track { height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }

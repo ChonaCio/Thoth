@@ -4,7 +4,7 @@ Read this before changing anything. **Keep it up to date**: whenever a change la
 sections it touches (what exists, conventions, known gaps, recent changes). User-facing documentation
 lives in [README.md](README.md); this file is for whoever develops Thoth next.
 
-_Last updated: 2026-11-23_
+_Last updated: 2026-11-23 (folder metadata sources)_
 
 ## What Thoth is
 
@@ -39,10 +39,11 @@ from GitHub (`ChonaCio/Thoth`).
 | `library/scan-core.js`, `scan-worker.js`, `zip.js` | File work in the workers: listing, ZIP central directory, `ComicInfo.xml`, PDF page counts. Must not touch the DB. |
 | `library/api.js` | Library REST routes: libraries, series (works grouped by version), facets/filters, books, pages, progress, collections, read lists, metadata actions. |
 | `library/metadata/providers.js` | One object per site: `search(q)`, `fetch(id)` → normalized record. Per-site rate limit, retries on 429, timeouts. |
-| `library/metadata/index.js` | Per-library provider order, merge (first match fills each field), cover download, Identify (locked match), queue with concurrency + batch progress. |
+| `library/metadata/index.js` | Source registry (online `PROVIDERS` + folder sources from `db.metadataSources`, `byId`), per-library order (folder sources forced first: `localFirst`), online merge (first match fills each field), cover download, Identify (locked match, online only), queue with concurrency + batch progress, folder sources: `applyLocal`, CRUD, `checkSource`. |
+| `library/metadata/local.js` | Folder sources: indexing a folder (`buildIndex`), JSON parsing with mtime cache, key matching (`path` / `name` modes), JSON → work/book records (`seriesRecord`, `bookRecord`), covers next to the JSON. No DB access. |
 | `index.html`, `css/styles.css` | App shell, dialogs (form, identify, profile, users), theme tokens (light/dark). |
 | `js/app.js` | Router (`#name/param?query`), sidebar, account menu, users, updates (incl. waiting for the auto-restart). |
-| `js/library.js` | All library pages (home, library grid + filters, work page, book, search, collections, read lists, manage libraries, processes, server settings), the generic form dialog, Identify dialog, progress bars. ES5 style (`var`, `function`), no modules. |
+| `js/library.js` | All library pages (home, library grid + filters, work page, book, search, collections, read lists, manage libraries, metadata sources, processes, server settings), the generic form dialog, Identify dialog, progress bars. ES5 style (`var`, `function`), no modules. |
 | `js/reader.js` | Reader (ltr / rtl / continuous, fits, PDF via pdf.js from cdnjs). |
 | `js/i18n.js`, `js/i18n-library.js` | Strings; `add(lang, {...})` merges blocks. |
 | `deploy/`, `Dockerfile`, `docker-compose.yml`, `scripts/stamp-build.js` | Service/container setup, build version stamp. |
@@ -51,12 +52,14 @@ from GitHub (`ChonaCio/Thoth`).
 ## Data model (data/library.json)
 
 - `libraries[id]`: `{ id, name, root, created, oneshots: { folder }, defaults: { bookLayout: 'tiles'|'list', readingDirection: null|'ltr'|'rtl'|'vertical' }, metadata: { providers: [{ id, enabled }], autoFetch, cover: 'missing'|'always'|'never' }, lastScan, scanError }`
-- `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt }) }`
-- `books[id]`: `{ id, seriesId, libraryId, relPath, fileName, format, pageCount, size, fileModified, meta, overrides, index, readVersion }`
+- `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion }) }`
+- `books[id]`: `{ id, seriesId, libraryId, relPath, fileName, format, pageCount, size, fileModified, meta, local ({ merged, sourceId, file }), overrides, index, readVersion }`
+- `metadataSources[id]` (folder sources): `{ id: 'folder-…', name, folder (absolute), match: 'path'|'name', created, updated }`. `s.local`/`b.local` are recomputed from the JSON files by `applyLocal` (after every scan, Refresh, source/library changes), so they can always be thrown away.
 - IDs are stable hashes of library + path, so rescans and one-shot setting changes keep progress.
 
-**Precedence of a work's values** (`seriesMeta`): admin overrides > `ComicInfo.xml` > online metadata.
-Titles never come from providers. Reading mode: work override > library fixed default > detected (files,
+**Precedence of a work's values** (`seriesMeta`): admin overrides > folder sources > `ComicInfo.xml` >
+online metadata; books (`bookMeta`): overrides > folder source JSON > `ComicInfo.xml`. Work titles never come
+from providers or folder sources (book titles can). Reading mode: work override > library fixed default > detected (files,
 then online) > `ltr`. Layout: work override > library default > tiles.
 
 **Versions of a work**: folders `X`, `X (Colored)`, `X [Raw]`, … group into one work by folder name
@@ -100,13 +103,24 @@ through `/api/setup`, and use the browser.
 - Some MangaDex cover images may not show in the Identify dialog (hotlink restrictions); downloads work.
 - Jikan (MyAnimeList) was unreachable from the development network; the provider is untested live. Google
   Books answers 429 without a key (that's why it's off by default). `tests/test-providers-live.js` is a report:
-  it exits 0 even when some sites fail.
+  it exits 0 even when some sites fail. `tests/test-metadata.js` depends on the live sites too: an occasional
+  failure where The Hobbit isn't matched means Open Library was slow; rerun before suspecting the code.
 - Very generic titles (e.g. "Short Story") can match an unrelated entry whose title or alt title is the same;
   admins fix it with Identify or Clear. Open Library subjects are free-form; `providers.js` filters the noise.
 - No thumbnails cache/resizing at all (covers are full first pages, cached by the browser).
+- Folder sources: `"cover"` must be a file inside the source folder (web addresses are ignored); applying
+  walks the whole folder each time (fine for tens of thousands of files, not millions). `name` matching applies
+  a JSON to every book with that file name, by design — the check report shows it.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+
+- **2026-11-23** — Metadata sources page (`#metadata-sources`): online sites with key status, libraries using
+  them and a test search (`GET /api/metadata/sources/:id/search`); folder sources (JSON files matched by name,
+  `11.json` → `11.cbz`) with create/edit/delete, *Check matches* report and *Apply now*
+  (`/api/metadata/sources[/:id[/check|/apply]]`). Folder sources come first in every library's source order,
+  beat ComicInfo, and are re-read after every scan. Folder images become covers (`store.metadataCover`).
+  New suite `tests/test-folder-sources.js` (in `npm test`).
 
 - **2026-11-23** — Chapter layout (tiles/list) per library + per work; one-shot work pages show their pages;
   default reading mode per library (automatic or fixed) + per work, reader respects default changes; library

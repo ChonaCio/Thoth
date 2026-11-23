@@ -25,7 +25,8 @@ function saveNow(file, data) {
 }
 
 const db = Object.assign(
-  { libraries: {}, series: {}, books: {}, collections: {}, readlists: {}, settings: {} },
+  // metadataSources: folder sources created by admins (library/metadata/local.js)
+  { libraries: {}, series: {}, books: {}, collections: {}, readlists: {}, settings: {}, metadataSources: {} },
   load(LIB_FILE, {})
 );
 db.settings = Object.assign({ scanIntervalMinutes: 60 }, db.settings);
@@ -109,12 +110,16 @@ function libraryDefaults(lib) {
     readingDirection: DIRECTIONS.includes(d.readingDirection) ? d.readingDirection : null
   };
 }
-const filled = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length)));
+// (a function declaration: bookMeta uses it during the first reindex(), before this line runs)
+function filled(o) { return Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))); }
 function seriesMeta(s) {
   const online = filled(s.provider && s.provider.merged);
   delete online.title;
+  // Folder sources (JSON files the admin keeps) beat the files' ComicInfo.xml and online sites
+  const local = filled(s.local && s.local.merged);
+  delete local.title;
   const overrides = filled(s.overrides);
-  const m = Object.assign({}, online, filled(s.meta), overrides);
+  const m = Object.assign({}, online, filled(s.meta), local, overrides);
   const defaults = libraryDefaults(db.libraries[s.libraryId]);
   // Reading mode: the work's own setting > the library's fixed default > detected (files, then online) > left to right
   const readingDirection = overrides.readingDirection || defaults.readingDirection || m.readingDirection || 'ltr';
@@ -134,7 +139,7 @@ function seriesMeta(s) {
     publisher: m.publisher || '',
     readingDirection, // ltr | rtl | vertical (continuous)
     // Detected reading mode (files/online), shown as "Automatic (…)" when editing
-    detectedDirection: Object.assign({}, online, filled(s.meta)).readingDirection || 'ltr',
+    detectedDirection: Object.assign({}, online, filled(s.meta), local).readingDirection || 'ltr',
     // How the work page lists chapters/books: the work's own setting > the library default
     bookLayout: BOOK_LAYOUTS.includes(overrides.bookLayout) ? overrides.bookLayout : defaults.bookLayout,
     // Which cover to show: 'file' (first page), 'metadata' (downloaded) or null (library setting decides)
@@ -149,8 +154,9 @@ function seriesMeta(s) {
     altTitles: Array.isArray(m.altTitles) ? m.altTitles : []
   };
 }
+// Book precedence: admin edits > folder source JSON (e.g. 11.json for 11.cbz) > ComicInfo.xml
 function bookMeta(b) {
-  const m = Object.assign({}, b.meta || {}, b.overrides || {});
+  const m = Object.assign({}, filled(b.meta), filled(b.local && b.local.merged), filled(b.overrides));
   const number = m.number != null && m.number !== '' ? String(m.number) : String(b.index + 1);
   const parsed = parseFloat(number);
   return {
@@ -206,9 +212,11 @@ function bookView(b, user, { admin = false } = {}) {
     seriesTitle: db.series[b.seriesId] ? seriesMeta(db.series[b.seriesId]).title : '',
     edition: db.series[b.seriesId] ? seriesMeta(db.series[b.seriesId]).edition : 'base',
     oneshot: Boolean(db.series[b.seriesId] && db.series[b.seriesId].oneshot),
-    overrides: b.overrides || {}
+    overrides: b.overrides || {},
+    // The folder source whose JSON describes this book, if any
+    localSource: b.local ? { id: b.local.sourceId, name: (db.metadataSources[b.local.sourceId] || {}).name || b.local.sourceId } : null
   };
-  if (admin) v.path = b.relPath;
+  if (admin) { v.path = b.relPath; if (b.local) v.localFile = b.local.file; }
   return v;
 }
 function seriesCounts(s, user) {
@@ -246,15 +254,26 @@ function seriesView(s, user, { admin = false } = {}) {
       matched: (s.provider.matches || []).length > 0, locked: s.provider.locked || null,
       cover: Boolean(s.provider.coverFile), coverProvider: s.provider.coverFile ? s.provider.coverProvider || null : null, errors: admin ? s.provider.errors || [] : undefined
     } : null,
+    // Folder sources that gave this work data ({ id, name } each), and whether one gave its cover
+    localSources: s.local ? (s.local.sourceIds || []).map(id => ({ id, name: (db.metadataSources[id] || {}).name || id })) : [],
+    localCover: Boolean(s.local && s.local.coverPath),
+    localFile: admin && s.local ? s.local.file || null : undefined,
     overrides: s.overrides || {}
   }, seriesCounts(s, user));
   if (admin) v.path = s.relPath;
-  if (online) v.coverV = Math.round(Date.parse(s.provider.fetchedAt || 0) / 1000);
+  if (online) v.coverV = metadataCover(s).version;
   return v;
 }
 // Use the downloaded cover? Per library: 'always', 'missing' (only when the files have no cover page) or 'never'
+// The cover image a work's metadata offers: a folder source's image (e.g. "One Piece.jpg" next to its
+// JSON) first, else the one downloaded from an online site. { file (absolute path), version } or null.
+function metadataCover(s) {
+  if (s.local && s.local.coverPath) return { file: s.local.coverPath, version: s.local.coverVersion || 0, source: 'local' };
+  if (s.provider && s.provider.coverFile) return { file: path.join(DATA_DIR, 'covers', s.provider.coverFile), version: Math.round(Date.parse(s.provider.fetchedAt || 0) / 1000), source: 'online' };
+  return null;
+}
 function coverFromMetadata(s) {
-  if (!s.provider || !s.provider.coverFile) return false;
+  if (!metadataCover(s)) return false;
   const choice = (s.overrides || {}).cover; // the work's own choice wins
   if (choice === 'metadata') return true;
   if (choice === 'file') return !(booksBySeries.get(s.id) || []).some(b => b.format === 'cbz' && b.pageCount);
@@ -269,5 +288,5 @@ module.exports = {
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
-  bookView, seriesView, seriesCounts, coverFromMetadata, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS
+  bookView, seriesView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS
 };

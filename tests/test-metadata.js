@@ -75,7 +75,7 @@ const byTitle = (items, t) => items.find(s => s.workTitle === t || s.title === t
   ok(op.authors.some(a => /oda/i.test(a.name)) && op.tags.length > 0 && op.rating > 0, `One Piece: authors (${op.authors.map(a => a.name).slice(0, 2).join(', ')}), tags, rating ${op.rating}`);
   ok(op.genres.includes('Adventure') && !op.tags.includes('Adventure') && op.tags.length <= 8, `genres kept apart from tags (${op.genres.join(', ')} | ${op.tags.join(', ')})`);
   ok(op.metadata.cover && op.metadata.coverProvider === 'anilist', 'the matched cover was downloaded (from the first source)');
-  ok((await all('&metadata=matched')).length === 3 && (await all('&metadata=unmatched')).length === 1 && (await all('&genre=adventure')).some(s => s.workTitle === 'One Piece'), 'filter by metadata state and by online genre');
+  ok((await all('&metadata=matched')).length === 3 && (await all('&metadata=unmatched')).length === 1 && (await all('&genre=adventure')).some(s => s.workTitle === 'One Piece'), `filter by metadata state and by online genre (matched: ${(await all('&metadata=matched')).map(s => s.workTitle).join(', ')}; unmatched: ${(await all('&metadata=unmatched')).map(s => s.workTitle).join(', ')})`);
   ok(op.metadata.matched && op.metadata.sources.summary === 'anilist' && op.metadata.links.some(l => /anilist\.co/.test(l.url)), 'first source in the order (AniList) filled the summary; link to it');
   ok(op.title === 'One Piece', 'title stays the library’s');
   ok(op.coverSource === 'file', 'cover setting "missing": a CBZ keeps its first page as cover');

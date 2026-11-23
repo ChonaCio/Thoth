@@ -178,7 +178,7 @@ function worksFor(user, library) {
   return items;
 }
 // Online metadata state of a work: 'matched', 'unmatched' (looked up, nothing found) or 'none' (never looked up)
-const metadataState = s => (!s.metadata ? 'none' : s.metadata.matched ? 'matched' : 'unmatched');
+const metadataState = s => ((s.localSources && s.localSources.length) || (s.metadata && s.metadata.matched) ? 'matched' : !s.metadata ? 'none' : 'unmatched');
 const same = (a, b) => searchable(a) === searchable(b);
 
 function listSeries(user, q) {
@@ -378,7 +378,10 @@ async function handle(ctx) {
       if (oneshots.folder !== cur.folder) rescan = true;
       lib.oneshots = oneshots;
     }
-    if (body.metadata && typeof body.metadata === 'object') lib.metadata = metadata.parseLibrarySettings(body.metadata, metadata.librarySettings(lib));
+    if (body.metadata && typeof body.metadata === 'object') {
+      lib.metadata = metadata.parseLibrarySettings(body.metadata, metadata.librarySettings(lib));
+      metadata.applyLocal(lib.id).catch(() => {}); // folder sources turned on/off or reordered
+    }
     if (body.defaults && typeof body.defaults === 'object') lib.defaults = parseDefaults(body.defaults, lib.defaults);
     store.saveLibrary();
     if (rescan) scanner.scanLibrary(lib.id).catch(() => {});
@@ -450,11 +453,12 @@ async function handle(ctx) {
   if ((m = /^\/api\/series\/([\w-]+)\/thumbnail$/.exec(p)) && method === 'GET') {
     const s = getSeries(user, m[1]);
     if (store.coverFromMetadata(s)) {
-      const file = metadata.coverPath(s);
-      const buf = await fs.promises.readFile(file).catch(() => null);
+      const cover = store.metadataCover(s);
+      const st = await fs.promises.stat(cover.file).catch(() => null);
+      const buf = st && st.size <= 16 * 1024 * 1024 ? await fs.promises.readFile(cover.file).catch(() => null) : null;
       if (buf) {
-        const type = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(file)] || 'application/octet-stream';
-        return sendImage(req, res, buf, type, `"${s.id}-meta-${Date.parse(s.provider.fetchedAt || 0)}"`).then(() => true);
+        const type = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(cover.file).toLowerCase()] || 'application/octet-stream';
+        return sendImage(req, res, buf, type, `"${s.id}-${cover.source}-${cover.version}"`).then(() => true);
       }
     }
     const cover = store.booksOf(s.id).find(b => b.format === 'cbz' && b.pageCount);
@@ -467,6 +471,41 @@ async function handle(ctx) {
   if (p === '/api/metadata/providers' && method === 'GET') {
     requireAdmin();
     return send(200, { providers: metadata.providerList(), status: metadata.info() });
+  }
+  // ---- metadata sources: online sites (read-only) and folder sources (create / edit / delete / check) ----
+  if (p === '/api/metadata/sources' && method === 'GET') {
+    requireAdmin();
+    const libs = Object.values(db.libraries);
+    const online = metadata.providerList().filter(x => x.kind === 'online').map(x => Object.assign(x, {
+      usedBy: libs.filter(l => metadata.librarySettings(l).providers.some(pp => pp.id === x.id && pp.enabled)).map(l => ({ id: l.id, name: l.name }))
+    }));
+    return send(200, { folder: metadata.folderSources().map(metadata.sourceView), online, matchModes: metadata.MATCH_MODES });
+  }
+  if (p === '/api/metadata/sources' && method === 'POST') {
+    requireAdmin();
+    const folder = await validateRoot(body.folder);
+    return send(201, { source: metadata.sourceView(metadata.createSource({ name: body.name, folder, match: body.match })) });
+  }
+  if ((m = /^\/api\/metadata\/sources\/([\w-]+)(\/check|\/apply|\/search)?$/.exec(p))) {
+    requireAdmin();
+    const id = m[1], action = m[2] || '';
+    if (action === '/search' && method === 'GET') {
+      // Try an online site from the sources page
+      const prov = metadata.BY_ID[id];
+      if (!prov) throw httpError(404, 'notFound');
+      const term = clean(q.get('q'), 200);
+      if (!term) throw httpError(400, 'invalid');
+      return send(200, { results: await metadata.testSearch(id, term) });
+    }
+    if (!db.metadataSources[id]) throw httpError(404, 'notFound');
+    if (action === '/check' && method === 'GET') return send(200, await metadata.checkSource(id));
+    if (action === '/apply' && method === 'POST') return send(200, { applied: await metadata.applyLocalEverywhere() });
+    if (action === '' && method === 'PATCH') {
+      const patch = { name: body.name, match: body.match };
+      if ('folder' in body) patch.folder = await validateRoot(body.folder);
+      return send(200, { source: metadata.sourceView(metadata.updateSource(id, patch)) });
+    }
+    if (action === '' && method === 'DELETE') { await metadata.removeSource(id); return send(200, { ok: true }); }
   }
   if ((m = /^\/api\/libraries\/([\w-]+)\/metadata$/.exec(p)) && method === 'POST') {
     requireAdmin();
