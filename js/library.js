@@ -1403,7 +1403,7 @@
     return '<h1 class="page-title">' + esc(t('nav.catalog')) + '</h1>' +
       '<nav class="tabs files-tabs" aria-label="' + esc(t('nav.catalog')) + '">' +
         tab('browse', '#catalog', 'travel_explore', 'cat.tabBrowse') +
-        (isAdmin() ? tab('merge', '#catalog/merge', 'collections', 'cat.tabMerge') + tab('sources', '#catalog/sources', 'dataset', 'cat.tabSources') : '') +
+        tab('merge', '#catalog/merge', 'collections', 'cat.tabMerge') + tab('sources', '#catalog/sources', 'dataset', 'cat.tabSources') +
       '</nav>';
   }
   function catState() {
@@ -1411,13 +1411,17 @@
     return cache.catalog;
   }
   var catCover = function (key) { return '/api/catalog/cover?key=' + encodeURIComponent(key); };
+  // A source's own icon (its site's), with the generic one underneath in case the site has none
+  function sourceIconHtml(id, cls) {
+    return '<span class="' + (cls || '') + ' src-icon">' + icon('travel_explore') + '<img alt="" loading="lazy" src="/api/catalog/sources/' + encodeURIComponent(id) + '/icon" onerror="this.remove()" /></span>';
+  }
   function catalogCard(it) {
     return '<article class="media-card cat-card">' +
       '<a class="media-card__link" href="#catalog/work?key=' + encodeURIComponent(it.key) + '">' +
         '<div class="cover">' + (it.cover ? '<img class="cover__img" loading="lazy" decoding="async" alt="" src="' + catCover(it.coverKey) + '" />' : '') + placeholder('cbz') +
           (it.inLibrary ? '<span class="cat-card__have" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') + '</div>' +
         '<div class="media-card__body"><h3 class="media-card__title">' + esc(it.title) + '</h3>' +
-          '<p class="media-card__meta">' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : ''].filter(Boolean).join(' · ')) + '</p></div>' +
+          '<p class="media-card__meta cat-card__meta">' + it.sources.map(function (s) { return sourceIconHtml(s.sourceId, 'src-icon--xs'); }).join('') + '<span>' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : ''].filter(Boolean).join(' · ')) + '</span></p></div>' +
       '</a></article>';
   }
   function fetchCatalog(append) {
@@ -1494,7 +1498,7 @@
       var all = d.showAll && d.showAll[s.key];
       var rows = all ? s.chapterList : s.chapterList.slice(0, 50);
       return '<section class="card card--wide cat-source">' +
-        '<div class="cat-source__head"><h2 class="card__title">' + esc(s.name) + '</h2>' +
+        '<div class="cat-source__head"><h2 class="card__title cat-source__title">' + sourceIconHtml(s.sourceId, 'src-icon--sm') + esc(s.name) + '</h2>' +
           (s.url ? '<a class="btn btn--text btn--small" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + esc(t('cat.openOnSite')) + '</a>' : '') + '</div>' +
         (s.title && s.title !== w.title ? '<p class="small"><strong>' + esc(s.title) + '</strong></p>' : '') +
         (s.error ? '<p class="notice notice--error small">' + esc(s.error) + '</p>' : '') +
@@ -1616,7 +1620,7 @@
     return head + '<div class="lib-list">' + st.data.sources.map(function (s) {
       var stats = s.lastStats;
       return '<section class="card lib-card cat-src">' +
-        '<div class="lib-card__head"><span class="lib-card__icon">' + icon('travel_explore') + '</span><div class="lib-card__titles">' +
+        '<div class="lib-card__head">' + sourceIconHtml(s.id, 'lib-card__icon') + '<div class="lib-card__titles">' +
           '<h2 class="card__title">' + esc(s.name) + '</h2><p class="muted small">' + esc(s.label + ' · ' + s.baseUrl) + '</p></div></div>' +
         '<p class="small">' + esc(t('cat.srcWorks', { count: s.works })) + (s.lastCrawlAt ? ' · ' + esc(t('cat.srcLast', { time: A().fmtDate(s.lastCompleteAt || s.lastCrawlAt) })) : ' · ' + esc(t('cat.srcNever'))) +
           ' · ' + esc(t('cat.schedule.' + (s.schedule || 'manual'))) + '</p>' +
@@ -1636,16 +1640,54 @@
     }).join('') + '</div>';
   }
   // The settings form; the fields shown depend on the kind of site
-  function catalogSourceForm(s) {
+  // Adding a source: the site's address first; its robots.txt, sitemaps and pages fill the settings
+  function catalogDetectForm() {
+    openForm({
+      title: t('cat.addSource'), submitLabel: t('cat.detect'), note: t('cat.detectNote'),
+      fields: [{ name: 'url', label: t('cat.srcUrl'), placeholder: 'https://example.com', help: t('cat.detectHelp') },
+        { name: 'manual', label: t('cat.detectManual'), type: 'checkbox', value: false }],
+      onSubmit: function (v) {
+        if (v.manual) { setTimeout(function () { catalogSourceForm(null, null, v.url); }, 0); return Promise.resolve(); }
+        if (!v.url) return Promise.reject({ code: 'invalidUrl' });
+        return api('POST', '/api/catalog/sources/detect', { url: v.url }).then(function (r) {
+          setTimeout(function () { catalogSourceForm(null, r.detect, v.url); }, 0);
+        });
+      }
+    });
+  }
+  // What Detect found, in words (shown at the top of the settings form)
+  function detectSummary(d) {
+    if (!d) return '';
+    var f = d.found || {}, n = d.notes || [];
+    var lines = [];
+    if (d.blocked) lines.push(t('cat.det.blocked'));
+    if (n.indexOf('mangadex') !== -1 || n.indexOf('webtoons') !== -1) lines.push(t('cat.det.known'));
+    if (f.robots) lines.push(t(f.robots === 'found' ? 'cat.det.robots' : 'cat.det.noRobots'));
+    if (f.sitemaps && f.sitemaps.length) lines.push(t('cat.det.sitemaps', { count: f.sitemaps.length, files: f.sitemapFiles || f.sitemaps.length }));
+    if (n.indexOf('noSitemap') !== -1) lines.push(t('cat.det.noSitemap'));
+    if (d.settings && d.settings.workPattern) lines.push(t('cat.det.works', { pattern: d.settings.workPattern, count: f.works }));
+    if (d.settings && d.settings.chapterPattern) lines.push(t('cat.det.chapters', { pattern: d.settings.chapterPattern }));
+    if (f.theme) lines.push(t('cat.det.theme', { theme: f.theme === 'madara' ? 'Madara' : 'MangaReader' }));
+    else if (d.settings && d.settings.type === 'custom') lines.push(t('cat.det.generic'));
+    if (f.sampleWork) lines.push(t('cat.det.sample', { title: f.sampleWork.title || '—', chapters: f.sampleWork.chapterLinks }));
+    if (n.indexOf('robotsWorks') !== -1) lines.push(t('cat.det.robotsWorks'));
+    if (n.indexOf('needsSelectors') !== -1 || n.indexOf('noWorkPattern') !== -1) lines.push(t('cat.det.needsSelectors'));
+    return lines.join(' ');
+  }
+  function catalogSourceForm(s, detected, url) {
     var st = catSourcesState();
     var types = st.types || [];
-    var cur = s || { type: 'madara', includeChapters: true, schedule: 'manual', languages: '' };
+    var cur = s || Object.assign({ type: 'custom', includeChapters: true, schedule: 'manual', languages: '', baseUrl: url || '' }, detected && detected.settings ? detected.settings : {});
     var sel = cur.selectors || {};
     var ty = function (list) { return { field: 'type', value: list }; };
     var fields = [
       { name: 'name', label: t('manage.name'), value: cur.name || '' },
       { name: 'type', label: t('cat.srcType'), type: 'select', value: cur.type, options: types.map(function (x) { return { value: x.type, label: x.label }; }), help: t('cat.srcTypeHelp') },
       { name: 'baseUrl', label: t('cat.srcUrl'), value: cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcUrlHelp') },
+      { name: 'listing', label: t('cat.srcListing'), type: 'select', value: cur.listing || 'pages', options: [{ value: 'sitemap', label: t('cat.listing.sitemap') }, { value: 'pages', label: t('cat.listing.pages') }], showWhen: ty(['madara', 'mangareader', 'custom']), help: t('cat.srcListingHelp') },
+      { name: 'sitemaps', label: t('cat.srcSitemaps'), type: 'textarea', rows: 2, value: (cur.sitemaps || []).join('\n'), showWhen: { field: 'listing', value: 'sitemap' }, help: t('cat.srcSitemapsHelp') },
+      { name: 'workPattern', label: t('cat.srcWorkPattern'), value: cur.workPattern || '', placeholder: '/manga/*/', showWhen: { field: 'listing', value: 'sitemap' }, help: t('cat.srcPatternHelp') },
+      { name: 'chapterPattern', label: t('cat.srcChapterPattern'), value: cur.chapterPattern || '', placeholder: '/manga/*/*/', showWhen: ty(['custom']), help: t('cat.srcChapterPatternHelp') },
       { name: 'listPath', label: t('cat.srcListPath'), value: cur.listPath || '', placeholder: 'manga', showWhen: ty(['madara', 'mangareader']), help: t('cat.srcListPathHelp') },
       { name: 'languages', label: t('cat.srcLanguages'), value: cur.languages || '', placeholder: 'en, es', help: t('cat.srcLanguagesHelp') },
       { name: 'contentRating', label: t('cat.srcRating'), value: cur.contentRating || 'safe,suggestive,erotica', showWhen: ty(['mangadex']), help: t('cat.srcRatingHelp') },
@@ -1661,9 +1703,11 @@
       selField('altTitles', '.alt-names'), selField('status', '.status'), selField('chapter', '.chapter-list li'), selField('chapterLink', 'a@href'), selField('chapterTitle', 'a'), selField('chapterDate', '.date')
     ]);
     openForm({
-      title: t(s ? 'cat.editSource' : 'cat.addSource'), fields: fields, note: t('cat.srcNote'),
+      title: t(s ? 'cat.editSource' : 'cat.addSource'), fields: fields, note: (detected ? detectSummary(detected) + ' ' : '') + t('cat.srcNote'),
       onSubmit: function (v) {
         var body = { name: v.name, type: v.type, baseUrl: v.baseUrl, listPath: v.listPath, languages: v.languages, contentRating: v.contentRating, includeChapters: v.includeChapters,
+          listing: v.listing, sitemaps: (v.sitemaps || '').split(/\s+/).filter(Boolean), workPattern: v.workPattern, chapterPattern: v.chapterPattern,
+          iconUrl: cur.iconUrl || undefined,
           maxWorks: Number(v.maxWorks) || 0, schedule: v.schedule, gapMs: Number(v.gapMs) || undefined, selectors: {} };
         if (!body.gapMs) delete body.gapMs;
         Object.keys(v).forEach(function (k) { if (k.indexOf('sel_') === 0 && v[k]) body.selectors[k.slice(4)] = v[k]; });
@@ -2343,31 +2387,50 @@
     box.innerHTML = list.map(function (c) {
       var src = coverPreview(s, c);
       return '<button type="button" class="cover-pick' + (c.id === selected ? ' is-selected' : '') + '" role="radio" aria-checked="' + (c.id === selected) + '" data-pick="' + esc(c.id) + '" title="' + esc(coverCaption(c)) + '">' +
-        '<span class="cover-pick__img">' + (src ? '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="' + esc(src) + '" />' : icon('sync')) + '</span>' +
+        // Each preview shows a spinner until it's there, or "not available" if the site doesn't send it
+        '<span class="cover-pick__img' + (src ? ' is-loading' : '') + '">' + (src ? '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="' + esc(src) + '" onload="this.parentNode.classList.remove(\'is-loading\')" onerror="this.parentNode.classList.remove(\'is-loading\');this.parentNode.classList.add(\'is-failed\');this.remove()" />' : icon('sync')) +
+          (src ? '<span class="cover-pick__state">' + esc(t('cover.unavailable')) + '</span>' : '') + '</span>' +
         '<span class="cover-pick__label">' + esc(coverCaption(c)) + '</span></button>';
     }).join('');
     renderIcons(box);
     var input = $('#form-dialog-fields input[name="coverChoice"]');
     if (input) input.value = selected;
   }
+  // The candidates at once; then, when it's due (once a week per work, or when asked), a short search of the
+  // online sites for more, shown with a line under the picker that can also start it again
+  function searchMoreCoversUi(s, force) {
+    var box = $('#cover-picker');
+    if (!box) return;
+    var line = $('#cover-more') || (function () { var p = document.createElement('p'); p.id = 'cover-more'; p.className = 'muted small cover-picker__more'; box.after(p); return p; })();
+    line.innerHTML = '<span class="spinner spinner--sm"></span> ' + esc(t('cover.searching'));
+    return api('GET', '/api/series/' + s.id + '/covers?search=1' + (force ? '&force=1' : '')).then(function (r2) {
+      if (coverStart.series !== s || !$('#cover-picker')) return;
+      var input = $('#form-dialog-fields input[name="coverChoice"]');
+      var before = coverStart.list.length;
+      coverStart.list = r2.candidates;
+      pickCover(input && input.value ? input.value : r2.current);
+      searchedLine(s, r2.searchedAt, force ? r2.candidates.length - before : null);
+    }, function () { searchedLine(s, null, null); });
+  }
+  function searchedLine(s, at, added) {
+    var line = $('#cover-more');
+    if (!line) return;
+    line.innerHTML = esc(added != null ? t('cover.searchedNow', { count: Math.max(0, added) }) : at ? t('cover.searchedAt', { time: A().fmtDate(at) }) : t('cover.searchFailed')) +
+      ' <button type="button" class="btn btn--text btn--small" data-fd="cover-search">' + esc(t('cover.searchAgain')) + '</button>';
+    var b = $('[data-fd="cover-search"]', line);
+    if (b) b.addEventListener('click', function () { searchMoreCoversUi(s, true); });
+  }
   function loadCoverPicker(s) {
     pendingUpload = null;
     api('GET', '/api/series/' + s.id + '/covers').then(function (r) {
       coverStart = { current: r.current, list: r.candidates, series: s };
       renderCoverPicker(s, r.candidates, r.current);
-      // Then ask the online sites that weren't asked during the lookup, and add what they have
-      var status = document.createElement('p');
-      status.className = 'muted small cover-picker__more';
-      status.innerHTML = '<span class="spinner spinner--sm"></span> ' + esc(t('cover.searching'));
-      var box = $('#cover-picker');
-      if (box) box.after(status);
-      return api('GET', '/api/series/' + s.id + '/covers?search=1').then(function (r2) {
-        status.remove();
-        if (coverStart.series !== s || !$('#cover-picker')) return;
-        var input = $('#form-dialog-fields input[name="coverChoice"]');
-        coverStart.list = r2.candidates;
-        pickCover(input && input.value ? input.value : r2.current);
-      }, function () { status.remove(); });
+      var due = !r.searchedAt || Date.now() - Date.parse(r.searchedAt) > 7 * 86400000;
+      if (due) return searchMoreCoversUi(s, false);
+      var box = $('#cover-picker'), p = document.createElement('p');
+      p.id = 'cover-more'; p.className = 'muted small cover-picker__more';
+      if (box) box.after(p);
+      searchedLine(s, r.searchedAt, null);
     }, function (e) { var box = $('#cover-picker'); if (box) box.innerHTML = '<p class="notice notice--error small">' + esc(A().errMsg(e)) + '</p>'; });
   }
   function pickCover(id) {
@@ -2704,7 +2767,7 @@
           cd.data.groups = cd.data.groups.filter(function (g) { return g.key !== dk; }); cd.data.total--; A().renderPage();
         }, fail);
       }
-      case 'cat-src-add': return catalogSourceForm(null);
+      case 'cat-src-add': return catalogDetectForm();
       case 'cat-src-edit': return catalogSourceForm(catSourcesState().data.sources.filter(function (s) { return s.id === id; })[0]);
       case 'cat-src-delete':
         if (!confirm(t('cat.deleteConfirm'))) return;

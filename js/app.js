@@ -12,7 +12,7 @@
     'manage-libraries': { adminOnly: true },
     'metadata-sources': { adminOnly: true },
     files: { adminOnly: true },
-    catalog: {},
+    catalog: { adminOnly: true },
     rename: { adminOnly: true }, // old address of File management
     processes: { adminOnly: true },
     'server-settings': { adminOnly: true },
@@ -337,12 +337,12 @@
     }
     items.push({ href: '#collections', icon: 'collections', key: 'nav.collections', match: ['collections', 'collection'] });
     items.push({ href: '#readlists', icon: 'readlist', key: 'nav.readlists', match: ['readlists', 'readlist'] });
-    items.push({ href: '#catalog', icon: 'travel_explore', key: 'nav.catalog', match: ['catalog'] });
     items.push({ divider: true });
     if (isAdmin()) {
       items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
       items.push({ href: '#metadata-sources', icon: 'dataset', key: 'nav.metadataSources' });
       items.push({ href: '#files', icon: 'folder_open', key: 'nav.files', match: ['files', 'rename'] });
+      items.push({ href: '#catalog', icon: 'travel_explore', key: 'nav.catalog', match: ['catalog'] });
       items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
       items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });

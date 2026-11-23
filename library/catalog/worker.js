@@ -1,4 +1,5 @@
-// Catalog crawler process: started by catalog/index.js when a crawl begins, closed when the queue is empty.
+// Catalog work: crawling a source (crawl, used by the independent crawler process crawler.js), and the quick
+// jobs of the helper process started by catalog/index.js (test, detect).
 // It never touches the library database: it writes the source's catalog folder (store.js) and reports
 // progress. One crawl at a time:
 //   { type: 'crawl', reqId, source, dir, mode: 'full' | 'update', allowLocal }
@@ -8,6 +9,9 @@
 const store = require('./store');
 const { createFetcher } = require('./fetcher');
 const { ADAPTERS } = require('./adapters');
+const { sitemapWorks } = require('./sitemap');
+// How a source lists its works: its sitemaps (when detected/set) or the site's own list pages
+const lister = (src, adapter) => (src.listing === 'sitemap' && src.workPattern && src.type !== 'mangadex' && src.type !== 'webtoons' ? sitemapWorks : adapter.listWorks.bind(adapter));
 
 let current = null;
 const FIELDS = ['title', 'altTitles', 'cover', 'summary', 'authors', 'genres', 'tags', 'status', 'type', 'year', 'url', 'languages', 'links'];
@@ -39,7 +43,7 @@ async function crawl(msg, send) {
   let listingComplete = false, aborted = null;
   try {
     // 1. Every work the site lists (or, updating, the recently updated ones)
-    for await (const page of adapter.listWorks(ctx)) {
+    for await (const page of lister(src, adapter)(ctx)) {
       for (const stub of page) {
         const w = works[stub.sid];
         if (!w) { works[stub.sid] = Object.assign({ sid: stub.sid, addedAt: new Date().toISOString() }, stub); stats.added++; }
@@ -118,7 +122,7 @@ async function test(msg) {
   const ctx = { src, get: fetcher.get, incremental: false, known: new Set() };
   const out = { works: [], firstPageCount: 0, work: null, errors: [] };
   try {
-    for await (const page of adapter.listWorks(ctx)) { out.firstPageCount = page.length; out.works = page.slice(0, 8); break; }
+    for await (const page of lister(src, adapter)(ctx)) { out.firstPageCount = page.length; out.works = page.slice(0, 8); break; }
   } catch (e) { out.errors.push(errText(e)); }
   if (out.works[0]) {
     try {
@@ -135,12 +139,15 @@ if (require.main === module && process.send) {
   const send = m => { try { process.send(m); } catch { /* the server is gone */ } };
   process.on('message', async msg => {
     if (!msg) return;
-    if (msg.type === 'stop') { if (current) { current.stop = true; current.fetcher.stop(); } return; }
-    if (msg.type !== 'crawl' && msg.type !== 'test') return;
-    try { send({ type: 'result', reqId: msg.reqId, result: await (msg.type === 'crawl' ? crawl(msg, send) : test(msg)) }); }
+    if (msg.type === 'stop') { stop(); return; }
+    if (msg.type !== 'crawl' && msg.type !== 'test' && msg.type !== 'detect') return;
+    try { send({ type: 'result', reqId: msg.reqId, result: await (msg.type === 'crawl' ? crawl(msg, send) : msg.type === 'detect' ? require('./detect').detect(msg) : test(msg)) }); }
     catch (e) { send({ type: 'error', reqId: msg.reqId, code: e.code || null, message: e.message, stats: e.stats || null }); }
   });
   send({ type: 'ready' });
 }
 
-module.exports = { crawl, test };
+// Stops the crawl in progress (it saves what it has and ends)
+function stop() { if (current) { current.stop = true; current.fetcher.stop(); return true; } return false; }
+
+module.exports = { crawl, test, stop };

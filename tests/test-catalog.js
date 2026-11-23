@@ -40,7 +40,15 @@ const site = http.createServer((req, res) => {
   const u = new URL(req.url, SITE);
   hits.push(req.method + ' ' + u.pathname + u.search);
   const send = (status, body, type = 'text/html') => { res.writeHead(status, { 'Content-Type': type }); res.end(body); };
-  if (u.pathname === '/robots.txt') return send(200, 'User-agent: *\nDisallow: /custom/private/\n', 'text/plain');
+  if (u.pathname === '/robots.txt') return send(200, `User-agent: *\nDisallow: /custom/private/\nSitemap: ${SITE}/sitemap_index.xml\n`, 'text/plain');
+  // Sitemaps: an index → the works sitemap (works and their chapters), and one that lists tags (skipped)
+  if (u.pathname === '/sitemap_index.xml') return send(200, `<?xml version="1.0"?><sitemapindex><sitemap><loc>${SITE}/manga-sitemap.xml</loc></sitemap><sitemap><loc>${SITE}/tag-sitemap.xml</loc></sitemap></sitemapindex>`, 'application/xml');
+  if (u.pathname === '/manga-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${Object.keys(madaraWorks).map(s => `<url><loc>${SITE}/madara/manga/${s}/</loc><lastmod>2025-01-0${s.length % 9 + 1}</lastmod></url>` + madaraWorks[s].chapters.map(n => `<url><loc>${SITE}/madara/manga/${s}/chapter-${n}/</loc></url>`).join('')).join('')}</urlset>`, 'application/xml');
+  if (u.pathname === '/tag-sitemap.xml') return send(200, `<urlset><url><loc>${SITE}/tag/action/</loc></url></urlset>`, 'application/xml');
+  if (u.pathname === '/') return send(200, `<html><head><title>Fake Scans - Read manga</title><meta property="og:site_name" content="Fake Scans"><link rel="icon" href="/favicon.png"></head><body class="wp-manga-template">${madaraItem('blue-moon')}</body></html>`);
+  if (u.pathname === '/favicon.png') return send(200, png(16, 16, [10, 200, 10], 4), 'image/png');
+  // A slow copy of the list (the crawl lasts long enough to restart the server meanwhile); its works are the Madara ones
+  if (u.pathname.startsWith('/slow/')) { setTimeout(() => send(200, u.pathname === '/slow/manga/' ? `<div>${Object.keys(madaraWorks).map(madaraItem).join('')}</div>` : '<div></div>'), 400); return; }
   if (u.pathname.startsWith('/img/')) return send(200, png(20, 30, [200, 20, 20], 3), 'image/png');
   // Madara: two list pages, then the last page repeats (as such sites do)
   if (u.pathname === '/madara/manga/' && u.searchParams.get('m_orderby')) return send(200, `<div class="c-page">${madaraItem('blue-moon')}${madaraItem('red-sun')}</div>`);
@@ -65,6 +73,16 @@ const site = http.createServer((req, res) => {
 /* ---------------- Thoth ---------------- */
 const PORT = 3997, BASE = `http://127.0.0.1:${PORT}`;
 let srv, passed = 0, cookie, log = '';
+async function stopServer() {
+  // The server and its child (not the independent crawls). On Windows killing it is abrupt: changes of the
+  // last moments (saved every 300 ms) would be lost, so wait a little first, as a real restart would.
+  await wait(1000);
+  let child = null;
+  try { child = (await call('GET', '/api/processes')).data.server.pid; } catch {}
+  await new Promise(r => { srv.removeAllListeners('exit'); srv.on('exit', r); srv.kill(); });
+  if (child && child !== srv.pid) await until(async () => { try { process.kill(child, 0); return false; } catch { return true; } }, 30000);
+  log = '';
+}
 function start() {
   return new Promise((resolve, reject) => {
     srv = spawn(process.execPath, ['server.js'], { cwd: APP, env: { ...process.env, PORT, HOST: '127.0.0.1', THOTH_DATA_DIR: DATA, THOTH_CATALOG_ALLOW_LOCAL: '1', THOTH_WORKER_IDLE_MS: '1500', THOTH_NO_WARM: '1' } });
@@ -114,8 +132,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
 
   // ---- crawling ----
   await call('POST', `/api/catalog/sources/${madara.id}/crawl`, { mode: 'full' });
-  const running = await until(async () => { const p = (await call('GET', '/api/processes')).data; return p.catalog.pid && p; });
-  ok(running.catalog.pid && running.catalog.pid !== running.server.pid, `crawling runs in its own process (pid ${running.catalog.pid})`);
+  const running = await until(async () => { const p = (await call('GET', '/api/processes')).data; return p.catalog.crawls.length && p.catalog.crawls[0].pid && p; });
+  ok(running.catalog.crawls[0].pid !== running.server.pid, `each crawl is its own process (pid ${running.catalog.crawls[0].pid})`);
   let s1 = await crawled(madara.id);
   ok(s1.works === 3 && s1.lastStats.listed === 3 && s1.lastStats.errors === 0 && s1.lastStats.chapters === 7, `Madara site: every list page read, 3 works, 7 chapters (${JSON.stringify(s1.lastStats)})`);
   ok(hits.includes('GET /robots.txt') && hits.some(h => h.startsWith('POST /madara/manga/red-sun/ajax/chapters/')), 'robots.txt read first; chapters loaded the theme’s other way when the page has none');
@@ -125,12 +143,42 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   await call('POST', `/api/catalog/sources/${guarded.id}/crawl`, { mode: 'full' });
   const s3 = await crawled(guarded.id);
   ok(/blocked/.test(s3.lastError || '') && s3.works === 0, 'a site behind bot protection is reported as blocked (not worked around)');
-  await until(async () => !(await call('GET', '/api/processes')).data.catalog.pid, 15000);
-  ok(true, 'nothing left to crawl: the crawler process is closed');
+  const crawlPid = running.catalog.crawls[0].pid;
+  await until(async () => { try { process.kill(crawlPid, 0); return false; } catch { return true; } }, 15000);
+  ok(!(await call('GET', '/api/processes')).data.catalog.crawls.length, 'a finished crawl’s process is gone');
+
+  // ---- detecting a source's settings from robots.txt and sitemaps ----
+  const found = (await call('POST', '/api/catalog/sources/detect', { url: SITE + '/anything' })).data.detect;
+  ok(found.settings.type === 'madara' && found.settings.name === 'Fake Scans' && found.settings.listing === 'sitemap' && found.settings.sitemaps[0] === SITE + '/sitemap_index.xml',
+    `Detect: the theme, the site’s name and the sitemaps robots.txt names (${found.settings.type}, ${found.settings.name})`);
+  ok(found.settings.workPattern === '/madara/*/*/' && found.settings.chapterPattern === '/madara/*/*/*/' && found.found.works === 3 && found.found.sampleWork && found.found.sampleWork.chapterLinks >= 1 && /favicon\.png$/.test(found.settings.iconUrl),
+    `…the address patterns of works and chapters from the sitemaps (${found.settings.workPattern}, ${found.settings.chapterPattern}), a sample work and the site’s icon`);
+  const viaSitemap = (await call('POST', '/api/catalog/sources', Object.assign({}, found.settings, { name: 'Via sitemaps', gapMs: 200 }))).data.source;
+  hits.length = 0;
+  await call('POST', `/api/catalog/sources/${viaSitemap.id}/crawl`, { mode: 'full' });
+  const sv = await crawled(viaSitemap.id);
+  ok(sv.works === 3 && sv.lastStats.chapters === 7 && hits.includes('GET /manga-sitemap.xml') && !hits.includes('GET /tag-sitemap.xml') && !hits.some(h => h.includes('m_orderby')),
+    'a source set up by Detect lists its works from the sitemaps (the tags sitemap skipped, no list pages)');
+  const icon = await fetch(`${BASE}/api/catalog/sources/${viaSitemap.id}/icon`, { headers: { Cookie: cookie } });
+  ok(icon.status === 200 && icon.headers.get('content-type') === 'image/png', 'the source’s icon is the site’s own (served through the server)');
+  await call('DELETE', `/api/catalog/sources/${viaSitemap.id}`);
+
+  // ---- a crawl keeps going while the server restarts ----
+  const slow = (await call('POST', '/api/catalog/sources', { name: 'Slow', type: 'madara', baseUrl: SITE + '/slow', listing: 'pages', gapMs: 600 })).data.source;
+  await call('POST', `/api/catalog/sources/${slow.id}/crawl`, { mode: 'full' });
+  const sp = await until(async () => { const s = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === slow.id); return s.job && s.job.pid && s; });
+  ok((await call('DELETE', `/api/catalog/sources/${slow.id}`)).status === 409, 'a source being crawled can’t be removed (stop it first)');
+  await stopServer();
+  ok((() => { try { process.kill(sp.job.pid, 0); return true; } catch { return false; } })(), `the server stopped; the crawl process (pid ${sp.job.pid}) is still running`);
+  await start();
+  const afterRestart = await until(async () => { const s = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === slow.id); return s && !s.job && s.lastCrawlAt && s; }, 60000);
+  ok(afterRestart.works === 3 && afterRestart.lastStats.read === 3 && !afterRestart.lastError, 'after the restart the server sees the crawl it didn’t start finish completely');
+  await call('DELETE', `/api/catalog/sources/${slow.id}`);
 
   // ---- the catalog ----
-  let cat = (await call('GET', '/api/catalog?limit=50', null, bob)).data;
-  ok(cat.total === 5 && cat.items.some(it => it.title === 'Blue Moon') && cat.items.find(it => it.title === 'Secret').chapters === 0, `everyone signed in sees the catalog (a work whose page robots.txt forbids is listed, without details) (${cat.total} works: ${cat.items.map(i => i.title).join(', ')})`);
+  ok((await call('GET', '/api/catalog', null, bob)).status === 403 && (await call('GET', '/api/catalog/facets', null, bob)).status === 403, 'only administrators see the catalog');
+  let cat = (await call('GET', '/api/catalog?limit=50')).data;
+  ok(cat.total === 5 && cat.items.some(it => it.title === 'Blue Moon') && cat.items.find(it => it.title === 'Secret').chapters === 0, `the catalog lists every work found (a work whose page robots.txt forbids is listed, without details) (${cat.total} works: ${cat.items.map(i => i.title).join(', ')})`);
   const blue = cat.items.find(it => it.title === 'Blue Moon' && it.sources[0].sourceId === madara.id);
   ok(blue.inLibrary && blue.inLibrary.title === 'Blue Moon' && cat.items.filter(it => it.inLibrary).length === 2, 'works the library already has are marked (by title, on every source)');
   ok(blue.genres.join('|') === 'Fantasy|Sci-Fi' && blue.chapters === 4 && blue.lastChapter === '4', 'metadata read (genres with one name each, chapters, last chapter)');

@@ -107,6 +107,20 @@ const work = async t => (await call('GET', '/api/series?limit=50')).data.items.f
   global.fetch = realFetch;
   ok(cands.some(c => c.provider === 'comicvine' && c.url === 'https://img.example/comicvine-12345.jpg' && c.page.includes('4050-12345')), 'a link to a site → that entry’s cover is a choice (even if the site is off in the library)');
   ok(cands.some(c => c.provider === 'web:pages.example' && c.url === 'https://pages.example/img/saga-cover.jpg'), 'any other page → the image it offers for sharing (og:image, made absolute)');
+  // The cover picker's search: remembered (not repeated each time the dialog opens) unless asked again
+  calls.length = 0;
+  const t0 = Date.now();
+  await meta.coverCandidates(x, { search: true });
+  ok(!calls.length && Date.now() - t0 < 500 && x.provider.coverSearchAt, 'a cover search done recently isn’t repeated when the picker opens again');
+  x.provider.coverCandidates = []; // (every site had a candidate: nothing new to ask otherwise)
+  await meta.coverCandidates(x, { search: true, force: true });
+  ok(calls.length > 0, '“Search the sites again” searches now');
+  // …and it has a time budget: a request that would wait past it in a site's queue isn't made at all
+  const { request, withDeadline } = require(path.join(APP, 'library', 'metadata', 'providers.js'));
+  await request('slowsite', 'http://127.0.0.1:1/', { gap: 5000 }).catch(() => {}); // the site's next turn is 5 s away
+  const t1 = Date.now();
+  const r2 = await withDeadline(1500, () => request('slowsite', 'http://127.0.0.1:1/', { gap: 5000 })).then(() => 'made', e => e.message);
+  ok(/busy/.test(r2) && Date.now() - t1 < 300, `a search request that couldn’t get its turn in time is skipped at once (${r2})`);
   ok(!meta.publicUrl('http://localhost/x') && !meta.publicUrl('http://192.168.1.5/x') && !meta.publicUrl('file:///etc/passwd') && !meta.publicUrl('http://10.0.0.1/') && meta.publicUrl('https://example.org/a'),
     'pages on this machine or the local network are never fetched');
   ok(await meta.pageImage('http://127.0.0.1:1/') === null, '…so they give no image');

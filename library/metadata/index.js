@@ -14,7 +14,7 @@ const path = require('path');
 const store = require('../db');
 const config = require('../../config');
 const crypto = require('crypto');
-const { PROVIDERS, BY_ID, matchScore, normTitle, fromUrl } = require('./providers');
+const { PROVIDERS, BY_ID, matchScore, normTitle, fromUrl, withDeadline } = require('./providers');
 const local = require('./local');
 
 const { db } = store;
@@ -385,9 +385,9 @@ function publicUrl(url) {
   return true;
 }
 // The image a web page offers for sharing (og:image / twitter:image), or null. Reads at most 512 KB of it.
-async function pageImage(url) {
+async function pageImage(url, ms = 8000) {
   if (!publicUrl(url)) return null;
-  const res = await fetch(url, { headers: { 'User-Agent': 'Thoth-Library-Server/1.0', Accept: 'text/html' }, signal: AbortSignal.timeout(8000), redirect: 'follow' });
+  const res = await fetch(url, { headers: { 'User-Agent': 'Thoth-Library-Server/1.0', Accept: 'text/html' }, signal: AbortSignal.timeout(Math.max(1000, ms)), redirect: 'follow' });
   if (!res.ok || !/html/i.test(res.headers.get('content-type') || '')) return null;
   const reader = res.body.getReader();
   let html = '', size = 0;
@@ -422,41 +422,56 @@ async function linkCovers(s, have) {
       if (x) {
         const provider = BY_ID[x.provider];
         if (have.has(x.provider) || (provider.needsKey && !keys()[provider.needsKey])) return;
-        const m = await Promise.race([provider.fetch(x.id, keys()), new Promise(resolve => setTimeout(() => resolve(null), 8000))]);
+        const m = await Promise.race([provider.fetch(x.id, keys()), new Promise(resolve => setTimeout(() => resolve(null), COVER_SEARCH_MS))]);
         if (m && m.cover) { found.push({ provider: x.provider, url: m.cover, page: url }); have.add(x.provider); }
       } else {
         const key = 'web:' + new URL(url).hostname.replace(/^www\./, '');
         if (have.has(key)) return;
-        const img = await pageImage(url);
+        const img = await pageImage(url, COVER_SEARCH_MS - 500);
         if (img) { found.push({ provider: key, url: img, page: url }); have.add(key); }
       }
     } catch { /* that page is unavailable; skip it */ }
   }));
   return found;
 }
-async function searchMoreCovers(s) {
+// The picker's search for more covers: the work's links and the enabled sites without a candidate yet, all at
+// once, within COVER_SEARCH_MS (requests that couldn't get their turn at a site in time aren't made: see
+// providers.withDeadline). Done at most once a week per work unless asked again (force); the same work is
+// never searched twice at the same time.
+const COVER_SEARCH_MS = 6000, COVER_SEARCH_EVERY = 7 * 86400000;
+const coverSearches = new Map();
+function searchMoreCovers(s, { force = false } = {}) {
   const p = s.provider = s.provider || {};
-  const have = new Set((p.coverCandidates || []).map(c => c.provider));
-  // The work's links first (exact), then a search on the enabled sites still missing
-  const fromLinks = await linkCovers(s, have);
-  if (fromLinks.length) p.coverCandidates = (p.coverCandidates || []).concat(fromLinks);
-  const titles = titlesFor(s), year = yearHint(s);
-  const ids = librarySettings(db.libraries[s.libraryId]).providers.filter(x => x.enabled && BY_ID[x.id] && !have.has(x.id)).map(x => x.id);
-  const found = [];
-  await Promise.all(ids.map(async pid => {
-    const provider = BY_ID[pid];
-    if (provider.needsKey && !keys()[provider.needsKey]) return;
-    try {
-      const best = await Promise.race([bestMatch(provider, titles, year), new Promise(resolve => setTimeout(() => resolve(null), 8000))]);
-      if (best && best.cover) found.push({ provider: pid, url: best.cover });
-    } catch { /* that site is unavailable; skip it */ }
-  }));
-  if (found.length) p.coverCandidates = (p.coverCandidates || []).concat(found);
-  if (found.length || fromLinks.length) store.saveLibrary();
-  return found.length + fromLinks.length;
+  if (!force && p.coverSearchAt && Date.now() - Date.parse(p.coverSearchAt) < COVER_SEARCH_EVERY) return Promise.resolve(0);
+  if (coverSearches.has(s.id)) return coverSearches.get(s.id);
+  const job = withDeadline(COVER_SEARCH_MS, async () => {
+    const have = new Set((p.coverCandidates || []).map(c => c.provider));
+    const titles = titlesFor(s), year = yearHint(s);
+    const ids = librarySettings(db.libraries[s.libraryId]).providers.filter(x => x.enabled && BY_ID[x.id] && !have.has(x.id)).map(x => x.id);
+    const found = [];
+    const [fromLinks] = await Promise.all([
+      linkCovers(s, have),
+      Promise.all(ids.map(async pid => {
+        const provider = BY_ID[pid];
+        if (provider.needsKey && !keys()[provider.needsKey]) return;
+        try {
+          const best = await Promise.race([bestMatch(provider, titles, year), new Promise(resolve => setTimeout(() => resolve(null), COVER_SEARCH_MS))]);
+          if (best && best.cover && !have.has(pid)) found.push({ provider: pid, url: best.cover });
+        } catch { /* that site is unavailable or busy; skip it */ }
+      }))
+    ]);
+    const added = fromLinks.concat(found);
+    if (added.length) p.coverCandidates = (p.coverCandidates || []).concat(added);
+    p.coverSearchAt = new Date().toISOString();
+    store.saveLibrary({ series: s });
+    return added.length;
+  });
+  coverSearches.set(s.id, job);
+  job.then(() => coverSearches.delete(s.id), () => coverSearches.delete(s.id));
+  return job;
 }
-async function coverCandidates(s, { search = false } = {}) {
-  if (search) await searchMoreCovers(s);
+async function coverCandidates(s, { search = false, force = false } = {}) {
+  if (search) await searchMoreCovers(s, { force });
   const out = [{ id: 'auto', kind: 'auto' }];
   const firstPage = store.booksOf(s.id).find(b => b.format === 'cbz' && b.pageCount);
   if (firstPage) out.push({ id: 'file', kind: 'file', bookId: firstPage.id });
@@ -473,7 +488,7 @@ async function coverCandidates(s, { search = false } = {}) {
   // Which one is in use now
   const o = s.overrides || {};
   const current = s.customCover ? 'custom' : o.cover === 'file' ? 'file' : o.cover === 'metadata' ? 'downloaded' : 'auto';
-  return { current, candidates: out };
+  return { current, candidates: out, searchedAt: (s.provider && s.provider.coverSearchAt) || null };
 }
 // The file behind a candidate that lives on this server (for previews): downloaded, custom, local
 function candidateFile(s, id) {
@@ -491,24 +506,46 @@ function candidateFile(s, id) {
   return null;
 }
 // Preview of a site's cover candidate, fetched by the server; the last 60 are kept in memory
+// Previews give up after PREVIEW_MS (a slow image host can't keep the picker waiting) and a failure is
+// remembered for a while, so the picker shows "not available" at once instead of waiting again. The same
+// image asked twice at once is fetched once.
 const previewCache = new Map(); // url → { buf, type }
-async function fetchImage(url) {
+const previewFailed = new Map(); // url → time it failed
+const previewInflight = new Map();
+const PREVIEW_MS = 8000, PREVIEW_FAILED_MS = 10 * 60 * 1000;
+async function fetchImage(url, { timeout = 20000 } = {}) {
   if (previewCache.has(url)) return previewCache.get(url);
-  const res = await fetch(url, { headers: { 'User-Agent': 'Thoth-Library-Server/1.0' }, signal: AbortSignal.timeout(20000) });
-  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
-  if (!res.ok || !IMAGE_TYPES[type]) throw Object.assign(new Error('The site didn’t send an image'), { status: 502, code: 'coverDownloadFailed' });
-  const buf = Buffer.from(await res.arrayBuffer());
-  if (buf.length > MAX_COVER) throw Object.assign(new Error('Image is too large'), { status: 413, code: 'tooLarge' });
-  previewCache.set(url, { buf, type });
-  if (previewCache.size > 60) previewCache.delete(previewCache.keys().next().value);
-  return { buf, type };
+  const failedAt = previewFailed.get(url);
+  if (failedAt && Date.now() - failedAt < PREVIEW_FAILED_MS && timeout <= PREVIEW_MS) throw Object.assign(new Error('The site didn’t send an image'), { status: 502, code: 'coverDownloadFailed' });
+  if (previewInflight.has(url)) return previewInflight.get(url);
+  const job = (async () => {
+    try {
+      const res = await fetch(url, { headers: { 'User-Agent': 'Thoth-Library-Server/1.0' }, signal: AbortSignal.timeout(timeout) });
+      const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+      if (!res.ok || !IMAGE_TYPES[type]) throw Object.assign(new Error('The site didn’t send an image'), { status: 502, code: 'coverDownloadFailed' });
+      const buf = Buffer.from(await res.arrayBuffer());
+      if (buf.length > MAX_COVER) throw Object.assign(new Error('Image is too large'), { status: 413, code: 'tooLarge' });
+      previewCache.set(url, { buf, type });
+      if (previewCache.size > 60) previewCache.delete(previewCache.keys().next().value);
+      previewFailed.delete(url);
+      return { buf, type };
+    } catch (e) {
+      previewFailed.set(url, Date.now());
+      if (previewFailed.size > 500) previewFailed.delete(previewFailed.keys().next().value);
+      if (e.name === 'TimeoutError' || e.name === 'AbortError') throw Object.assign(new Error('The site didn’t send the image in time'), { status: 504, code: 'coverDownloadFailed' });
+      throw e;
+    }
+  })();
+  previewInflight.set(url, job);
+  job.then(() => previewInflight.delete(url), () => previewInflight.delete(url));
+  return job;
 }
 async function onlineCandidateImage(s, id) {
   const provider = String(id).replace(/^online:/, '');
   const c = ((s.provider && s.provider.coverCandidates) || []).find(x => x.provider === provider) ||
     (s.provider && s.provider.coverProvider === provider && s.provider.coverUrl ? { url: s.provider.coverUrl } : null);
   if (!c) return null;
-  try { return await fetchImage(c.url); } catch { return null; }
+  try { return await fetchImage(c.url, { timeout: PREVIEW_MS }); } catch { return null; }
 }
 // Apply a choice from the Edit dialog. choice: a candidate id; upload: 'data:image/…;base64,…'
 async function chooseCover(s, { choice, upload }) {

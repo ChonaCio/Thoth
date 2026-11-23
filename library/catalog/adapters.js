@@ -316,13 +316,28 @@ const custom = {
     const doc = parse(res.text);
     const meta = p => (doc.first(`meta[property="${p}"]`) || { attr: () => null }).attr('content');
     const work = Object.assign({}, stub, {
-      title: pick(doc, s.workTitle, res.url) || meta('og:title') || stub.title,
+      title: pick(doc, s.workTitle, res.url) || meta('og:title') || pick(doc, 'h1', res.url) || stub.title,
       cover: pick(doc, s.workCover, res.url) || meta('og:image') || stub.cover,
       summary: s.summary ? (doc.first(s.summary) || { textBlock: () => '' }).textBlock() : (meta('og:description') || ''),
       genres: pick(doc, s.genres, res.url, true), authors: pick(doc, s.authors, res.url, true),
       altTitles: s.altTitles ? splitAlt(pick(doc, s.altTitles, res.url)) : [], status: STATUS(pick(doc, s.status, res.url))
     });
-    if (!src.includeChapters || !s.chapter) return work;
+    if (!src.includeChapters) return work;
+    if (!s.chapter) {
+      // No chapter selector: every link on the page whose address matches the chapters' pattern
+      const re = src.chapterPattern ? require('./sitemap').patternRegex(src.chapterPattern) : null;
+      if (!re) return work;
+      const seen = new Set();
+      work.chapters = doc.select('a[href]').map(a => {
+        const u = abs(a.attr('href'), res.url);
+        let p; try { p = decodeURI(new URL(u).pathname); } catch { return null; }
+        if (!u || !re.test(p) || seen.has(p)) return null;
+        seen.add(p);
+        const t = a.text() || p.split('/').filter(Boolean).pop().replace(/[-_]+/g, ' ');
+        return { id: p.replace(/\/+$/, ''), n: chapterNum(t) || chapterNum(p.split('/').filter(Boolean).pop()), t, u, d: '', l: langs(src)[0] || null };
+      }).filter(Boolean);
+      return work;
+    }
     work.chapters = doc.select(s.chapter).map(li => {
       const link = s.chapterLink || 'a@href';
       const [lsel, lat] = link.includes('@') ? link.split('@') : [link, 'href'];

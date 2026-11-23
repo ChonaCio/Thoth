@@ -732,7 +732,8 @@ async function handle(ctx) {
   }
   // ---- External catalog: sources (sites crawled for their works) and the works found ----
   if (p.startsWith('/api/catalog')) {
-    // Everyone signed in browses the catalog; administrators manage sources and merges
+    // Administrators only (the catalog is a server tool, like file management)
+    requireAdmin();
     if (p === '/api/catalog' && method === 'GET') {
       return send(200, catalog.list({ q: q.get('q'), source: q.get('source'), inLibrary: q.get('inLibrary'), genre: q.get('genre'), merged: q.get('merged'), sort: q.get('sort'), offset: q.get('offset'), limit: q.get('limit') }));
     }
@@ -748,6 +749,13 @@ async function handle(ctx) {
     if (p === '/api/catalog/sources' && method === 'GET') return send(200, { sources: catalog.listSources(), jobs: catalog.jobs() });
     if (p === '/api/catalog/sources' && method === 'POST') return send(201, { source: catalog.createSource(body) });
     if (p === '/api/catalog/sources/test' && method === 'POST') return send(200, { test: await catalog.testSource(body) });
+    // POST /api/catalog/sources/detect { url } → proposed settings from the site's robots.txt, sitemaps and pages
+    if (p === '/api/catalog/sources/detect' && method === 'POST') return send(200, { detect: await catalog.detectSource(body.url) });
+    if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/icon$/.exec(p)) && method === 'GET') {
+      const img = await catalog.sourceIcon(m[1]);
+      await sendImage(req, res, img.buf, img.type, img.etag);
+      return true;
+    }
     if ((m = /^\/api\/catalog\/sources\/([\w-]+)$/.exec(p))) {
       if (method === 'PATCH') return send(200, { source: catalog.updateSource(m[1], body) });
       if (method === 'DELETE') { catalog.removeSource(m[1]); console.log(`[catalog] ${user.username} removed a source`); return send(200, { ok: true }); }
@@ -839,8 +847,9 @@ async function handle(ctx) {
   if ((m = /^\/api\/series\/([\w-]+)\/(covers|cover-candidate|cover)$/.exec(p))) {
     requireAdmin();
     const s = getSeries(user, m[1]);
-    // ?search=1: also ask the online sites that weren't asked during the lookup (slower)
-    if (m[2] === 'covers' && method === 'GET') return send(200, await metadata.coverCandidates(s, { search: q.get('search') === '1' }));
+    // ?search=1: also ask the online sites without a candidate yet (a few seconds at most, once a week per work;
+    // &force=1 asks again now)
+    if (m[2] === 'covers' && method === 'GET') return send(200, await metadata.coverCandidates(s, { search: q.get('search') === '1', force: q.get('force') === '1' }));
     if (m[2] === 'cover-candidate' && method === 'GET') {
       // A site's cover: fetched by the server (some sites refuse images shown on other pages; the browser
       // also never contacts the sites), kept in memory for a while

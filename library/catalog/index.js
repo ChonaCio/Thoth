@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const crypto = require('crypto');
-const { fork } = require('child_process');
+const { fork, spawn } = require('child_process');
 const store = require('../db');
 const cstore = require('./store');
 const { ADAPTERS, TYPES } = require('./adapters');
@@ -56,6 +56,13 @@ function parseSource(body, current) {
     for (const k of keys) if (b.selectors[k] != null && String(b.selectors[k]).trim()) s.selectors[k] = String(b.selectors[k]).trim().slice(0, 400);
   }
   if ('enabled' in b) s.enabled = b.enabled !== false;
+  // Found by "Detect" (or set by hand): list the works from the sitemaps, by the address pattern of work pages
+  if ('listing' in b) s.listing = b.listing === 'sitemap' ? 'sitemap' : 'pages';
+  if ('sitemaps' in b) s.sitemaps = (Array.isArray(b.sitemaps) ? b.sitemaps : String(b.sitemaps || '').split(/\s+/)).map(x => String(x).trim()).filter(u => publicUrl(u, ALLOW_LOCAL)).slice(0, 20);
+  if ('workPattern' in b) s.workPattern = String(b.workPattern || '').trim().slice(0, 200);
+  if ('chapterPattern' in b) s.chapterPattern = String(b.chapterPattern || '').trim().slice(0, 200);
+  if ('iconUrl' in b) s.iconUrl = publicUrl(String(b.iconUrl || ''), ALLOW_LOCAL) ? String(b.iconUrl) : null;
+  if (s.listing === 'sitemap' && !s.workPattern) throw err(400, 'workPatternRequired');
   return s;
 }
 function listSources() {
@@ -63,11 +70,11 @@ function listSources() {
 }
 function sourceView(s) {
   const st = cstore.readState(sourceDir(s.id));
-  const job = jobs.find(j => j.sourceId === s.id && (j.status === 'queued' || j.status === 'running'));
+  const job = sourceJob(s.id);
   return Object.assign({}, s, {
     works: st.total != null ? st.total : (loaded.get(s.id) || { list: [] }).list.length,
     lastCrawlAt: st.lastCrawlAt || null, lastCompleteAt: st.lastCompleteAt || null, lastError: st.lastError || null, lastStats: st.stats || null,
-    interrupted: Boolean(st.running && !job), job: job ? jobView(job) : null, label: ADAPTERS[s.type].label
+    interrupted: Boolean(st.running && !job), job, label: ADAPTERS[s.type].label, icon: Boolean(s.iconUrl)
   });
 }
 function createSource(body) {
@@ -90,6 +97,8 @@ function updateSource(id, body) {
 }
 function removeSource(id) {
   if (!db.catalogSources[id]) throw err(404, 'notFound');
+  // A crawl of it runs in its own process: it has to end first (it would write its folder again)
+  if (liveCrawl(id)) throw err(409, 'catalogCrawling');
   stopCrawl(id);
   delete db.catalogSources[id];
   // Its works leave the merge groups
@@ -103,12 +112,96 @@ function removeSource(id) {
   catalogVersion++;
 }
 
-/* ---------------- crawling: a queue, one crawl at a time, in the crawler process ---------------- */
-const jobs = [];
-let jobSeq = 0, pumping = false;
+/* ---------------- crawling: independent crawler processes ----------------
+ * Each crawl is its own detached process (crawler.js) that doesn't depend on the server: it keeps going through
+ * server restarts and talks to the server only through files in the source's folder (job.json, progress.json
+ * with a heartbeat, a "stop" file). Up to MAX_CRAWLS run at once (different sites); others wait in line here.
+ * The quick jobs (Test, Detect) use a small helper process (catalog/worker.js), started when needed. */
+const MAX_CRAWLS = Math.max(1, Number(process.env.THOTH_MAX_CRAWLS) || 2);
+const queue = []; // waiting crawls: { id, sourceId, mode, reason, createdAt }
+let jobSeq = 0;
+const recent = new Map(); // sourceId → last finished progress (for the list of crawls)
 const proc = { child: null, pid: null, pending: new Map(), seq: 0, idleTimer: null };
-const jobView = j => ({ id: j.id, sourceId: j.sourceId, mode: j.mode, status: j.status, createdAt: j.createdAt, startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
-  progress: j.progress || null, result: j.result || null, error: j.error || null });
+const readProgress = id => { try { return JSON.parse(fs.readFileSync(path.join(sourceDir(id), 'progress.json'), 'utf8')); } catch { return null; } };
+const alive = pid => { if (!pid) return false; try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+// A crawl in progress for this source (its process alive and beating), or null. A crawl whose process died
+// without saying so is marked as failed.
+function liveCrawl(id) {
+  const p = readProgress(id);
+  if (!p || (p.status !== 'running' && p.status !== 'starting')) return null;
+  const beat = Date.parse(p.heartbeatAt || p.startedAt || 0) || 0;
+  if (p.status === 'starting' && Date.now() - beat < 15000) return p;
+  if (alive(p.pid) && Date.now() - beat < 30000) return p;
+  p.status = 'failed'; p.error = 'The crawler process stopped unexpectedly'; p.finishedAt = new Date().toISOString();
+  try { fs.writeFileSync(path.join(sourceDir(id), 'progress.json'), JSON.stringify(p)); } catch { /* the folder is gone */ }
+  return null;
+}
+const jobView = (sourceId, p, queued) => queued
+  ? { id: queued.id, sourceId, mode: queued.mode, status: 'queued', createdAt: queued.createdAt, progress: null, result: null, error: null }
+  : p ? { id: p.jobId, sourceId, mode: p.mode, status: p.status === 'starting' ? 'running' : p.status, startedAt: p.startedAt || null, finishedAt: p.finishedAt || null,
+    pid: p.pid || null, progress: p.progress || null, result: p.result || null, error: p.error || null } : null;
+function sourceJob(id) {
+  const q = queue.find(j => j.sourceId === id);
+  if (q) return jobView(id, null, q);
+  const p = liveCrawl(id);
+  return p ? jobView(id, p) : null;
+}
+function crawl(sourceId, { mode = 'full', reason = 'manual' } = {}) {
+  const s = db.catalogSources[sourceId];
+  if (!s) throw err(404, 'notFound');
+  const current = sourceJob(sourceId);
+  if (current) return current;
+  const job = { id: 'c' + Date.now().toString(36) + (++jobSeq), sourceId, mode: mode === 'update' ? 'update' : 'full', reason, createdAt: new Date().toISOString() };
+  queue.push(job);
+  pumpCrawls();
+  return sourceJob(sourceId);
+}
+function runningCrawls() { return Object.keys(db.catalogSources).filter(id => liveCrawl(id)); }
+function startCrawl(job) {
+  const s = db.catalogSources[job.sourceId];
+  if (!s) return;
+  const dir = sourceDir(s.id);
+  fs.mkdirSync(dir, { recursive: true });
+  const st = cstore.readState(dir);
+  fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ jobId: job.id, mode: job.mode, reason: job.reason, allowLocal: ALLOW_LOCAL,
+    source: Object.assign({}, s, { lastCrawlAt: st.lastCrawlAt || null }) }));
+  fs.rmSync(path.join(dir, 'stop'), { force: true });
+  fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ jobId: job.id, sourceId: s.id, mode: job.mode, status: 'starting', startedAt: new Date().toISOString() }));
+  const out = fs.openSync(path.join(dir, 'crawl.log'), 'a');
+  const child = spawn(process.execPath, [path.join(__dirname, 'crawler.js'), dir], { detached: true, stdio: ['ignore', out, out], windowsHide: true, env: process.env });
+  fs.closeSync(out);
+  child.unref();
+  console.log(`[catalog] ${job.mode} crawl of "${s.name}" started as its own process (pid ${child.pid})`);
+}
+// Starts waiting crawls while there's room; notices finished ones (logged once)
+let pumpTimer = null;
+function pumpCrawls() {
+  let running = runningCrawls().length;
+  while (queue.length && running < MAX_CRAWLS) { startCrawl(queue.shift()); running++; }
+  for (const id of Object.keys(db.catalogSources)) {
+    const p = readProgress(id);
+    if (p && p.finishedAt && (!recent.has(id) || recent.get(id).jobId !== p.jobId)) {
+      const first = recent.size === 0 && !pumpTimer; // (at startup, old results aren't news)
+      recent.set(id, p);
+      catalogVersion++;
+      if (!first) console.log(`[catalog] crawl of "${db.catalogSources[id].name}" ${p.status}${p.error ? `: ${p.error}` : ''}`);
+    }
+  }
+  clearTimeout(pumpTimer);
+  pumpTimer = setTimeout(pumpCrawls, queue.length || running ? 2000 : 30000);
+  pumpTimer.unref();
+}
+function stopCrawl(sourceId) {
+  const i = queue.findIndex(j => j.sourceId === sourceId);
+  if (i !== -1) queue.splice(i, 1);
+  if (!liveCrawl(sourceId)) return i !== -1;
+  fs.writeFileSync(path.join(sourceDir(sourceId), 'stop'), new Date().toISOString());
+  return true;
+}
+function jobs() {
+  return Object.keys(db.catalogSources).map(id => sourceJob(id) || jobView(id, readProgress(id))).filter(Boolean);
+}
+// The helper process for quick jobs (Test, Detect)
 function ensureProcess() {
   clearTimeout(proc.idleTimer); proc.idleTimer = null;
   if (proc.child) return proc;
@@ -116,17 +209,14 @@ function ensureProcess() {
   try { os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW); } catch { /* not allowed here */ }
   proc.child = child; proc.pid = child.pid;
   child.on('message', m => {
-    if (!m) return;
-    const p = proc.pending.get(m.reqId);
-    if (m.type === 'flushed') { catalogVersion++; return; }
-    if (!p) return;
-    if (m.type === 'progress') { if (p.onProgress) p.onProgress(m); return; }
+    const p = m && proc.pending.get(m.reqId);
+    if (!p || m.type === 'progress') return;
     proc.pending.delete(m.reqId);
-    if (m.type === 'result') p.resolve(m.result); else p.reject(Object.assign(new Error(m.message), { code: m.code, stats: m.stats }));
+    if (m.type === 'result') p.resolve(m.result); else p.reject(Object.assign(new Error(m.message), { code: m.code }));
   });
   const gone = e => { if (proc.child !== child) return; proc.child = null; proc.pid = null; for (const p of proc.pending.values()) p.reject(e); proc.pending.clear(); };
   child.on('error', gone);
-  child.on('exit', code => gone(new Error(`Crawler process stopped (exit code ${code})`)));
+  child.on('exit', code => gone(new Error(`Helper process stopped (exit code ${code})`)));
   return proc;
 }
 function closeWhenIdle() {
@@ -138,63 +228,29 @@ function closeWhenIdle() {
   }, IDLE_MS);
   proc.idleTimer.unref();
 }
-function ask(msg, onProgress) {
+function ask(msg) {
   ensureProcess();
   return new Promise((resolve, reject) => {
     const reqId = ++proc.seq;
-    proc.pending.set(reqId, { resolve, reject, onProgress });
+    proc.pending.set(reqId, { resolve, reject });
     proc.child.send(Object.assign({ reqId }, msg));
   }).finally(() => { if (!proc.pending.size) closeWhenIdle(); });
 }
-function crawl(sourceId, { mode = 'full', reason = 'manual' } = {}) {
-  const s = db.catalogSources[sourceId];
-  if (!s) throw err(404, 'notFound');
-  const waiting = jobs.find(j => j.sourceId === sourceId && (j.status === 'queued' || j.status === 'running'));
-  if (waiting) return jobView(waiting);
-  const job = { id: 'c' + (++jobSeq), sourceId, mode: mode === 'update' ? 'update' : 'full', reason, status: 'queued', createdAt: new Date().toISOString() };
-  jobs.push(job);
-  setImmediate(pump);
-  return jobView(job);
-}
-async function pump() {
-  if (pumping) return;
-  pumping = true;
-  try {
-    let job;
-    while ((job = jobs.find(j => j.status === 'queued'))) {
-      const s = db.catalogSources[job.sourceId];
-      if (!s) { job.status = 'failed'; job.error = 'notFound'; continue; }
-      job.status = 'running'; job.startedAt = new Date().toISOString();
-      const st = cstore.readState(sourceDir(s.id));
-      try {
-        job.result = await ask({ type: 'crawl', source: Object.assign({}, s, { lastCrawlAt: st.lastCrawlAt || null }), dir: sourceDir(s.id), mode: job.mode, allowLocal: ALLOW_LOCAL }, p => { job.progress = p; });
-        job.status = 'done';
-        console.log(`[catalog] ${job.mode} crawl of "${s.name}": ${job.result.listed} listed, ${job.result.added} new, ${job.result.read} read, ${job.result.errors} errors${job.result.stopped ? ' (stopped)' : ''}`);
-      } catch (e) {
-        job.status = 'failed'; job.error = e.message; job.result = e.stats || null;
-        console.error(`[catalog] crawl of "${s.name}" failed: ${e.message}`);
-      }
-      job.finishedAt = new Date().toISOString();
-      catalogVersion++;
-      const done = jobs.filter(j => j.status === 'done' || j.status === 'failed');
-      for (const old of done.slice(0, Math.max(0, done.length - 20))) jobs.splice(jobs.indexOf(old), 1);
-    }
-  } finally { pumping = false; }
-}
-function stopCrawl(sourceId) {
-  for (const j of jobs) if (j.sourceId === sourceId && j.status === 'queued') { j.status = 'failed'; j.error = 'stopped'; j.finishedAt = new Date().toISOString(); }
-  const running = jobs.find(j => j.sourceId === sourceId && j.status === 'running');
-  if (running && proc.child) proc.child.send({ type: 'stop' });
-  return Boolean(running);
-}
+
 // What a source's settings find on the site (nothing saved)
 function testSource(body) {
   const s = Object.assign(parseSource(body), { id: 'test' });
   return ask({ type: 'test', source: s, allowLocal: ALLOW_LOCAL });
 }
+// What a site's robots.txt, sitemaps and pages say about it: proposed settings for a new source
+function detectSource(url) {
+  if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
+  return ask({ type: 'detect', url, allowLocal: ALLOW_LOCAL });
+}
 // Scheduled crawls: an update when the schedule says so (a full crawl the first time or after an interruption)
 let scheduleTimer = null;
 function startSchedule() {
+  pumpCrawls(); // crawls still running from before a restart are picked up
   clearInterval(scheduleTimer);
   scheduleTimer = setInterval(checkSchedule, 10 * 60 * 1000);
   scheduleTimer.unref();
@@ -421,7 +477,38 @@ function dismiss(key) {
 const coverInflight = new Map();
 async function cover(key) {
   const w = workByKey(key);
-  if (!w || !w.cover || !publicUrl(w.cover, ALLOW_LOCAL)) throw err(404, 'noCover');
+  if (!w || !w.cover) throw err(404, 'noCover');
+  return cachedImage(w.cover, (db.catalogSources[w.sourceId] || {}).baseUrl || '');
+}
+// A source's icon: the site's own (found by Detect, else its /favicon.ico)
+async function sourceIcon(id) {
+  const s = db.catalogSources[id];
+  if (!s) throw err(404, 'notFound');
+  const site = s.type === 'mangadex' ? 'https://mangadex.org' : new URL(s.baseUrl).origin;
+  if (!s.iconUrl) {
+    // Not known yet: the icon the site's home page declares (often not at /favicon.ico), remembered
+    s.iconUrl = await declaredIcon(s.type === 'webtoons' ? site + '/en/' : site + '/').catch(() => null) || site + '/favicon.ico';
+    store.saveLibrary();
+  }
+  return cachedImage(s.iconUrl, site);
+}
+async function declaredIcon(page) {
+  let url = page;
+  for (let hop = 0; hop < 4; hop++) {
+    if (!publicUrl(url, ALLOW_LOCAL)) return null;
+    const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'text/html' }, redirect: 'manual', signal: AbortSignal.timeout(10000) });
+    if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { url = new URL(res.headers.get('location'), url).href; continue; }
+    if (!res.ok) return null;
+    const html = (await res.text()).slice(0, 200000);
+    const m = /<link[^>]+rel=["'](?:shortcut )?icon["'][^>]*>/i.exec(html) || /<link[^>]+rel=["']apple-touch-icon["'][^>]*>/i.exec(html);
+    const href = m && /href=["']([^"']+)["']/i.exec(m[0]);
+    return href ? new URL(href[1].replace(/&amp;/g, '&'), url).href : null;
+  }
+  return null;
+}
+async function cachedImage(imageUrl, referer) {
+  if (!publicUrl(imageUrl, ALLOW_LOCAL)) throw err(404, 'noCover');
+  const w = { cover: imageUrl };
   const name = crypto.createHash('sha1').update(w.cover).digest('hex');
   const file = path.join(COVER_DIR, name);
   const hit = await fs.promises.readFile(file).catch(() => null);
@@ -431,9 +518,10 @@ async function cover(key) {
     let url = w.cover;
     for (let hop = 0; hop < 4; hop++) {
       if (!publicUrl(url, ALLOW_LOCAL)) throw err(404, 'noCover');
-      const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'image/*', Referer: (db.catalogSources[w.sourceId] || {}).baseUrl || '' }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
+      const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'image/*', Referer: referer || '' }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { url = new URL(res.headers.get('location'), url).href; continue; }
-      const type = res.headers.get('content-type') || '';
+      let type = res.headers.get('content-type') || '';
+      if (/\.ico(\?|$)/i.test(url) && !/^image\//.test(type)) type = 'image/x-icon'; // (some servers send icons as octet-stream)
       if (!res.ok || !/^image\//.test(type)) throw err(404, 'noCover');
       const buf = Buffer.from(await res.arrayBuffer());
       if (buf.length > 5 * 1024 * 1024) throw err(404, 'noCover');
@@ -450,11 +538,10 @@ async function cover(key) {
 }
 
 function info() {
-  const running = jobs.find(j => j.status === 'running');
-  return { pid: proc.pid, running: running ? jobView(running) : null, queued: jobs.filter(j => j.status === 'queued').length, jobs: jobs.slice(-10).map(jobView),
-    sources: Object.keys(db.catalogSources).length };
+  const crawls = runningCrawls().map(id => Object.assign({ name: db.catalogSources[id].name }, sourceJob(id)));
+  return { pid: proc.pid, crawls, running: crawls[0] || null, queued: queue.length, maxCrawls: MAX_CRAWLS, sources: Object.keys(db.catalogSources).length };
 }
 function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, defaults: ADAPTERS[t].defaults })); }
 
-module.exports = { listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, startSchedule, checkSchedule,
-  list, facets, detail, mergeSuggestions, merge, unmerge, dismiss, cover, info, types, jobs: () => jobs.map(jobView), libraryMatch };
+module.exports = { listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
+  list, facets, detail, mergeSuggestions, merge, unmerge, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

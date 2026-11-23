@@ -238,6 +238,10 @@ order them with the arrows.
   Library, Google Books, Comic Vine) is used as an exact match: that entry is read directly, without searching.
 - **Covers from links.** The cover picker offers the cover of every linked site entry and, for any other page,
   the image it publishes for sharing (`og:image`). Pages on this machine or the local network are never fetched.
+- **The cover picker** (Edit → Cover) shows the covers it already knows at once. It searches the online sites for
+  more only when that's due (once a week per work) or when asked (*Search the sites again*), for a few seconds at
+  most: a site that's slow or busy with other lookups is skipped rather than waited for. Previews that a site doesn't
+  send in time show *Not available* instead of loading forever.
 - **Covers** are downloaded as part of every metadata check (from the first source that has one; if that
   image fails, the next source's) and stored in `data/covers/`. Per library: show them only when the files
   have no cover page (default, e.g. PDFs), always, or never (never = not downloaded). Per work (Edit → Cover):
@@ -440,8 +444,8 @@ server, so the browser never contacts the metadata sites.
 
 ### External catalog (sites as sources)
 
-**External catalog** (sidebar) lists every work found on external sites added as **sources**, with its metadata
-and chapter list. Everyone signed in can browse it; administrators manage the sources and merges.
+**External catalog** (sidebar, administrators, with the other server tools) lists every work found on external
+sites added as **sources**, with its metadata and chapter list.
 
 - **Catalog tab:** search (titles, alternative titles, authors), filter by source, genre and *in my library / not
   in my library*, sort by title, recently updated or chapters. Works the library already has are marked (matched
@@ -450,7 +454,16 @@ and chapter list. Everyone signed in can browse it; administrators manage the so
 - **Merge tab (administrators):** the same work found on several sites (or twice on one) can become one catalog
   entry: the main one's title, cover and summary, every site's chapters. Suggestions come from the same MangaDex
   entry or the same title/alternative title; *Not the same* hides one; a merged entry can be separated again.
-- **Sources tab (administrators):** add a site, *Test* its settings (what the first list page and first work give),
+- **Adding a source: Detect.** Give the site's address and Thoth works out the settings: it reads the site's
+  **robots.txt** (its rules and the sitemaps it names; else `/sitemap.xml` and the usual WordPress ones), reads the
+  **sitemaps** (indexes followed, `.xml.gz` too) to learn the address pattern of work pages and chapter pages,
+  reads the home page (name, icon, the Madara or MangaReader theme if it runs one) and one work page. The form then
+  opens filled in, with what was found; everything can be changed. Sources set up this way list their works from
+  the **sitemaps**: a few requests instead of every list page, and updates only read works whose sitemap date
+  changed. Sites without a known theme use the generic reader (title, cover and summary from the page's standard
+  tags; chapters = links whose address matches the chapter pattern).
+- **Icons:** each source shows its site's own icon (the one its pages declare, else `/favicon.ico`).
+- **Sources tab:** add a site, *Test* its settings (what the first list page and first work give),
   *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
   Each source can update every day or week by itself. Kinds of site:
 
@@ -462,8 +475,10 @@ and chapter list. Everyone signed in can browse it; administrators manage the so
 | MangaReader theme | WordPress manga sites using it | List at `/manga/?page=N`. |
 | Other site | anything else | Give CSS selectors (list address with `{page}`, each work, title, cover, genres, chapters…; `selector@attribute` for links and images). Use *Test* to check them. |
 
-- **Polite crawling:** the crawler runs in its own low-priority process (started for the queue, closed when it's
-  done), identifies itself with Thoth's generic user agent, **follows each site's robots.txt**, waits between
+- **Independent crawls:** each crawl is its own low-priority process, detached from the server: it keeps going
+  if the server restarts or stops, and the server picks it up again from its progress file (two at a time; others
+  wait in line). *Stop* asks it to save and end; a source being crawled can't be removed until it's stopped.
+- **Polite crawling:** the crawler identifies itself with Thoth's generic user agent, **follows each site's robots.txt**, waits between
   requests to a site (setting, 500 ms at least), backs off when the site asks, and never fetches this machine or
   the local network. Sites behind **bot protection** (e.g. Cloudflare challenges) are reported as *blocked*: Thoth
   doesn't try to get around it. Only crawl sites whose terms allow it.

@@ -19,7 +19,20 @@ async function slot(provider, gapMs) {
 function providerError(provider, message) {
   return Object.assign(new Error(`${provider}: ${message}`), { status: 502, code: 'providerError', provider });
 }
+// A time budget for requests made inside withDeadline() (the cover picker's search): a request whose turn at
+// the site would come after the deadline isn't queued at all, and none waits past it. Otherwise abandoned
+// searches would keep their places in the sites' queues and delay everything behind them.
+const { AsyncLocalStorage } = require('async_hooks');
+const budget = new AsyncLocalStorage();
+function withDeadline(ms, fn) { return budget.run({ deadline: Date.now() + ms }, fn); }
 async function request(provider, url, { method = 'GET', body, headers = {}, gap = 500, timeout = TIMEOUT, retried = false } = {}) {
+  const b = budget.getStore();
+  if (b) {
+    const turn = Math.max(Date.now(), nextAt[provider] || 0);
+    if (turn >= b.deadline - 300) throw providerError(provider, 'busy (no time left)');
+    timeout = Math.max(500, Math.min(timeout, b.deadline - turn));
+    retried = true; // no second try inside a budget
+  }
   await slot(provider, gap);
   let res;
   try {
@@ -441,4 +454,4 @@ function fromUrl(url) {
   return null;
 }
 
-module.exports = { PROVIDERS, BY_ID, matchScore, normTitle, cleanText, request, fromUrl };
+module.exports = { PROVIDERS, BY_ID, matchScore, normTitle, cleanText, request, fromUrl, withDeadline };

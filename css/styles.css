@@ -870,3 +870,21 @@ body.is-reading { overflow: hidden; }
 .cat-ch__t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .cat-chapters .icon svg { width: 16px; height: 16px; }
 .cat-src .lib-card__actions { flex-wrap: wrap; }
+
+/* Cover picker previews: loading / not available */
+.cover-pick__img { position: relative; }
+.cover-pick__img.is-loading::after { content: ''; position: absolute; left: 50%; top: 50%; width: 20px; height: 20px; margin: -10px 0 0 -10px;
+  border: 2px solid var(--border); border-top-color: var(--primary); border-radius: 50%; animation: spin .8s linear infinite; }
+.cover-pick__state { display: none; position: absolute; inset: 0; align-items: center; justify-content: center; padding: 4px; text-align: center; font-size: 11px; color: var(--text-muted); }
+.cover-pick__img.is-failed .cover-pick__state { display: flex; }
+@media (prefers-reduced-motion: reduce) { .cover-pick__img.is-loading::after { animation: none; } }
+
+/* A source's own icon (its site's favicon) over the generic one */
+.src-icon { position: relative; display: inline-flex; align-items: center; justify-content: center; flex: none; overflow: hidden; }
+.src-icon img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: var(--surface); }
+.lib-card__icon.src-icon img { padding: 6px; border-radius: inherit; }
+.src-icon--sm { width: 20px; height: 20px; border-radius: 4px; margin-right: 8px; vertical-align: -3px; }
+.src-icon--xs { width: 14px; height: 14px; border-radius: 3px; margin-right: 4px; }
+.src-icon--sm .icon svg, .src-icon--xs .icon svg { width: 100%; height: 100%; }
+.cat-source__title { display: inline-flex; align-items: center; }
+.cat-card__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }

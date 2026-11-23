@@ -47,6 +47,10 @@ function parseRobots(text) {
   const any = groups.filter(g => g.agents.includes('*'));
   return mine ? mine.rules : any.flatMap(g => g.rules);
 }
+// The sitemaps a robots.txt names ("Sitemap: https://…")
+function sitemapsIn(text) {
+  return [...new Set(String(text || '').split(/\r?\n/).map(l => /^\s*sitemap\s*:\s*(\S+)/i.exec(l)).filter(Boolean).map(m => m[1]))];
+}
 function robotsAllows(rules, url) {
   const u = new URL(url);
   const target = u.pathname + u.search;
@@ -57,6 +61,7 @@ function robotsAllows(rules, url) {
 
 function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, onRequest } = {}) {
   const robots = new Map(); // origin → Promise<rules>
+  const robotsText = new Map(); // origin → the file itself
   const nextAt = new Map(); // host → time of the next allowed request
   const stats = { requests: 0, bytes: 0, retries: 0 };
   let stopped = false;
@@ -109,7 +114,9 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
         try {
           const { res } = await raw(origin + '/robots.txt', { accept: 'text/plain' });
           if (res.status >= 400) { try { await res.body.cancel(); } catch {} return []; } // none: everything allowed
-          return parseRobots((await readBody(res)).toString('utf8'));
+          const text = (await readBody(res)).toString('utf8');
+          robotsText.set(origin, text);
+          return parseRobots(text);
         } catch (e) { if (e.code === 'stopped' || e.code === 'notPublic') throw e; return []; }
       })());
     }
@@ -135,10 +142,11 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
         continue;
       }
       if (res.status >= 400) throw err('http', `${res.status} from ${finalUrl}`, { status: res.status });
-      return { status: res.status, url: finalUrl, text, json: () => JSON.parse(text), type: res.headers.get('content-type') || '' };
+      return { status: res.status, url: finalUrl, text, buf: body, json: () => JSON.parse(text), type: res.headers.get('content-type') || '' };
     }
   }
-  return { get, stats, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url) };
+  return { get, stats, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url),
+    robotsFile: async origin => { await rulesFor(origin); return robotsText.get(origin) || null; } };
 }
 
-module.exports = { createFetcher, parseRobots, robotsAllows, publicUrl, UA };
+module.exports = { createFetcher, parseRobots, robotsAllows, sitemapsIn, publicUrl, UA };
