@@ -52,7 +52,8 @@ function cleanName(s, spaced) {
 function titleCase(s) {
   return s.split(' ').map(w => (w ? w[0].toLocaleUpperCase() + w.slice(1) : w)).join(' ');
 }
-// The name a file should have, or null when it already does / doesn't follow a known pattern
+// The name a file should have, or null when it already does (capitalization aside: a change of case only is
+// not proposed) or doesn't follow a known pattern
 function proposedName(fileName) {
   const ext = path.extname(fileName);
   const base = fileName.slice(0, fileName.length - ext.length);
@@ -60,7 +61,49 @@ function proposedName(fileName) {
   if (!p) return null;
   const name = p.name ? ' - ' + titleCase(p.name.replace(/^-\s*/, '')) : '';
   const next = `${p.word} ${p.number}${name}${ext}`;
-  return next === fileName ? null : next;
+  return next.toLowerCase() === fileName.toLowerCase() ? null : next;
+}
+// The name with another chapter number (the rest as proposedName would make it)
+function nameWithNumber(fileName, number) {
+  const ext = path.extname(fileName);
+  const p = parse(fileName.slice(0, fileName.length - ext.length));
+  if (!p) return null;
+  return `${p.word} ${number}${p.name ? ' - ' + titleCase(p.name.replace(/^-\s*/, '')) : ''}${ext}`;
+}
+
+// A chapter number that lost its decimal point: a work with chapters 1 to 70 and a `505` most likely has 50.5
+// (the number is far past the others, and with a point it falls in the run, next to a chapter it has, on a
+// number it doesn't have). Returns { book → { from, to, first, last } } for one work's books; these are only
+// suggestions, never picked by default.
+function sequenceGuesses(books) {
+  const out = new Map();
+  const byWord = new Map();
+  for (const b of books) {
+    const ext = path.extname(b.fileName);
+    const p = parse(b.fileName.slice(0, b.fileName.length - ext.length));
+    if (!p) continue;
+    if (!byWord.has(p.word)) byWord.set(p.word, []);
+    byWord.get(p.word).push({ b, s: p.number, n: parseFloat(p.number) });
+  }
+  for (const list of byWord.values()) {
+    if (list.length < 5) continue;
+    const sorted = list.map(x => x.n).filter(Number.isFinite).sort((a, b) => a - b);
+    const q = sorted[Math.floor((sorted.length - 1) * 0.8)];
+    const regular = sorted.filter(n => n <= q * 1.5 + 10);
+    if (regular.length < 5) continue;
+    const have = new Set(regular), first = regular[0], last = regular[regular.length - 1];
+    for (const x of list) {
+      if (!/^\d{3,}$/.test(x.s) || x.n <= last * 1.5 || x.n - last <= 10) continue;
+      let best = null;
+      for (let i = x.s.length - 1; i >= x.s.length - 1; i--) { // (only the last digit as the decimal: 505 → 50.5)
+        const s = x.s.slice(0, i).replace(/^0+(?=\d)/, '') + '.' + x.s.slice(i);
+        const v = parseFloat(s);
+        if (v >= first && v <= last + 1 && !have.has(v) && have.has(Math.floor(v))) { best = s; break; } // one decimal first (50.5 before 5.05)
+      }
+      if (best) out.set(x.b, { from: x.s, to: best, first, last });
+    }
+  }
+  return out;
 }
 
 const sep = rel => rel.split(/[\\/]/);
@@ -90,10 +133,16 @@ function preview(libraryId, { limit = PREVIEW_LIMIT, checkDisk = false } = {}) {
     const taken = new Map(); // folder\0lowercase name → the book with that file
     const key = (rel, name) => sep(rel).slice(0, -1).join('/') + '\0' + name.toLowerCase();
     for (const b of books) taken.set(key(b.relPath, b.fileName), b);
+    // Each work's chapter numbers, to spot one that lost its decimal point
+    const bySeries = new Map();
+    for (const b of books) { if (!bySeries.has(b.seriesId)) bySeries.set(b.seriesId, []); bySeries.get(b.seriesId).push(b); }
+    const guesses = new Map();
+    for (const list of bySeries.values()) for (const [b, g] of sequenceGuesses(list)) guesses.set(b, g);
     const props = [];
     for (const b of books) {
       checked++;
-      const toName = proposedName(b.fileName);
+      const guess = guesses.get(b) || null;
+      const toName = guess ? nameWithNumber(b.fileName, guess.to) : proposedName(b.fileName);
       if (!toName) continue;
       if (checkDisk && !fs.existsSync(path.join(root, b.relPath))) {
         // Gone or already renamed on disk: the database is behind; don't propose it
@@ -102,21 +151,31 @@ function preview(libraryId, { limit = PREVIEW_LIMIT, checkDisk = false } = {}) {
       }
       const s = db.series[b.seriesId];
       if (s && !titles.has(s.id)) titles.set(s.id, store.seriesMeta(s).title);
-      props.push({ b, toName, work: s ? titles.get(s.id) : '' });
+      props.push({ b, toName, guess, work: s ? titles.get(s.id) : '' });
     }
-    // Conflicts: the new name is another existing file, or two files would get the same name
+    // Conflicts: the new name is another existing file, or two files would get the same name. Every file
+    // involved is listed with what helps to choose (pages, size, date, reading progress).
+    const fileInfo = (b, role) => {
+      const readers = Object.values(store.progress).filter(p => p[b.id]).length;
+      return { bookId: b.id, fileName: b.fileName, role, size: b.size || 0, pageCount: b.pageCount || 0, modified: b.fileModified || null, added: b.created || null, readers, error: b.error || null };
+    };
     const wanted = new Map();
-    for (const x of props) { const k = key(x.b.relPath, x.toName); wanted.set(k, (wanted.get(k) || 0) + 1); }
+    for (const x of props) { const k = key(x.b.relPath, x.toName); if (!wanted.has(k)) wanted.set(k, []); wanted.get(k).push(x.b); }
     for (const x of props) {
       const k = key(x.b.relPath, x.toName);
       const other = taken.get(k);
-      const status = other && other !== x.b ? 'exists' : wanted.get(k) > 1 ? 'conflict' : 'ok';
+      const rivals = wanted.get(k).filter(b => b !== x.b);
+      const status = other && other !== x.b ? 'exists' : rivals.length ? 'conflict' : x.guess ? 'guess' : 'ok';
+      const involved = status === 'ok' || status === 'guess' ? undefined
+        : [fileInfo(x.b, 'this')].concat(status === 'exists' ? [fileInfo(other, 'has')] : [], rivals.filter(b => b !== other).map(b => fileInfo(b, 'wants')));
+      // Same pages and size: very likely the same chapter twice
+      if (involved) { const a = involved[0]; involved.forEach(f => { f.same = f !== a && f.pageCount === a.pageCount && f.size === a.size && f.pageCount > 0; }); }
       items.push({
         bookId: x.b.id, seriesId: x.b.seriesId, libraryId: lib.id, library: lib.name, work: x.work,
         from: sep(x.b.relPath).join('/'), to: sep(relWithName(x.b.relPath, x.toName)).join('/'), fromName: x.b.fileName, toName: x.toName,
         status, with: status === 'exists' ? sep(other.relPath).join('/') : undefined,
-        // The new name is taken by another file: what the page needs to choose which one to keep
-        size: x.b.size, pageCount: x.b.pageCount,
+        size: x.b.size, pageCount: x.b.pageCount, involved,
+        guess: x.guess || undefined,
         other: status === 'exists' ? { bookId: other.id, fileName: other.fileName, size: other.size, pageCount: other.pageCount, modified: other.fileModified } : undefined
       });
     }
@@ -124,7 +183,8 @@ function preview(libraryId, { limit = PREVIEW_LIMIT, checkDisk = false } = {}) {
   items.sort((a, b) => store.collator.compare(a.library + '\0' + a.work, b.library + '\0' + b.work) || store.collator.compare(a.fromName, b.fromName));
   const ok = items.reduce((n, x) => n + (x.status === 'ok' ? 1 : 0), 0);
   const exists = items.reduce((n, x) => n + (x.status === 'exists' ? 1 : 0), 0);
-  return { checked, total: items.length, ok, conflicts: items.length - ok, exists, truncated: items.length > limit, items: items.slice(0, limit),
+  const guessCount = items.reduce((n, x) => n + (x.status === 'guess' ? 1 : 0), 0);
+  return { checked, total: items.length, ok, guesses: guessCount, conflicts: items.length - ok - guessCount, exists, truncated: items.length > limit, items: items.slice(0, limit),
     stale: { count: stale.count, libraries: [...stale.libraries] } };
 }
 
@@ -257,8 +317,9 @@ async function runJob(job) {
   const current = new Map(preview('all', { limit: Infinity }).items.map(x => [x.bookId, x]));
   let picks = job.picks;
   if (!Array.isArray(picks)) {
-    const exclude = new Set(picks.exclude || []);
-    picks = [...current.values()].filter(x => x.status === 'ok' && !exclude.has(x.bookId) && (!picks.library || picks.library === 'all' || x.libraryId === picks.library))
+    // Every sure proposal but the excluded ones, plus the guesses (a missing decimal point) ticked one by one
+    const exclude = new Set(picks.exclude || []), include = new Set(picks.include || []);
+    picks = [...current.values()].filter(x => (x.status === 'ok' ? !exclude.has(x.bookId) : x.status === 'guess' && include.has(x.bookId)) && (!picks.library || picks.library === 'all' || x.libraryId === picks.library))
       .map(x => ({ bookId: x.bookId, toName: x.toName }));
   }
   job.total = picks.length;
@@ -270,7 +331,7 @@ async function runJob(job) {
       const b = x && db.books[x.bookId];
       // Still the same file with the same proposal?
       if (!x || !b || x.toName !== pick.toName || b.fileName !== x.fromName) { job.failed.push({ from: (x && x.from) || pick.from || pick.bookId, error: 'changed' }); continue; }
-      if (x.status !== 'ok') { job.failed.push({ from: x.from, error: x.status }); continue; }
+      if (x.status !== 'ok' && x.status !== 'guess') { job.failed.push({ from: x.from, error: x.status }); continue; } // (a guess only when picked)
       const lib = db.libraries[b.libraryId];
       if (!lib) { job.failed.push({ from: x.from, error: 'changed' }); continue; }
       const root = path.resolve(lib.root);
@@ -591,4 +652,4 @@ const EXAMPLES = ['chapter-0.cbz', 'chapter-1.1.cbz', 'chapter-1x1.cbz', 'Chapte
   'chapter-83-the-end.cbz', 'Chapter 5 - Spider-Man.cbz', 'ch_12_the_end.cbz', 'vol.3.cbz', 'ep-04.pdf', 'Saga 001.cbz'];
 function examples() { return EXAMPLES.map(f => ({ from: f, to: proposedName(f) })); }
 
-module.exports = { preview, enqueue, waitFor, getJob, proposedName, parse, info, examples, mergeSuggestions, dismissSuggestion };
+module.exports = { sequenceGuesses, preview, enqueue, waitFor, getJob, proposedName, parse, info, examples, mergeSuggestions, dismissSuggestion };

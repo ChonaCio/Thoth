@@ -9,11 +9,21 @@ const crypto = require('crypto');
 
 const shardOf = sid => crypto.createHash('sha1').update(String(sid)).digest('hex').slice(0, 2);
 function readJson(file, fallback) { try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch { return fallback; } }
+// Write, then swap in (a reader never sees half a file). On Windows the swap fails while another process (the
+// server reading a crawler's files, or the other way round) has the file open for a moment: try again shortly.
+function replaceFile(tmp, file) {
+  for (let i = 0; ; i++) {
+    try { fs.renameSync(tmp, file); return; } catch (e) {
+      if (!['EPERM', 'EBUSY', 'EACCES'].includes(e.code) || i >= 20) { try { fs.rmSync(tmp, { force: true }); } catch {} throw e; }
+      Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 25 + i * 10); // (a short, blocking wait)
+    }
+  }
+}
 function writeJson(file, data) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const tmp = `${file}.${process.pid}.tmp`;
   fs.writeFileSync(tmp, JSON.stringify(data));
-  fs.renameSync(tmp, file);
+  replaceFile(tmp, file);
 }
 const worksFile = dir => path.join(dir, 'works.json');
 const stateFile = dir => path.join(dir, 'state.json');
@@ -47,4 +57,4 @@ function shardCache(dir, max = 32) {
   };
 }
 
-module.exports = { shardOf, readWorks, writeWorks, readState, writeState, readShard, writeShard, shardCache, worksFile, stateFile };
+module.exports = { replaceFile, shardOf, readWorks, writeWorks, readState, writeState, readShard, writeShard, shardCache, worksFile, stateFile };

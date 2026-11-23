@@ -37,7 +37,7 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   // ---- the rules (in process) ----
   const rules = require(path.join(APP, 'library', 'rename.js'));
   const expect = { 'chapter-0.cbz': 'Chapter 0.cbz', 'chapter-1.cbz': 'Chapter 1.cbz', 'chapter-1.1.cbz': 'Chapter 1.1.cbz', 'chapter-1x1.cbz': 'Chapter 1.1.cbz', 'chapter-2x5.cbz': 'Chapter 2.5.cbz', 'Chapter 001.cbz': 'Chapter 1.cbz', 'ch.007.5.cbz': 'Chapter 7.5.cbz',
-    'chapter-83-the-end.cbz': 'Chapter 83 - The End.cbz', 'chapter-010-re-zero.cbz': 'Chapter 10 - Re Zero.cbz', 'Chapter 5 - Spider-Man.cbz': null, 'chapter 0.cbz': 'Chapter 0.cbz',
+    'chapter-83-the-end.cbz': 'Chapter 83 - The End.cbz', 'chapter-010-re-zero.cbz': 'Chapter 10 - Re Zero.cbz', 'Chapter 5 - Spider-Man.cbz': null, 'chapter 0.cbz': null, 'CHAPTER 7.CBZ': null,
     'chapter-1-chapter name.cbz': 'Chapter 1 - Chapter Name.cbz', 'ch_12_the_end.cbz': 'Chapter 12 - The End.cbz', 'vol.3.cbz': 'Volume 3.cbz',
     'Chapter 1.cbz': null, 'Chapter 1 - Chapter Name.cbz': null, 'Saga 001.cbz': null, 'EP-4.pdf': 'Episode 4.pdf' };
   ok(Object.entries(expect).every(([from, to]) => rules.proposedName(from) === to), 'naming rules: every example gives the expected name (and good names are left alone)');
@@ -59,6 +59,10 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   const by = name => pv.items.find(x => x.fromName === name);
   ok(pv.checked === 10 && pv.items.filter(x => x.status === 'ok').length === 5, `preview: 10 files checked, 5 renames proposed (${pv.items.map(x => x.fromName + '→' + x.toName).join('; ')})`);
   ok(by('chapter-3.cbz').status === 'exists' && by('ch-5.cbz').status === 'conflict' && by('chapter-5.cbz').status === 'conflict', 'conflicts: the new name exists, or two files would get the same name');
+  const inv = by('ch-5.cbz').involved, invE = by('chapter-3.cbz').involved;
+  ok(inv.length === 2 && inv.map(f => f.role).join() === 'this,wants' && inv.every(f => f.pageCount === 1 && f.size > 0 && f.modified && f.bookId) && inv[1].fileName === 'chapter-5.cbz' && inv[1].same === true,
+    'a name two files would get: both listed with pages, size, date (and marked as the same chapter twice when they match)');
+  ok(invE.map(f => f.role + ':' + f.fileName).join() === 'this:chapter-3.cbz,has:Chapter 3.cbz', 'a name another file has: both listed');
   ok(!pv.items.some(x => x.fromName === 'Chapter 2.cbz'), 'well-named files aren’t listed');
 
   // ---- apply ----
@@ -117,6 +121,22 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   const bigDisk = fs.readdirSync(BIG);
   ok(d2.renamed === 1 && bigDisk.includes('Chapter 7 - Part 7.cbz') && bigDisk.includes('Chapter 449 - Part 449.cbz') && !bigDisk.some(f => /^chapter-/.test(f)), 'the next job renamed what the first left out; no padding, dashes as spaces');
   ok(!(await call('GET', '/api/processes')).data.rename.running, 'queue empty: no rename process left');
+
+  // ---- a chapter number that lost its decimal point; capitalization alone isn't proposed ----
+  const SEQ = path.join(MEDIA, 'Seq');
+  for (let i = 1; i <= 12; i++) book(path.join(SEQ, `Chapter ${i}.cbz`));
+  book(path.join(SEQ, 'Chapter 115.cbz'));   // 11.5 with its point missing
+  book(path.join(SEQ, 'chapter 13.cbz'));    // only the capital differs: left alone
+  await call('POST', `/api/libraries/${L}/scan`, {});
+  const seqPv = await until(async () => { const r = (await call('GET', `/api/rename/preview?library=${L}`)).data; return r.items.some(x => x.from.startsWith('Seq/')) && r; }, 30000);
+  const g = seqPv.items.find(x => x.fromName === 'Chapter 115.cbz');
+  ok(g && g.status === 'guess' && g.toName === 'Chapter 11.5.cbz' && g.guess.first === 1 && g.guess.last === 13 && seqPv.guesses === 1, `chapter 115 in a work with 1–13: suggested as 11.5 (${g && g.toName})`);
+  ok(!seqPv.items.some(x => x.fromName === 'chapter 13.cbz'), 'a change of capitalization alone isn’t proposed');
+  const doneJob = async body => { const id = (await call('POST', '/api/rename/apply', body)).data.job.id; return until(async () => { const j = (await call('GET', `/api/rename/jobs/${id}`)).data.job; return j.status === 'done' && j; }, 60000); };
+  let gj = await doneJob({ all: true, library: L });
+  ok(fs.existsSync(path.join(SEQ, 'Chapter 115.cbz')), '“rename all” leaves the guess alone (it isn’t selected)');
+  gj = await doneJob({ all: true, library: L, include: [g.bookId] });
+  ok(gj.renamed === 1 && fs.existsSync(path.join(SEQ, 'Chapter 11.5.cbz')), 'ticked, it’s renamed to 11.5');
 
   // ---- pages and covers: media service ----
   const anyBook = (await call('GET', `/api/series/${workA.id}`)).data.books[0];

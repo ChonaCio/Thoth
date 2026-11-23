@@ -714,7 +714,8 @@ async function handle(ctx) {
   if (p === '/api/rename/apply' && method === 'POST') {
     requireAdmin();
     const picks = body.all
-      ? { all: true, library: typeof body.library === 'string' ? body.library : 'all', exclude: (Array.isArray(body.exclude) ? body.exclude : []).filter(x => typeof x === 'string').slice(0, 200000) }
+      ? { all: true, library: typeof body.library === 'string' ? body.library : 'all', exclude: (Array.isArray(body.exclude) ? body.exclude : []).filter(x => typeof x === 'string').slice(0, 200000),
+          include: (Array.isArray(body.include) ? body.include : []).filter(x => typeof x === 'string').slice(0, 200000) }
       : (Array.isArray(body.items) ? body.items : []).slice(0, 200000).filter(x => x && typeof x.bookId === 'string' && typeof x.toName === 'string');
     const by = user.username;
     const job = rename.enqueue(picks, {

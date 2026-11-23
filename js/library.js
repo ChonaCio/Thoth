@@ -1045,13 +1045,14 @@
   // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
   // except `excluded`; mode 'some' = only the ticked ones (`selected`)
   function renameState() {
-    if (!cache.rename) cache.rename = { library: 'all', data: null, mode: 'all', selected: {}, excluded: {}, renameJson: true, loading: false, result: null, error: null, job: null, rules: null };
+    if (!cache.rename) cache.rename = { library: 'all', data: null, mode: 'all', selected: {}, excluded: {}, guessPicked: {}, renameJson: true, loading: false, result: null, error: null, job: null, rules: null };
     return cache.rename;
   }
   function renameSelectedCount(st) {
     if (!st.data) return 0;
-    if (st.mode === 'all') return Math.max(0, (st.data.ok != null ? st.data.ok : st.data.items.filter(function (x) { return x.status === 'ok'; }).length) - Object.keys(st.excluded).length);
-    return Object.keys(st.selected).length;
+    var guesses = Object.keys(st.guessPicked || {}).length;
+    if (st.mode === 'all') return Math.max(0, (st.data.ok != null ? st.data.ok : st.data.items.filter(function (x) { return x.status === 'ok'; }).length) - Object.keys(st.excluded).length) + guesses;
+    return Object.keys(st.selected).length + guesses;
   }
   function isRenameSelected(st, id) { return st.mode === 'all' ? !st.excluded[id] : Boolean(st.selected[id]); }
   function runRenamePreview() {
@@ -1060,7 +1061,7 @@
     A().renderPage();
     return api('GET', '/api/rename/preview?' + Store.qs({ library: st.library })).then(function (r) {
       st.data = r;
-      st.mode = 'all'; st.selected = {}; st.excluded = {};
+      st.mode = 'all'; st.selected = {}; st.excluded = {}; st.guessPicked = {};
     }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isFilesRoute()) A().renderPage(); });
   }
   // A queued/running rename job: its progress until it's done, then the result and a fresh check
@@ -1097,6 +1098,23 @@
         '<a class="tab' + (active === 'rename' ? ' is-active' : '') + '" href="#files"' + (active === 'rename' ? ' aria-current="page"' : '') + '>' + icon('edit') + esc(t('files.tabRename')) + '</a>' +
         '<a class="tab' + (active === 'merge' ? ' is-active' : '') + '" href="#files/merge"' + (active === 'merge' ? ' aria-current="page"' : '') + '>' + icon('collections') + esc(t('files.tabMerge')) + '</a>' +
       '</nav>';
+  }
+  // Every file involved in a name clash (this one, the one that has the name, others that want it) with what
+  // helps to choose: pages, size, date, readers; one that looks like the same chapter twice is marked
+  function involvedTable(x, st) {
+    var role = { 'this': 'ren.role.this', has: 'ren.role.has', wants: 'ren.role.wants' };
+    var largest = Math.max.apply(null, x.involved.map(function (f) { return f.pageCount || 0; }));
+    return '<div class="files-dup"><table class="table ren-involved"><thead><tr><th>' + esc(t('ren.col.file')) + '</th><th>' + esc(t('ren.col.pages')) + '</th><th>' + esc(t('ren.col.size')) +
+        '</th><th>' + esc(t('ren.col.modified')) + '</th><th>' + esc(t('ren.col.readers')) + '</th><th></th></tr></thead><tbody>' +
+      x.involved.map(function (f) {
+        return '<tr' + (f.role === 'this' ? ' class="is-this"' : '') + '><td><code>' + esc(f.fileName) + '</code> <span class="muted small">' + esc(t(role[f.role])) + '</span>' +
+            (f.same ? ' <span class="badge">' + esc(t('ren.same')) + '</span>' : '') + (f.error ? ' <span class="badge badge--danger">' + esc(t('ren.unreadable')) + '</span>' : '') + '</td>' +
+          '<td' + (f.pageCount && f.pageCount === largest && x.involved.length > 1 ? ' class="ren-most"' : '') + '>' + esc(f.pageCount || '—') + '</td>' +
+          '<td>' + esc(f.size ? fmtSize(f.size) : '—') + '</td><td>' + esc(f.modified ? A().fmtDate(f.modified) : '—') + '</td><td>' + esc(f.readers || 0) + '</td>' +
+          '<td><button class="btn btn--text btn--small btn--danger" data-lib="files-del" data-id="' + esc(f.bookId) + '" data-name="' + esc(f.fileName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('delete') + esc(t('files.deleteThis')) + '</button></td></tr>';
+      }).join('') + '</tbody></table>' +
+      (x.status === 'exists' && x.other ? '<span class="files-dup__actions"><button class="btn btn--text btn--small" data-lib="files-replace" data-id="' + x.bookId + '" data-name="' + esc(x.other.fileName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('edit') + esc(t('files.keepThis')) + '</button></span>' : '') +
+      '<p class="muted small">' + esc(t(x.status === 'exists' ? 'ren.involvedHelpExists' : 'ren.involvedHelp')) + '</p></div>';
   }
   function fmtFileInfo(x) {
     return [x.size ? fmtSize(x.size) : '', x.pageCount ? t('series.pages', { count: x.pageCount }) : ''].filter(Boolean).join(' · ');
@@ -1156,6 +1174,7 @@
       var nSel = renameSelectedCount(st);
       var summary = '<p class="muted small">' + esc(t('ren.summary', { checked: st.data.checked, count: okTotal, conflicts: st.data.conflicts != null ? st.data.conflicts : items.length - okTotal })) + '</p>' +
         (st.data.truncated ? '<p class="notice notice--info small">' + esc(t('ren.truncated', { shown: items.length, total: st.data.total })) + '</p>' : '') +
+        (st.data.guesses ? '<p class="notice notice--info small">' + esc(t('ren.guessSummary', { count: st.data.guesses })) + '</p>' : '') +
         // The list of files was behind the disk (files already renamed there): not proposed, being re-checked
         (st.data.stale && st.data.stale.count ? '<p class="notice notice--info small">' + esc(t('ren.stale', { count: st.data.stale.count })) + '</p>' : '') +
         // Files whose new name is already taken by another file: delete one of the two (all at once or per file)
@@ -1181,17 +1200,17 @@
         groups.map(function (g) {
           return '<section class="ren-group"><h3 class="ren-group__title"><a href="#series/' + g.seriesId + '">' + esc(g.work) + '</a> <span class="muted small">' + esc(g.library) + '</span></h3>' +
             '<ul class="ren-list">' + g.list.map(function (x) {
-              var bad = x.status !== 'ok';
-              return '<li class="ren-row' + (bad ? ' is-conflict' : '') + '"><label class="checkbox"><input type="checkbox" data-ren="' + x.bookId + '"' + (bad ? ' disabled' : isRenameSelected(st, x.bookId) ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
+              var guess = x.status === 'guess';
+              var bad = x.status !== 'ok' && !guess;
+              var checked = guess ? Boolean(st.guessPicked[x.bookId]) : isRenameSelected(st, x.bookId);
+              return '<li class="ren-row' + (bad ? ' is-conflict' : '') + (guess ? ' is-guess' : '') + '"><label class="checkbox"><input type="checkbox" ' + (guess ? 'data-ren-guess' : 'data-ren') + '="' + x.bookId + '"' + (bad ? ' disabled' : checked ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
                 '<span class="ren-row__names"><code class="ren-from">' + esc(x.fromName) + '</code><span class="ren-arrow" aria-hidden="true">→</span><code class="ren-to">' + esc(x.toName) + '</code></span></label>' +
                 (bad ? '<span class="badge badge--danger" title="' + esc(x.with || '') + '">' + esc(t('ren.status.' + x.status)) + '</span>' : '') +
-                // The new name is another file: show both and offer to delete one
-                (x.status === 'exists' && x.other ? '<div class="files-dup">' +
-                  '<span class="muted small">' + esc(t('files.thisFile', { info: fmtFileInfo(x) || '—' })) + ' · ' + esc(t('files.otherFile', { name: x.other.fileName, info: fmtFileInfo(x.other) || '—' })) + '</span>' +
-                  '<span class="files-dup__actions">' +
-                    '<button class="btn btn--text btn--small btn--danger" data-lib="files-del" data-id="' + x.bookId + '" data-name="' + esc(x.fromName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('delete') + esc(t('files.deleteThis')) + '</button>' +
-                    '<button class="btn btn--text btn--small" data-lib="files-replace" data-id="' + x.bookId + '" data-name="' + esc(x.other.fileName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('edit') + esc(t('files.keepThis')) + '</button>' +
-                  '</span></div>' : '') + '</li>';
+                // A number that probably lost its decimal point (505 in a work with chapters 1–70): only a suggestion
+                (x.guess ? '<span class="badge badge--warn" title="' + esc(t('ren.guessHelp')) + '">' + esc(t('ren.guessBadge', { from: x.guess.from, to: x.guess.to })) + '</span>' +
+                  '<p class="ren-guess muted small">' + esc(t('ren.guessWhy', { from: x.guess.from, first: x.guess.first, last: x.guess.last, to: x.guess.to })) + '</p>' : '') +
+                // The new name is taken or wanted by other files: all of them, to choose which to keep
+                (x.involved ? involvedTable(x, st) : '') + '</li>';
             }).join('') + '</ul></section>';
         }).join('');
     },
@@ -1207,6 +1226,7 @@
           st.mode = tg.checked ? 'all' : 'some'; st.selected = {}; st.excluded = {};
           return A().renderPage();
         }
+        if (tg.dataset.renGuess) { if (tg.checked) st.guessPicked[tg.dataset.renGuess] = true; else delete st.guessPicked[tg.dataset.renGuess]; return A().renderPage(); }
         if (tg.dataset.ren) {
           var bid = tg.dataset.ren;
           if (st.mode === 'all') { if (tg.checked) delete st.excluded[bid]; else st.excluded[bid] = true; }
@@ -2832,8 +2852,8 @@
         if (!nPick || !confirm(t('ren.confirm', { count: nPick }))) return;
         // Everything (but the unticked ones): the server takes its own list; otherwise the ticked ones
         var body = rs.mode === 'all'
-          ? { all: true, library: rs.library, exclude: Object.keys(rs.excluded), renameJson: rs.renameJson }
-          : { items: rs.data.items.filter(function (x) { return x.status === 'ok' && rs.selected[x.bookId]; }).map(function (x) { return { bookId: x.bookId, toName: x.toName, from: x.from }; }), renameJson: rs.renameJson };
+          ? { all: true, library: rs.library, exclude: Object.keys(rs.excluded), include: Object.keys(rs.guessPicked), renameJson: rs.renameJson }
+          : { items: rs.data.items.filter(function (x) { return (x.status === 'ok' && rs.selected[x.bookId]) || (x.status === 'guess' && rs.guessPicked[x.bookId]); }).map(function (x) { return { bookId: x.bookId, toName: x.toName, from: x.from }; }), renameJson: rs.renameJson };
         btn.disabled = true;
         return api('POST', '/api/rename/apply', body).then(function (r) {
           rs.job = r.job; rs.result = null;

@@ -888,3 +888,20 @@ body.is-reading { overflow: hidden; }
 .src-icon--sm .icon svg, .src-icon--xs .icon svg { width: 100%; height: 100%; }
 .cat-source__title { display: inline-flex; align-items: center; }
 .cat-card__meta { display: flex; align-items: center; flex-wrap: wrap; gap: 2px; }
+
+/* Renaming: guesses (a missing decimal point) and the files involved in a name clash */
+.badge--warn { background: rgba(255, 179, 0, .18); color: #b26a00; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .badge--warn { color: #ffcc66; } }
+:root[data-theme="dark"] .badge--warn { color: #ffcc66; }
+.ren-row.is-guess { background: rgba(255, 179, 0, .06); }
+.ren-guess { flex-basis: 100%; margin: 2px 0 0 30px; }
+.ren-involved { width: 100%; font-size: 13px; margin: 6px 0; }
+.ren-involved th, .ren-involved td { padding: 4px 8px; text-align: left; vertical-align: middle; }
+.ren-involved tr.is-this td { background: var(--primary-soft); }
+.ren-involved .ren-most { font-weight: 700; }
+.ren-involved { min-width: 560px; }
+.ren-involved code { white-space: nowrap; }
+.ren-involved td:first-child .muted { display: block; }
+.ren-involved td:nth-child(4) { white-space: nowrap; }
+.files-dup { min-width: 0; max-width: 100%; }
+.files-dup .table-wrap, .files-dup { overflow-x: auto; }

@@ -23,7 +23,7 @@ const state = { jobId: job.jobId, sourceId: job.source.id, mode: job.mode, reaso
 function save() {
   state.heartbeatAt = new Date().toISOString();
   const file = path.join(dir, 'progress.json'), tmp = `${file}.${process.pid}.tmp`;
-  try { fs.writeFileSync(tmp, JSON.stringify(state)); fs.renameSync(tmp, file); } catch (e) { console.error('[crawler] progress:', e.message); }
+  try { fs.writeFileSync(tmp, JSON.stringify(state)); require('./store').replaceFile(tmp, file); } catch (e) { console.error('[crawler] progress:', e.message); }
 }
 save();
 const beat = setInterval(() => {

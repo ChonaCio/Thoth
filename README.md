@@ -386,7 +386,17 @@ Names starting with chapter/chap/ch/c, volume/vol/v, episode/ep or issue + a num
 optionally followed by a name, get the word capitalized and spelled out and the name in title case; anything
 else is left alone. Numbers lose leading zeros (`007` → `7`) and an `x` between numbers becomes a point
 (`1x1` → `1.1`). In a file name without spaces the dashes are spaces (`the-end` → `The End`); a name that has
-spaces keeps its dashes (`Chapter 5 - Spider-Man`). The list is grouped by work; pick what to rename (all proposals are selected at first) and
+spaces keeps its dashes (`Chapter 5 - Spider-Man`). A change of **capitalization alone isn't proposed**
+(`chapter 5.cbz` stays).
+
+**Missing decimal points.** Each work's chapter numbers are compared with each other: a number far past the rest
+that, with its last digit as a decimal, falls inside the run, next to a chapter the work has, on a number it
+doesn't have, is suggested (`Chapter 505` in a work with chapters 1–70 → `Chapter 50.5`). These are guesses:
+shown with the reason, **never selected** until you tick them (*Select all* leaves them out).
+
+**Names that clash.** When the new name is taken, or two files would get it, the row lists **every file involved**:
+pages, size, date, how many readers have progress in it, and a mark when two look like the same chapter twice
+(same pages and size); the one with the most pages is in bold. Each file can be deleted from there. The list is grouped by work; pick what to rename (all proposals are selected at first) and
 click *Rename selected*. Proposals whose new name already exists, or that two files would share, are shown
 but never applied.
 
