@@ -348,9 +348,9 @@ function readSiteFile(id, url) {
   return ask({ type: 'siteFile', url: u.href, allowLocal: ALLOW_LOCAL });
 }
 // A page of a site, made inert, for the source wizard's element picker (any public page: administrators only)
-function previewPage(url) {
+function previewPage(url, { inert = false } = {}) {
   if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
-  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL });
+  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL, inert: Boolean(inert) });
 }
 
 // Scheduled crawls: an update when the schedule says so (a full crawl the first time or after an interruption)

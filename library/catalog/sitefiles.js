@@ -1,8 +1,9 @@
 // What the Catalog's "Site files" tab and the source wizard show of a site, read by the helper process with the
 // same polite fetcher as crawls (generic user agent, robots.txt followed, public addresses only):
 //   readSiteFile({ url })  robots.txt or a sitemap: its text and what it lists
-//   previewPage({ url })   a page to look at and pick elements in: made inert (no scripts, nothing loaded from
-//                          the site by the browser: its stylesheets are inlined here, images become placeholders)
+//   previewPage({ url, inert })  a page to look at and pick elements in: as the site sent it (the wizard shows it
+//                          in a sandboxed frame, with the site's images and styles), or with inert, also a copy
+//                          that loads nothing from the site (stylesheets inlined here, images as placeholders)
 const zlib = require('zlib');
 const crypto = require('crypto');
 const { createFetcher } = require('./fetcher');
@@ -28,13 +29,16 @@ async function readSiteFile({ url, allowLocal }) {
 }
 const hash = t => crypto.createHash('sha1').update(String(t)).digest('hex');
 
-// A page made inert for the element picker
-async function previewPage({ url, allowLocal }) {
+// A page for the element picker: `source` (the page as the site sent it; the wizard shows it with the site's
+// images and styles, its scripts only if asked) and, with inert, `html` (nothing loaded from the site at all)
+const MAX_SOURCE = 3 * 1024 * 1024;
+async function previewPage({ url, allowLocal, inert = false }) {
   const fetcher = createFetcher({ gapMs: 300, allowLocal });
   const res = await fetcher.get(url);
   const base = res.url;
   let html = res.text;
   const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || [])[1] || '';
+  if (!inert) return { url: base, title: title.trim().slice(0, 200), source: html.slice(0, MAX_SOURCE), truncated: html.length > MAX_SOURCE, requests: fetcher.stats.requests };
   // The site's stylesheets, inlined (only from the same site; what robots.txt allows; a few)
   const css = [];
   const links = [...html.matchAll(/<link\b[^>]*>/gi)].map(m => m[0]).filter(tag => /rel\s*=\s*["']?[^"'>]*stylesheet/i.test(tag));
@@ -60,7 +64,7 @@ async function previewPage({ url, allowLocal }) {
     css.map(c => `<style>${c.replace(/url\(\s*(['"]?)(?!data:)[^)'"]+\1\s*\)/gi, 'none').replace(/@import[^;]+;/gi, '')}</style>`).join('') +
     `<style>img{background:repeating-linear-gradient(45deg,#ddd 0 6px,#eee 6px 12px);min-width:24px;min-height:24px}</style>`;
   html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + head) : head + html;
-  return { url: base, title: title.trim().slice(0, 200), html, requests: fetcher.stats.requests };
+  return { url: base, title: title.trim().slice(0, 200), html, source: res.text.slice(0, MAX_SOURCE), requests: fetcher.stats.requests };
 }
 
 module.exports = { readSiteFile, previewPage };

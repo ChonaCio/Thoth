@@ -195,7 +195,9 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(smx.sitemaps.length === 2 && smw.urlCount >= 10 && smw.urls[0].loc.startsWith(SITE + '/madara/manga/'), `a sitemap read now: the sitemaps it lists (${smx.sitemaps.length}) and its addresses (${smw.urlCount})`);
   ok((await call('GET', `/api/catalog/sources/${madara.id}/file?url=${encodeURIComponent('https://example.org/sitemap.xml')}`)).status === 400 && (await call('GET', `/api/catalog/sources/${madara.id}/files`, null, bob)).status === 403,
     'only the source’s own site, and only for administrators');
-  const pv = (await call('GET', `/api/catalog/preview?url=${encodeURIComponent(SITE + '/madara/manga/blue-moon/')}`)).data.page;
+  const live = (await call('GET', `/api/catalog/preview?url=${encodeURIComponent(SITE + '/madara/manga/blue-moon/')}`)).data.page;
+  ok(live && /Blue Moon/.test(live.source) && !live.html && live.url === SITE + '/madara/manga/blue-moon/', 'a page for the picker: as the site sends it (the wizard shows it with its images and styles)');
+  const pv = (await call('GET', `/api/catalog/preview?url=${encodeURIComponent(SITE + '/madara/manga/blue-moon/')}&inert=1`)).data.page;
   ok(pv && /Blue Moon/.test(pv.html) && !/<script/i.test(pv.html) && /Content-Security-Policy/.test(pv.html) && /data-src="http:\/\/127\.0\.0\.1:3998\/img\/blue-moon\.png"/.test(pv.html) && !/ src="http:/.test(pv.html),
     'a page for the picker is made inert: no scripts, nothing the browser would load from the site (images become placeholders)');
   ok((await call('GET', `/api/catalog/preview?url=${encodeURIComponent('ftp://x')}`)).status === 400, 'the preview takes only web addresses');

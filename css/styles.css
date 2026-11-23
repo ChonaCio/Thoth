@@ -1007,3 +1007,9 @@ body.is-reading { overflow: hidden; }
   .wizard__body--split .wizard__form { overflow: visible; }
   .wz-preview { border-left: 0; border-top: 1px solid var(--border); height: 75vh; }
 }
+.wz-preview__opts { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; width: 100%; }
+.wz-wait input { width: 56px; padding: 3px 6px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); font: inherit; }
+.wz-preview__holder { flex: 1; min-height: 0; display: flex; }
+.wz-preview__holder .wz-preview__frame { flex: 1; }
+.wz-preview__opts .checkbox { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
+.wz-preview__opts .checkbox input { width: auto; }

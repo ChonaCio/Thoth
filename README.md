@@ -523,9 +523,16 @@ sites added as **sources**, with its metadata and chapter list.
   press *Pick* next to a setting, hover the page (the element under the pointer is outlined) and click it — the
   wizard writes a selector the crawler understands, outlines everything it matches and shows a sample (for a work
   in the list it finds the repeating block; link, title and cover are found inside it; genres and authors match
-  all their siblings). *Navigate* mode follows the site's links instead. The preview is fetched by the server (with
-  the crawler's politeness rules) and made inert: no scripts run, and the browser loads nothing from the site (its
-  stylesheets are inlined, images are placeholders).
+  all their siblings). *Navigate* mode follows the site's links instead. The page is fetched by the server (with
+  the crawler's politeness rules) and shown **with the site's images, styles and fonts**, which your browser loads
+  from the site. Options above the preview:
+  - *Images and styles* — off shows a copy that loads nothing from the site (styles inlined, images as placeholders).
+  - *Site scripts* — runs the site's own scripts, for pages that build their content with scripts; the preview is
+    then fully isolated from Thoth (it can't reach the app, its cookies or its API). Off (the default), the site's
+    scripts and inline handlers are removed and only the picker can run. Crawls never run a site's scripts, so a
+    pick that only exists after them is marked (*not in the page as the site sends it*).
+  - *Wait N s before picking* — the picker waits for the page to finish loading (its images and styles), then
+    that many seconds more (up to 60), with a countdown; ↻ shows the page again.
 - **Site files tab:** each source's **robots.txt** and **sitemaps** — the ones in its settings, the ones detection
   found and the ones its last crawl read (with their content hash, date and how many works each listed). Open one
   to read it now: its text, the sitemaps it lists (click to open) and its addresses (searchable).

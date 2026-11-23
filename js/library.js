@@ -1779,7 +1779,7 @@
   function openSourceWizard(src) {
     var st = catSourcesState();
     wz = { editing: src ? src.id : null, draft: wzDraftFrom(src), step: 'site', detected: src && src.detected ? { found: src.detected.found, notes: src.detected.notes, at: src.detected.at } : null,
-      detecting: false, test: null, saving: false, error: null, pv: { url: '', page: null, loading: false, error: null, mode: 'pick', target: null, info: null }, sampleWork: (src && src.detected && src.detected.found && src.detected.found.sampleWork && src.detected.found.sampleWork.url) || '', types: st.types || [] };
+      detecting: false, test: null, saving: false, error: null, pv: { url: '', page: null, loading: false, error: null, mode: 'pick', target: null, info: null, images: true, scripts: false, wait: 0 }, sampleWork: (src && src.detected && src.detected.found && src.detected.found.sampleWork && src.detected.found.sampleWork.url) || '', types: st.types || [] };
     var dlg = $('#src-wizard');
     if (!dlg) {
       dlg = document.createElement('dialog');
@@ -1789,6 +1789,7 @@
       dlg.addEventListener('click', wzClick);
       dlg.addEventListener('input', wzInput);
       dlg.addEventListener('change', wzInput);
+      dlg.addEventListener('keydown', function (e) { if (e.key === 'Enter' && e.target.id === 'wz-pv-url') { e.preventDefault(); var u = e.target.value.trim(); if (u) wzLoadPreview(u); } });
       dlg.addEventListener('close', function () { wz = null; });
     }
     wzRender();
@@ -1866,55 +1867,95 @@
       (d.autoDetect ? '<p class="muted small">' + esc(t('cat.detectNote')) + '</p>' :
         '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="test"' + (wz.test && wz.test.loading ? ' disabled' : '') + '>' + icon('play') + esc(t('cat.test')) + '</button></div>' + testReport(wz.test));
   }
-  // The preview of one of the site's pages, for picking (steps with selectors)
-  function wzPreviewPane(step) {
-    if (wz.draft.autoDetect || !(step === 'list' && wz.draft.type === 'custom' && wz.draft.listing !== 'sitemap') && step !== 'work' && step !== 'chapters') return '';
+  /* -------- the preview of the site's pages (steps with selectors) --------
+   * The page as the site sent it (fetched by the server), shown in a sandboxed frame that may run scripts but has
+   * no access to Thoth (an opaque origin: not the app's pages, cookies or API). It loads the site's images, styles
+   * and fonts itself; the site's own scripts run only when asked ("Site scripts"), and the picker can wait a few
+   * seconds for the page to finish loading. With "Images and styles" off, a copy that loads nothing from the site
+   * is shown instead. The picker runs inside the frame (wzPickerMain) and talks to the wizard with messages. */
+  var wzHasPreview = function (step) { return !wz.draft.autoDetect && ((step === 'list' && wz.draft.type === 'custom' && wz.draft.listing !== 'sitemap') || step === 'work' || step === 'chapters'); };
+  function wzPreviewBar() {
     var pv = wz.pv;
-    var target = pv.target ? t('cat.sel.' + pv.target) : null;
-    return '<section class="wz-preview" aria-label="' + esc(t('wz.preview')) + '">' +
-      '<div class="wz-preview__bar">' +
-        '<input type="url" id="wz-pv-url" value="' + esc(pv.url) + '" placeholder="https://…" aria-label="' + esc(t('wz.pageAddress')) + '" />' +
-        '<button type="button" class="btn btn--outline btn--small" data-wz-act="load">' + esc(t('wz.load')) + '</button>' +
-        '<div class="seg" role="group" aria-label="' + esc(t('wz.mode')) + '">' +
-          '<button type="button" class="seg__btn' + (pv.mode === 'pick' ? ' is-active' : '') + '" data-wz-mode="pick" aria-pressed="' + (pv.mode === 'pick') + '">' + icon('ads_click') + esc(t('wz.modePick')) + '</button>' +
-          '<button type="button" class="seg__btn' + (pv.mode === 'navigate' ? ' is-active' : '') + '" data-wz-mode="navigate" aria-pressed="' + (pv.mode === 'navigate') + '">' + icon('open_in_new') + esc(t('wz.modeNavigate')) + '</button>' +
-        '</div></div>' +
-      '<p class="small wz-preview__status" role="status">' + esc(pv.loading ? t('common.loading') : pv.info ? pv.info : pv.mode === 'navigate' ? t('wz.navigateHelp') : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField')) + '</p>' +
-      (pv.error ? errorBanner(pv.error) : '') +
-      '<iframe class="wz-preview__frame" id="wz-frame" sandbox="allow-same-origin" title="' + esc(t('wz.preview')) + '"></iframe>' +
-    '</section>';
+    return '<input type="url" id="wz-pv-url" value="' + esc(pv.typed != null ? pv.typed : pv.url) + '" placeholder="https://…" aria-label="' + esc(t('wz.pageAddress')) + '" />' +
+      '<button type="button" class="btn btn--outline btn--small" data-wz-act="load">' + esc(t('wz.load')) + '</button>' +
+      '<button type="button" class="btn btn--text btn--small" data-wz-act="reload" title="' + esc(t('wz.reload')) + '" aria-label="' + esc(t('wz.reload')) + '">' + icon('sync') + '</button>' +
+      '<div class="seg" role="group" aria-label="' + esc(t('wz.mode')) + '">' +
+        '<button type="button" class="seg__btn' + (pv.mode === 'pick' ? ' is-active' : '') + '" data-wz-mode="pick" aria-pressed="' + (pv.mode === 'pick') + '">' + icon('ads_click') + esc(t('wz.modePick')) + '</button>' +
+        '<button type="button" class="seg__btn' + (pv.mode === 'navigate' ? ' is-active' : '') + '" data-wz-mode="navigate" aria-pressed="' + (pv.mode === 'navigate') + '">' + icon('open_in_new') + esc(t('wz.modeNavigate')) + '</button>' +
+      '</div>' +
+      '<div class="wz-preview__opts">' +
+        '<label class="checkbox small"><input type="checkbox" id="wz-pv-images"' + (pv.images ? ' checked' : '') + ' /><span>' + esc(t('wz.images')) + '</span></label>' +
+        '<label class="checkbox small" title="' + esc(t('wz.scriptsHelp')) + '"><input type="checkbox" id="wz-pv-scripts"' + (pv.scripts ? ' checked' : '') + (pv.images ? '' : ' disabled') + ' /><span>' + esc(t('wz.scripts')) + '</span></label>' +
+        '<label class="small wz-wait">' + esc(t('wz.wait')) + ' <input type="number" id="wz-pv-wait" min="0" max="60" step="1" value="' + esc(pv.wait) + '" /> ' + esc(t('wz.seconds')) + '</label>' +
+      '</div>';
   }
+  function wzStatusText() {
+    var pv = wz.pv, target = pv.target ? t('cat.sel.' + pv.target) : null;
+    if (pv.loading) return t('wz.fetching');
+    if (pv.page && !pv.ready) return pv.waitLeft > 0 ? t('wz.waiting', { s: pv.waitLeft }) : t('wz.pageLoading');
+    if (pv.info) return pv.info;
+    return pv.mode === 'navigate' ? t('wz.navigateHelp') : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField');
+  }
+  function wzStatus() { var p = $('#wz-pv-status'); if (p && wz) p.textContent = wzStatusText(); }
   function wzRender() {
     var dlg = $('#src-wizard');
     if (!dlg || !wz) return;
     var steps = wzSteps();
     if (steps.indexOf(wz.step) === -1) wz.step = steps[0];
     var i = steps.indexOf(wz.step), last = i === steps.length - 1;
-    var preview = wzPreviewPane(wz.step);
-    dlg.innerHTML = '<div class="wizard__frame">' +
-      '<header class="wizard__head"><h2 id="wz-title">' + esc(t(wz.editing ? 'cat.editSource' : 'cat.addSource')) + '</h2>' +
-        '<button type="button" class="icon-btn" data-wz-act="close" aria-label="' + esc(t('common.close')) + '">' + icon('close') + '</button></header>' +
-      '<ol class="wizard__steps">' + steps.map(function (s, k) { return '<li class="' + (k === i ? 'is-current' : k < i ? 'is-done' : '') + '"><button type="button" data-wz-go="' + s + '"' + (k === i ? ' aria-current="step"' : '') + '>' + (k + 1) + '. ' + esc(t(WZ_TITLES[s])) + '</button></li>'; }).join('') + '</ol>' +
-      '<div class="wizard__body' + (preview ? ' wizard__body--split' : '') + '"><div class="wizard__form">' + wzStepBody(wz.step) + '</div>' + preview + '</div>' +
-      '<footer class="wizard__foot"><p class="wizard__error" role="alert">' + (wz.error ? esc(A().errMsg(wz.error)) : '') + '</p>' +
-        (i > 0 ? '<button type="button" class="btn btn--text" data-wz-act="back">' + esc(t('wz.back')) + '</button>' : '') +
-        (last ? '<button type="button" class="btn btn--primary" data-wz-act="save"' + (wz.saving ? ' disabled' : '') + '>' + esc(t('common.save')) + '</button>'
-          : '<button type="button" class="btn btn--primary" data-wz-act="next">' + esc(t('wz.next')) + '</button>') +
-      '</footer></div>';
+    var preview = wzHasPreview(wz.step);
+    // The frame is built once per kind of page shown (list or work page), so the page and what it loaded stay
+    // while settings are picked; the rest is drawn again
+    var layout = preview ? 'pv-' + WZ_PAGE[wz.step] : 'form';
+    if (dlg.dataset.layout !== layout || !$('#wz-form', dlg)) {
+      dlg.dataset.layout = layout;
+      dlg.innerHTML = '<div class="wizard__frame">' +
+        '<header class="wizard__head"><h2 id="wz-title">' + esc(t(wz.editing ? 'cat.editSource' : 'cat.addSource')) + '</h2>' +
+          '<button type="button" class="icon-btn" data-wz-act="close" aria-label="' + esc(t('common.close')) + '">' + icon('close') + '</button></header>' +
+        '<ol class="wizard__steps" id="wz-steps"></ol>' +
+        '<div class="wizard__body' + (preview ? ' wizard__body--split' : '') + '"><div class="wizard__form" id="wz-form"></div>' +
+          (preview ? '<section class="wz-preview" aria-label="' + esc(t('wz.preview')) + '"><div class="wz-preview__bar" id="wz-pv-bar"></div>' +
+            '<p class="small wz-preview__status" id="wz-pv-status" role="status"></p><div id="wz-pv-error"></div><div class="wz-preview__holder" id="wz-frame-holder"></div></section>' : '') + '</div>' +
+        '<footer class="wizard__foot" id="wz-foot"></footer></div>';
+    }
+    $('#wz-steps', dlg).innerHTML = steps.map(function (s, k) { return '<li class="' + (k === i ? 'is-current' : k < i ? 'is-done' : '') + '"><button type="button" data-wz-go="' + s + '"' + (k === i ? ' aria-current="step"' : '') + '>' + (k + 1) + '. ' + esc(t(WZ_TITLES[s])) + '</button></li>'; }).join('');
+    $('#wz-form', dlg).innerHTML = wzStepBody(wz.step);
+    $('#wz-foot', dlg).innerHTML = '<p class="wizard__error" role="alert">' + (wz.error ? esc(A().errMsg(wz.error)) : '') + '</p>' +
+      (i > 0 ? '<button type="button" class="btn btn--text" data-wz-act="back">' + esc(t('wz.back')) + '</button>' : '') +
+      (last ? '<button type="button" class="btn btn--primary" data-wz-act="save"' + (wz.saving ? ' disabled' : '') + '>' + esc(t('common.save')) + '</button>'
+        : '<button type="button" class="btn btn--primary" data-wz-act="next">' + esc(t('wz.next')) + '</button>');
+    if (preview) {
+      $('#wz-pv-bar', dlg).innerHTML = wzPreviewBar();
+      $('#wz-pv-error', dlg).innerHTML = wz.pv.error ? errorBanner(wz.pv.error) : '';
+      wzStatus();
+    }
     if (window.renderIcons) window.renderIcons(dlg);
     if (preview) wzShowPreview();
   }
-  // The page in the preview: shown, and made pickable
+  // The frame showing the page; built again only when the page or how it's shown changes
   function wzShowPreview() {
-    var pv = wz.pv, frame = $('#wz-frame');
-    if (!frame) return;
-    if (!pv.page && !pv.loading && !pv.error) {
+    var pv = wz.pv, holder = $('#wz-frame-holder');
+    if (!holder) return;
+    if (!pv.page && !pv.loading && !pv.error && !pv.tried) {
       var url = wzDefaultPreviewUrl();
+      pv.tried = true;
       if (url) return wzLoadPreview(url);
     }
-    if (!pv.page) { frame.srcdoc = '<p style="font:14px sans-serif;color:#777;padding:16px">' + esc(t('wz.noPage')) + '</p>'; return; }
-    frame.addEventListener('load', function () { wzHookFrame(frame); }, { once: true });
-    frame.srcdoc = pv.page.html;
+    var key = pv.page ? [pv.seq, pv.images ? 1 : 0, pv.scripts ? 1 : 0, pv.wait, pv.reloads || 0].join('|') : 'empty' + (pv.loading ? '-loading' : '');
+    var frame = $('#wz-frame');
+    if (frame && frame.dataset.key === key) return wzSendConfig();
+    holder.innerHTML = '';
+    frame = document.createElement('iframe');
+    frame.id = 'wz-frame'; frame.className = 'wz-preview__frame'; frame.title = t('wz.preview');
+    // With the site's scripts: fully isolated from Thoth (an opaque origin). Without them: only the picker can run
+    // (removed scripts and handlers, and a policy that lets only its nonce run), so the frame may share Thoth's
+    // origin, which lets the browser load the site's images and styles from any address
+    frame.setAttribute('sandbox', pv.scripts ? 'allow-scripts' : 'allow-scripts allow-same-origin');
+    frame.dataset.key = key;
+    pv.ready = false; pv.waitLeft = 0;
+    frame.srcdoc = pv.page ? wzBuildDoc(pv.page) : '<p style="font:14px sans-serif;color:#777;padding:16px">' + esc(pv.loading ? t('wz.fetching') : t('wz.noPage')) + '</p>';
+    holder.appendChild(frame);
+    wzStatus();
   }
   function wzDefaultPreviewUrl() {
     var d = wz.draft;
@@ -1927,119 +1968,228 @@
   }
   function wzLoadPreview(url) {
     var pv = wz.pv, seq = pv.seq = (pv.seq || 0) + 1; // (only the latest page asked for is shown)
-    pv.url = url; pv.loading = true; pv.error = null; pv.info = null; pv.page = null;
+    pv.url = url; pv.typed = null; pv.loading = true; pv.error = null; pv.info = null; pv.page = null; pv.srcDoc = null;
     wzRender();
-    api('GET', '/api/catalog/preview?' + Store.qs({ url: url })).then(function (r) { if (pv.seq === seq) { pv.page = r.page; pv.url = r.page.url; } }, function (e) { if (pv.seq === seq) pv.error = e; })
+    api('GET', '/api/catalog/preview?' + Store.qs({ url: url, inert: pv.images ? undefined : '1' })).then(function (r) { if (pv.seq === seq) { pv.page = r.page; pv.url = r.page.url; } }, function (e) { if (pv.seq === seq) pv.error = e; })
       .then(function () { if (pv.seq !== seq) return; pv.loading = false; if (wz && wz.pv === pv) wzRender(); });
   }
   // Another kind of page to show: the next render loads it
-  function wzResetPreview() { var pv = wz.pv; pv.seq = (pv.seq || 0) + 1; pv.page = null; pv.loading = false; pv.error = null; pv.info = null; pv.target = null; }
-  /* -------- picking an element (in the preview's page) -------- */
-  var BLOCK_TAGS = /^(li|div|article|section|tr|td|dl|dd|figure|header|ul|ol|table|tbody|main|aside|nav)$/;
-  var goodClass = function (c) { return /^[a-zA-Z][\w-]{1,40}$/.test(c) && !/\d{4,}/.test(c) && !/^(active|current|selected|hover|focus|show|open|is-|has-|js-|thoth-)/.test(c); };
-  function stepOf(el) {
-    var tag = el.tagName.toLowerCase();
-    if (el.id && /^[a-zA-Z][\w-]*$/.test(el.id) && !/\d{3,}/.test(el.id)) return tag + '#' + el.id;
-    return tag + Array.prototype.filter.call(el.classList, goodClass).slice(0, 2).map(function (c) { return '.' + c; }).join('');
-  }
-  // The shortest path of steps (from el up, at most 5) that `ok(selector)` accepts
-  function pathSelector(el, stopAt, ok) {
-    var parts = [stepOf(el)], cur = el.parentElement;
-    for (var i = 0; i < 6; i++) {
-      var s = parts.join(' ');
-      if (ok(s)) return s;
-      if (!cur || cur === stopAt || cur.tagName === 'HTML') break;
-      parts.unshift(stepOf(cur)); cur = cur.parentElement;
+  function wzResetPreview() { var pv = wz.pv; pv.seq = (pv.seq || 0) + 1; pv.page = null; pv.loading = false; pv.error = null; pv.info = null; pv.target = null; pv.tried = false; pv.srcDoc = null; }
+  // The document the frame shows: the site's page (its images, styles, and scripts if asked) + the picker
+  function wzBuildDoc(page) {
+    var pv = wz.pv;
+    var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: pv.target ? WZ_SEL[pv.target] : null, selectors: wz.draft.selectors };
+    var picker = '(' + wzPickerMain.toString() + ')(' + JSON.stringify(cfg).replace(/</g, '\\u003c') + ');';
+    var nonce = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    if (!pv.images && page.html) {
+      // The copy that loads nothing from the site (its own policy blocks everything): the picker allowed in
+      return page.html.replace("default-src 'none';", "default-src 'none'; script-src 'nonce-" + nonce + "';").replace(/<\/body>/i, '') + '<script nonce="' + nonce + '">' + picker.replace(/<\/script/gi, '<\\/script') + '</script>';
     }
-    return parts.join(' ');
+    var doc = new DOMParser().parseFromString(page.source || '', 'text/html');
+    Array.prototype.forEach.call(doc.querySelectorAll('base, meta[http-equiv]'), function (x) { x.remove(); });
+    if (!pv.scripts) {
+      Array.prototype.forEach.call(doc.querySelectorAll('script, iframe, frame, frameset, object, embed, applet, portal, link[rel=import], link[rel=modulepreload], link[rel=preload][as=script]'), function (x) { x.remove(); });
+      // What the page shows without scripts (<noscript>), and the images its lazy loader would have put in place
+      Array.prototype.forEach.call(doc.querySelectorAll('noscript'), function (x) { while (x.firstChild) x.parentNode.insertBefore(x.firstChild, x); x.remove(); });
+      Array.prototype.forEach.call(doc.querySelectorAll('*'), function (el) {
+        Array.prototype.slice.call(el.attributes).forEach(function (a) { if (/^on/i.test(a.name) || /^\s*javascript:/i.test(a.value)) el.removeAttribute(a.name); });
+        if (el.tagName === 'IMG') {
+          var lazy = el.getAttribute('data-src') || el.getAttribute('data-lazy-src') || el.getAttribute('data-original');
+          if (lazy && (!el.getAttribute('src') || /^data:|\.gif(\?|$)|blank|placeholder|lazy/i.test(el.getAttribute('src')))) el.setAttribute('src', lazy);
+          var lazySet = el.getAttribute('data-srcset') || el.getAttribute('data-lazy-srcset');
+          if (lazySet && !el.getAttribute('srcset')) el.setAttribute('srcset', lazySet);
+        }
+      });
+    }
+    var head = doc.head || doc.documentElement.insertBefore(doc.createElement('head'), doc.body);
+    var base = doc.createElement('base'); base.setAttribute('href', page.url);
+    head.insertBefore(base, head.firstChild);
+    if (!pv.scripts) {
+      // Without the site's scripts: only the picker runs (its nonce); the page can't send data anywhere
+      var csp = doc.createElement('meta'); csp.setAttribute('http-equiv', 'Content-Security-Policy');
+      csp.setAttribute('content', "script-src 'nonce-" + nonce + "'; connect-src 'none'; frame-src 'none'; child-src 'none'; object-src 'none'; form-action 'none'; worker-src 'none'");
+      head.insertBefore(csp, head.firstChild);
+    }
+    var s = doc.createElement('script');
+    s.setAttribute('nonce', nonce);
+    s.textContent = picker;
+    (doc.body || doc.documentElement).appendChild(s);
+    return '<!doctype html>' + doc.documentElement.outerHTML;
   }
-  var countIn = function (root, s) { try { return root.querySelectorAll(s).length; } catch (e) { return 0; } };
-  function wzPickFor(field, el, doc) {
-    var spec = WZ_SEL[field], d = wz.draft;
-    var attr = spec.attr ? '@' + spec.attr : '';
-    if (spec.kind === 'repeat') {
-      // The repeating block around what was clicked (a row, not the link inside it)
-      var cur = el;
-      while (cur && cur.parentElement && !BLOCK_TAGS.test(cur.tagName.toLowerCase())) cur = cur.parentElement;
-      for (; cur && cur.tagName !== 'BODY'; cur = cur.parentElement) {
-        var s = pathSelector(cur, null, function (x) { var n = countIn(doc, x); return n >= 2 && n <= 2000; });
-        var n = countIn(doc, s);
-        if (n >= 2) return { selector: s, matches: doc.querySelectorAll(s) };
+  function wzSendConfig() {
+    var frame = $('#wz-frame'), pv = wz && wz.pv;
+    if (!frame || !frame.contentWindow || !pv) return;
+    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: pv.target ? WZ_SEL[pv.target] : null, selectors: wz.draft.selectors } }, '*');
+  }
+  // Is what was picked in the page as the site sends it (what crawls read: they don't run the site's scripts)?
+  function wzInSource(field, selector) {
+    var pv = wz.pv;
+    if (!pv.page || !pv.page.source) return true;
+    if (!pv.srcDoc) pv.srcDoc = new DOMParser().parseFromString(pv.page.source, 'text/html');
+    var spec = WZ_SEL[field], css = String(selector).split('@')[0];
+    try {
+      if (spec.kind === 'rel') {
+        var rows = pv.srcDoc.querySelectorAll(String(wz.draft.selectors[spec.rel] || '').split('@')[0]);
+        return !css ? rows.length > 0 : Array.prototype.some.call(rows, function (r) { return r.querySelector(css); });
       }
-      return { error: t('wz.noRepeat') };
-    }
-    if (spec.kind === 'rel') {
-      var parentSel = d.selectors[spec.rel];
-      if (!parentSel) return { error: t('wz.pickParentFirst', { field: t('cat.sel.' + spec.rel) }) };
-      var root = el.closest(parentSel.split('@')[0]);
-      if (!root) return { error: t('wz.pickInside', { field: t('cat.sel.' + spec.rel) }) };
-      var target = spec.attr === 'href' ? (el.closest('a[href]') || el.querySelector('a[href]')) : spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || (el.closest('a, div, figure') || el).querySelector('img')) : el;
-      if (!target || !root.contains(target)) return { error: t('wz.pickNotFound') };
-      if (target === root) return { selector: '', self: true, matches: [target] };
-      var rs = pathSelector(target, root, function (x) { try { return root.querySelector(x) === target; } catch (e) { return false; } });
-      return { selector: rs + attr, matches: Array.prototype.map.call(doc.querySelectorAll(parentSel), function (r) { return r.querySelector(rs); }).filter(Boolean) };
-    }
-    if (spec.kind === 'multi') {
-      // Every element like the one clicked in its container (e.g. each genre link)
-      var box = el.parentElement;
-      while (box && box.parentElement && box.querySelectorAll(stepOf(el)).length < 2 && !BLOCK_TAGS.test(box.tagName.toLowerCase())) box = box.parentElement;
-      var boxSel = pathSelector(box, null, function (x) { try { return doc.querySelector(x) === box; } catch (e) { return false; } });
-      var ms = boxSel + ' ' + stepOf(el);
-      return { selector: ms + attr, matches: doc.querySelectorAll(ms) };
-    }
-    // single: the first element the selector finds is the one clicked
-    var tgt = spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || el) : el;
-    // (one that finds only it, if a short one does; else one whose first match is it)
-    var unique = function (x) { try { return doc.querySelector(x) === tgt && doc.querySelectorAll(x).length === 1; } catch (e) { return false; } };
-    var ss = pathSelector(tgt, null, unique);
-    if (!unique(ss)) ss = pathSelector(tgt, null, function (x) { try { return doc.querySelector(x) === tgt; } catch (e) { return false; } });
-    return { selector: ss + attr, matches: [tgt] };
+      return pv.srcDoc.querySelectorAll(css).length > 0;
+    } catch (e) { return true; }
   }
-  function wzHookFrame(frame) {
-    var doc = frame.contentDocument;
-    if (!doc) return;
-    var style = doc.createElement('style');
-    style.textContent = '.thoth-hl{outline:2px solid #1a73e8!important;outline-offset:1px;background-color:rgba(26,115,232,.12)!important;cursor:crosshair!important}' +
-      '.thoth-match{outline:2px dashed #188038!important;outline-offset:1px}a{cursor:' + (wz.pv.mode === 'navigate' ? 'pointer' : 'crosshair') + '!important}';
-    doc.head.appendChild(style);
-    var last = null;
-    doc.addEventListener('mouseover', function (e) {
-      if (wz.pv.mode !== 'pick') return;
-      if (last) last.classList.remove('thoth-hl');
-      last = e.target; last.classList.add('thoth-hl');
-    });
-    doc.addEventListener('mouseout', function () { if (last) last.classList.remove('thoth-hl'); last = null; });
-    doc.addEventListener('submit', function (e) { e.preventDefault(); }, true);
-    doc.addEventListener('click', function (e) {
-      e.preventDefault(); e.stopPropagation();
-      var el = e.target;
-      if (wz.pv.mode === 'navigate') {
-        var a = el.closest('a[href]');
-        if (a && /^https?:/.test(a.href)) wzLoadPreview(a.href);
-        return;
-      }
-      var field = wz.pv.target;
-      if (!field) { wz.pv.info = t('wz.chooseField'); return wzStatus(); }
-      el.classList.remove('thoth-hl');
-      var r = wzPickFor(field, el, doc);
-      if (r.error) { wz.pv.info = r.error; return wzStatus(); }
-      wz.draft.selectors[field] = r.selector;
-      // A work picked on the list page: the work page to preview next
-      if (field === 'link' || field === 'item') { var a1 = (r.matches[0] && (r.matches[0].closest('a[href]') || r.matches[0].querySelector && r.matches[0].querySelector('a[href]'))); if (a1) wz.sampleWork = a1.href; }
-      Array.prototype.forEach.call(doc.querySelectorAll('.thoth-match'), function (x) { x.classList.remove('thoth-match'); });
-      Array.prototype.forEach.call(r.matches, function (x) { if (x && x.classList) x.classList.add('thoth-match'); });
-      var sample = Array.prototype.slice.call(r.matches, 0, 3).map(function (x) { return WZ_SEL[field].attr === 'src' ? (x.getAttribute('data-src') || x.getAttribute('data-lazy-src') || x.getAttribute('data-thoth-src') || '') : WZ_SEL[field].attr === 'href' ? (x.getAttribute('href') || '') : (x.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60); }).filter(Boolean);
-      wz.pv.info = t('wz.picked', { field: t('cat.sel.' + field), selector: r.self ? t('wz.itself') : r.selector, count: r.matches.length }) + (sample.length ? ' — ' + sample.join(' | ') : '');
+  // Messages from the picker in the frame (data only: a selector, counts, samples, a link to follow)
+  var WZ_PICK_ERRORS = { noRepeat: 'wz.noRepeat', pickParentFirst: 'wz.pickParentFirst', pickInside: 'wz.pickInside', pickNotFound: 'wz.pickNotFound', chooseField: 'wz.chooseField' };
+  window.addEventListener('message', function (e) {
+    var frame = $('#wz-frame');
+    if (!wz || !frame || e.source !== frame.contentWindow) return;
+    var m = e.data, pv = wz.pv;
+    if (!m || m.thoth !== 'picker') return;
+    if (m.type === 'waiting') { pv.ready = false; pv.waitLeft = Math.max(0, Math.min(60, Number(m.left) || 0)); return wzStatus(); }
+    if (m.type === 'ready') { pv.ready = true; pv.waitLeft = 0; wzStatus(); return wzSendConfig(); }
+    if (m.type === 'navigate') { var href = String(m.href || ''); if (/^https?:\/\//i.test(href) && pv.mode === 'navigate') wzLoadPreview(href); return; }
+    if (m.type === 'error' && WZ_PICK_ERRORS[m.code]) {
+      var rel = pv.target && WZ_SEL[pv.target] && WZ_SEL[pv.target].rel;
+      pv.info = t(WZ_PICK_ERRORS[m.code], { field: rel ? t('cat.sel.' + rel) : '' });
+      return wzStatus();
+    }
+    if (m.type === 'picked' && m.field === pv.target && WZ_SEL[m.field] && typeof m.selector === 'string' && m.selector.length <= 400) {
+      var field = m.field;
+      wz.draft.selectors[field] = m.selector;
+      if ((field === 'link' || field === 'item') && /^https?:\/\//i.test(String(m.workUrl || ''))) wz.sampleWork = String(m.workUrl);
+      var samples = (Array.isArray(m.samples) ? m.samples : []).slice(0, 3).map(function (x) { return String(x).slice(0, 80); });
+      pv.info = t('wz.picked', { field: t('cat.sel.' + field), selector: m.self ? t('wz.itself') : m.selector, count: Number(m.count) || 0 }) + (samples.length ? ' — ' + samples.join(' | ') : '') +
+        (wzInSource(field, m.selector) ? '' : ' ⚠ ' + t('wz.onlyWithScripts'));
       var input = $('#wz-sel-' + field);
-      if (input) input.value = r.selector;
+      if (input) input.value = m.selector;
       wzStatus();
+    }
+  });
+  /* -------- the picker, inside the frame --------
+   * Self-contained (it runs in the site's page): hover outline, click to pick or to follow a link, selectors the
+   * crawler understands (tag, #id, .class, descendants). It waits for the page to load (+ cfg.wait seconds). */
+  function wzPickerMain(cfg) {
+    var ready = false, last = null;
+    var post = function (m) { m.thoth = 'picker'; try { parent.postMessage(m, '*'); } catch (e) { /* the wizard closed */ } };
+    var BLOCK = /^(li|div|article|section|tr|td|dl|dd|figure|header|ul|ol|table|tbody|main|aside|nav)$/;
+    var goodClass = function (c) { return /^[a-zA-Z][\w-]{1,40}$/.test(c) && !/\d{4,}/.test(c) && !/^(active|current|selected|hover|focus|show|open|is-|has-|js-|thoth-)/.test(c); };
+    var stepOf = function (el) {
+      var tag = el.tagName.toLowerCase();
+      if (el.id && /^[a-zA-Z][\w-]*$/.test(el.id) && !/\d{3,}/.test(el.id)) return tag + '#' + el.id;
+      return tag + Array.prototype.filter.call(el.classList, goodClass).slice(0, 2).map(function (c) { return '.' + c; }).join('');
+    };
+    var pathSelector = function (el, stopAt, ok) {
+      var parts = [stepOf(el)], cur = el.parentElement;
+      for (var i = 0; i < 6; i++) {
+        var s = parts.join(' ');
+        if (ok(s)) return s;
+        if (!cur || cur === stopAt || cur.tagName === 'HTML') break;
+        parts.unshift(stepOf(cur)); cur = cur.parentElement;
+      }
+      return parts.join(' ');
+    };
+    var all = function (root, s) { try { return root.querySelectorAll(s); } catch (e) { return []; } };
+    var mark = function (list) {
+      Array.prototype.forEach.call(document.querySelectorAll('.thoth-match'), function (x) { x.classList.remove('thoth-match'); });
+      Array.prototype.forEach.call(list, function (x) { if (x && x.classList) x.classList.add('thoth-match'); });
+    };
+    var sampleOf = function (x, attr) {
+      if (attr === 'src') return x.getAttribute('data-src') || x.getAttribute('data-lazy-src') || x.getAttribute('src') || '';
+      if (attr === 'href') return x.getAttribute('href') || '';
+      return (x.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60);
+    };
+    function pick(el) {
+      var field = cfg.field, spec = cfg.spec, sel = cfg.selectors || {};
+      if (!field || !spec) return post({ type: 'error', code: 'chooseField' });
+      var attr = spec.attr ? '@' + spec.attr : '', r = null;
+      if (spec.kind === 'repeat') {
+        var cur = el;
+        while (cur && cur.parentElement && !BLOCK.test(cur.tagName.toLowerCase())) cur = cur.parentElement;
+        for (; cur && cur.tagName !== 'BODY'; cur = cur.parentElement) {
+          var s = pathSelector(cur, null, function (x) { var n = all(document, x).length; return n >= 2 && n <= 2000; });
+          if (all(document, s).length >= 2) { r = { selector: s, matches: all(document, s) }; break; }
+        }
+        if (!r) return post({ type: 'error', code: 'noRepeat' });
+      } else if (spec.kind === 'rel') {
+        var parentSel = String(sel[spec.rel] || '').split('@')[0];
+        if (!parentSel) return post({ type: 'error', code: 'pickParentFirst' });
+        var root = el.closest(parentSel);
+        if (!root) return post({ type: 'error', code: 'pickInside' });
+        var target = spec.attr === 'href' ? (el.closest('a[href]') || el.querySelector('a[href]')) : spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || (el.closest('a, div, figure') || el).querySelector('img')) : el;
+        if (!target || !root.contains(target)) return post({ type: 'error', code: 'pickNotFound' });
+        if (target === root) r = { selector: '', self: true, matches: [target] };
+        else {
+          var rs = pathSelector(target, root, function (x) { try { return root.querySelector(x) === target; } catch (e) { return false; } });
+          r = { selector: rs + attr, matches: Array.prototype.map.call(all(document, parentSel), function (x) { return x.querySelector(rs); }).filter(Boolean) };
+        }
+      } else if (spec.kind === 'multi') {
+        var box = el.parentElement;
+        while (box && box.parentElement && box.querySelectorAll(stepOf(el)).length < 2 && !BLOCK.test(box.tagName.toLowerCase())) box = box.parentElement;
+        var boxSel = pathSelector(box, null, function (x) { try { return document.querySelector(x) === box; } catch (e) { return false; } });
+        var ms = boxSel + ' ' + stepOf(el);
+        r = { selector: ms + attr, matches: all(document, ms) };
+      } else {
+        var tgt = spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || el) : el;
+        var unique = function (x) { try { return document.querySelector(x) === tgt && all(document, x).length === 1; } catch (e) { return false; } };
+        var ss = pathSelector(tgt, null, unique);
+        if (!unique(ss)) ss = pathSelector(tgt, null, function (x) { try { return document.querySelector(x) === tgt; } catch (e) { return false; } });
+        r = { selector: ss + attr, matches: [tgt] };
+      }
+      mark(r.matches);
+      var first = r.matches[0], a = first && (first.closest ? first.closest('a[href]') : null) || (first && first.querySelector ? first.querySelector('a[href]') : null);
+      post({ type: 'picked', field: field, selector: r.selector, self: Boolean(r.self), count: r.matches.length,
+        samples: Array.prototype.slice.call(r.matches, 0, 3).map(function (x) { return sampleOf(x, spec.attr); }).filter(Boolean), workUrl: a ? a.href : null });
+    }
+    var style = document.createElement('style');
+    style.textContent = '.thoth-hl{outline:2px solid #1a73e8!important;outline-offset:1px;background-color:rgba(26,115,232,.12)!important}.thoth-match{outline:2px dashed #188038!important;outline-offset:1px}';
+    (document.head || document.documentElement).appendChild(style);
+    var cursor = function () { document.documentElement.style.cursor = ready && cfg.mode === 'pick' ? 'crosshair' : ''; };
+    window.addEventListener('message', function (e) {
+      if (e.source !== parent || !e.data || e.data.thoth !== 'config') return;
+      cfg = e.data.cfg || cfg; cursor();
+      if (cfg.mode !== 'pick' && last) { last.classList.remove('thoth-hl'); last = null; }
+    });
+    document.addEventListener('mouseover', function (e) {
+      if (!ready || cfg.mode !== 'pick') return;
+      if (last) last.classList.remove('thoth-hl');
+      last = e.target; if (last.classList) last.classList.add('thoth-hl');
     }, true);
+    document.addEventListener('mouseout', function () { if (last) last.classList.remove('thoth-hl'); last = null; }, true);
+    document.addEventListener('submit', function (e) { e.preventDefault(); }, true);
+    document.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      if (!ready) return;
+      var el = e.target;
+      if (cfg.mode === 'navigate') { var a = el.closest && el.closest('a[href]'); if (a && /^https?:/i.test(a.href)) post({ type: 'navigate', href: a.href }); return; }
+      if (last) last.classList.remove('thoth-hl');
+      pick(el);
+    }, true);
+    // Ready once the page has loaded and the wait asked for has passed
+    var start = function () {
+      var left = Math.max(0, Math.min(60, Number(cfg.wait) || 0));
+      var tick = function () {
+        if (left <= 0) { ready = true; cursor(); post({ type: 'ready' }); return; }
+        post({ type: 'waiting', left: left }); left--; setTimeout(tick, 1000);
+      };
+      tick();
+    };
+    // (an image or script that never finishes loading doesn't hold the picker back for more than 20 s)
+    var started = false;
+    var go = function () { if (!started) { started = true; start(); } };
+    if (document.readyState === 'complete') go(); else { window.addEventListener('load', go); setTimeout(go, 20000); }
   }
-  function wzStatus() { var p = $('.wz-preview__status'); if (p) p.textContent = wz.pv.info || ''; }
   /* -------- the wizard's own events -------- */
   function wzInput(e) {
     var el = e.target, key = el.dataset && el.dataset.wz;
-    if (!key || !wz) return;
+    if (!wz) return;
+    var pv = wz.pv;
+    if (el.id === 'wz-pv-url') { pv.typed = el.value; return; }
+    if (e.type === 'change' && el.id === 'wz-pv-images') {
+      pv.images = el.checked; if (!pv.images) pv.scripts = false;
+      // (the copy that loads nothing from the site comes from the server)
+      if (!pv.images && pv.page && !pv.page.html) return wzLoadPreview(pv.url);
+      return wzRender();
+    }
+    if (e.type === 'change' && el.id === 'wz-pv-scripts') { pv.scripts = el.checked; return wzRender(); }
+    if (e.type === 'change' && el.id === 'wz-pv-wait') { pv.wait = Math.max(0, Math.min(60, Math.round(Number(el.value) || 0))); return wzRender(); }
+    if (!key) return;
     var v = el.type === 'checkbox' ? el.checked : el.value;
     if (key.indexOf('sel.') === 0) wz.draft.selectors[key.slice(4)] = v; else wz.draft[key] = v;
     // Settings that change which steps or fields apply: drawn again
@@ -2091,6 +2241,7 @@
       return wzRender();
     }
     if (act === 'load') { var u = $('#wz-pv-url').value.trim(); if (u) wzLoadPreview(u); return; }
+    if (act === 'reload') { wz.pv.reloads = (wz.pv.reloads || 0) + 1; wz.pv.info = null; return wzRender(); }
     if (act === 'detect') {
       var url = String(wz.draft.siteUrl || '').trim();
       if (!/^https?:\/\/\S+$/i.test(url)) { wz.error = { code: 'invalidUrl' }; return wzRender(); }

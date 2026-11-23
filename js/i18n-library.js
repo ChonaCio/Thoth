@@ -3831,4 +3831,64 @@
     "wz.pickNotFound": "Não há nada desse tipo ali: clique mais perto.",
     "wz.noPage": "Nenhuma página ainda: digite um endereço acima."
   });
+  add('en', {
+    "wz.fetching": "Fetching the page…",
+    "wz.pageLoading": "The page is loading (its images and styles)…",
+    "wz.waiting": "Waiting {s} s for the page to finish loading…",
+    "wz.reload": "Show the page again",
+    "wz.images": "Images and styles",
+    "wz.scripts": "Site scripts",
+    "wz.scriptsHelp": "Runs the site’s own scripts in the preview (pages that build their content with scripts). Crawls don’t run them: a pick that only exists with them is marked.",
+    "wz.wait": "Wait",
+    "wz.seconds": "s before picking",
+    "wz.onlyWithScripts": "not in the page as the site sends it (only after its scripts run): crawls won’t find it."
+  });
+  add('es', {
+    "wz.fetching": "Descargando la página…",
+    "wz.pageLoading": "La página se está cargando (imágenes y estilos)…",
+    "wz.waiting": "Esperando {s} s a que la página termine de cargar…",
+    "wz.reload": "Volver a mostrar la página",
+    "wz.images": "Imágenes y estilos",
+    "wz.scripts": "Scripts del sitio",
+    "wz.scriptsHelp": "Ejecuta los scripts del propio sitio en la vista previa (páginas que montan su contenido con scripts). Los rastreos no los ejecutan: lo elegido que solo existe con ellos se marca.",
+    "wz.wait": "Esperar",
+    "wz.seconds": "s antes de elegir",
+    "wz.onlyWithScripts": "no está en la página tal como la envía el sitio (solo tras ejecutar sus scripts): los rastreos no lo encontrarán."
+  });
+  add('fr', {
+    "wz.fetching": "Téléchargement de la page…",
+    "wz.pageLoading": "La page se charge (images et styles)…",
+    "wz.waiting": "Attente de {s} s pour la fin du chargement…",
+    "wz.reload": "Afficher à nouveau la page",
+    "wz.images": "Images et styles",
+    "wz.scripts": "Scripts du site",
+    "wz.scriptsHelp": "Exécute les scripts du site dans l’aperçu (pages qui construisent leur contenu par script). Les explorations ne les exécutent pas : un choix qui n’existe qu’avec eux est signalé.",
+    "wz.wait": "Attendre",
+    "wz.seconds": "s avant de choisir",
+    "wz.onlyWithScripts": "absent de la page telle que le site l’envoie (seulement après ses scripts) : les explorations ne le trouveront pas."
+  });
+  add('de', {
+    "wz.fetching": "Seite wird geladen…",
+    "wz.pageLoading": "Die Seite lädt (Bilder und Stile)…",
+    "wz.waiting": "Warte {s} s, bis die Seite fertig geladen ist…",
+    "wz.reload": "Seite neu anzeigen",
+    "wz.images": "Bilder und Stile",
+    "wz.scripts": "Skripte der Seite",
+    "wz.scriptsHelp": "Führt die eigenen Skripte der Seite in der Vorschau aus (Seiten, die ihren Inhalt per Skript aufbauen). Durchsuchungen führen sie nicht aus: eine Auswahl, die nur mit ihnen existiert, wird markiert.",
+    "wz.wait": "Warten",
+    "wz.seconds": "s vor dem Auswählen",
+    "wz.onlyWithScripts": "nicht in der Seite, wie sie gesendet wird (erst nach ihren Skripten): Durchsuchungen finden es nicht."
+  });
+  add('pt', {
+    "wz.fetching": "Baixando a página…",
+    "wz.pageLoading": "A página está carregando (imagens e estilos)…",
+    "wz.waiting": "Esperando {s} s para a página terminar de carregar…",
+    "wz.reload": "Mostrar a página de novo",
+    "wz.images": "Imagens e estilos",
+    "wz.scripts": "Scripts do site",
+    "wz.scriptsHelp": "Roda os scripts do próprio site na prévia (páginas que montam o conteúdo com scripts). Os rastreios não os rodam: uma escolha que só existe com eles é marcada.",
+    "wz.wait": "Esperar",
+    "wz.seconds": "s antes de escolher",
+    "wz.onlyWithScripts": "não está na página como o site a envia (só depois dos scripts): os rastreios não vão encontrar."
+  });
 })();
