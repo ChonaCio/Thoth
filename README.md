@@ -69,13 +69,11 @@ Sign in as an administrator → **Manage libraries** → **Add library**, give i
   Watchmen.cbz               ← one-shot (a book directly in the library folder)
 ```
 
-**One-shots.** Each library has a one-shots folder. Every book file directly in it becomes its own
-single-book series, named after the book (its `ComicInfo.xml` title, else the file name), shown as
-*One-shot* and opening straight to the book. By default this is **the library folder itself**, so loose
-files next to your series folders are one-shots. In the library's settings you can point it at a subfolder
-instead (e.g. `One-shots`, relative to the library folder) or turn it off, in which case loose files in the
-library folder are grouped into one series named after the library. Changing it rescans the library;
-reading progress is kept.
+**One-shots.** Every book file directly in the library folder is its own work, named after the book (its
+`ComicInfo.xml` title, else the file name). It's listed in the library like any other work (labeled
+*One-shot*) and opens a work page with its single book. Loose files are never grouped together. In the
+library's settings you can name one **extra one-shots folder** inside the library (e.g. `One-shots`) whose
+files are shown as individual works too. Changing it rescans the library; reading progress is kept.
 
 **Versions of a work.** When you keep several versions of the same work, name the folders with a suffix in
 parentheses or brackets: `One Piece`, `One Piece (Colored)`, `One Piece (Raw)`, `One Piece (Uncensored)`,
@@ -101,10 +99,19 @@ chapters/books, with its own progress and metadata.
 and removes books whose files are gone; it's what automatic scans do. *Full scan* reads every file again,
 which is slower but fixes anything that looks wrong. Both are on the **Manage libraries** page.
 
-**Scanning runs in its own process: the scan service.** Walking folders and opening archives happens in a
-long-running Node process with the lowest CPU priority, so browsing and reading stay fast during big scans.
-Libraries are scanned one at a time (others show *Waiting…*). If the process can't be started, scans run
-inside the server instead; set `THOTH_SCAN_IN_PROCESS=1` to force that.
+**Scanning runs in its own processes: the scan service.** Walking folders and opening archives happens in a
+pool of long-running Node processes with the lowest CPU priority, so browsing and reading stay fast during
+big scans. A scan lists the library's files in one process, then spreads the new/changed files over all of
+them in small batches, each process reading several files at once. Libraries are scanned one at a time
+(others show *Waiting…*). If the processes can't be started, scans run inside the server instead; set
+`THOTH_SCAN_IN_PROCESS=1` to force that.
+
+**Server settings page (administrators)** — settings for this server, saved in `data/config.json`:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each). Changing it restarts the scan service. |
+| Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
 
 **Processes page (administrators).** Shows the web server and the scan service: process ID, uptime,
 memory, CPU time, what's being scanned and what's waiting.

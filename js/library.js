@@ -82,9 +82,8 @@
     var badge = s.booksCount && s.booksRead === s.booksCount
       ? '<span class="cover__badge cover__badge--done">' + icon('check') + '</span>'
       : (unread > 0 && s.booksRead + s.booksInProgress > 0 ? '<span class="cover__badge">' + unread + '</span>' : '');
-    // A one-shot is a single book, so its card opens the book directly
-    // (unless it has other versions: then the work page with its version tabs)
-    var href = s.oneshot && s.coverBookId && !(s.editions && s.editions.length > 1) ? '#book/' + s.coverBookId : '#series/' + s.id;
+    // One-shots open their work page too, like any other work
+    var href = '#series/' + s.id;
     if (s.oneshot) badge = s.booksRead ? '<span class="cover__badge cover__badge--done">' + icon('check') + '</span>' : '';
     return '<div class="media-card">' +
       '<a class="media-card__link" href="' + href + '">' +
@@ -328,7 +327,7 @@
       ].filter(Boolean);
       var authors = b.authors.map(function (a) { return esc(a.name) + ' <span class="muted small">(' + esc(t('author.' + a.role)) + ')</span>'; });
       var seriesLabel = s ? s.title + (s.edition !== 'base' ? ' (' + editionLabel(s.edition) + ')' : '') : '';
-      var back = s ? (b.oneshot ? backLink('#library/' + s.libraryId, s.libraryName) : backLink('#series/' + s.id, seriesLabel)) : '';
+      var back = s ? backLink('#series/' + s.id, seriesLabel) : '';
       return back +
         (b.error ? '<div class="banner banner--error">' + esc(t('book.error', { error: b.error })) + '</div>' : '') +
         '<div class="detail">' +
@@ -544,9 +543,9 @@
               '<div class="lib-card__text"><h2 class="card__title"><a href="#library/' + l.id + '">' + esc(l.name) + '</a></h2>' +
               '<p class="muted small lib-card__path">' + icon('folder_open') + '<span>' + esc(l.root) + '</span></p></div></div>' +
             '<p class="small">' + esc(count(l.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + ' · ' + esc(count(l.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</p>' +
-            '<p class="muted small">' + esc(oneshotsOf(l).enabled
-              ? t('manage.oneshotsLine', { folder: oneshotsOf(l).folder || t('manage.oneshotsBase') })
-              : t('manage.oneshotsOff')) + '</p>' +
+            '<p class="muted small">' + esc(oneshotsOf(l).folder
+              ? t('manage.oneshotsLineExtra', { folder: oneshotsOf(l).folder })
+              : t('manage.oneshotsLineRoot')) + '</p>' +
             scanSummary(l) +
             '<div class="lib-card__actions">' +
               '<button class="btn btn--outline btn--pill" data-lib="scan-library" data-id="' + l.id + '"' + (l.scanning ? ' disabled' : '') + ' title="' + esc(t('manage.scanChangesHelp')) + '">' + icon('sync') + esc(t(l.scanning ? 'lib.scanning' : 'manage.scanChanges')) + '</button>' +
@@ -609,7 +608,7 @@
       var head = '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1><p class="page-lead">' + esc(t('proc.intro')) + '</p>';
       if (!p) return head + spinner;
       if (p.error) return head + errorBanner(p.error);
-      var srv = p.server, sc = p.scanService, st = sc.stats || {};
+      var srv = p.server, sc = p.scanService;
       var restarting = cache.serverRestarting;
 
       var serverCard =
@@ -639,17 +638,29 @@
           (sc.mode === 'inline' ? '<p class="notice">' + esc(t('proc.mode.inline')) + '</p>' : '') +
           (sc.lastError && sc.state !== 'running' ? '<p class="notice notice--error">' + esc(t('proc.lastError')) + ': ' + esc(sc.lastError) + '</p>' : '') +
           facts([
-            ['proc.pid', esc(sc.pid || '—')], ['proc.uptime', esc(sc.state === 'running' ? fmtDuration(sc.startedAt) : '—')],
-            sc.mode === 'process' ? ['proc.memory', esc(sc.state === 'running' ? fmtBytes(st.rss) : '—')] : null,
-            sc.mode === 'process' ? ['proc.cpu', esc(sc.state === 'running' ? fmtCpu(st.cpuMs) : '—')] : null,
+            ['proc.uptime', esc(sc.state === 'running' ? fmtDuration(sc.startedAt) : '—')],
+            sc.mode === 'process' ? ['proc.processes', esc(sc.processes)] : null,
+            ['proc.concurrency', esc(sc.concurrency)],
             sc.mode === 'process' ? ['proc.priority', esc(t('proc.priorityLow'))] : null,
             ['proc.restarts', esc(sc.restarts)],
             sc.lastError && sc.state === 'running' ? ['proc.lastError', esc(sc.lastError)] : null
           ]) +
+          '<p class="field__help"><a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>' +
+          // One row per worker process
+          (sc.workers.length
+            ? '<div class="table-wrap"><table class="table proc-workers"><thead><tr>' +
+                '<th>' + esc(t('proc.pid')) + '</th><th>' + esc(t('proc.memory')) + '</th><th>' + esc(t('proc.cpu')) + '</th><th>' + esc(t('proc.status')) + '</th>' +
+              '</tr></thead><tbody>' + sc.workers.map(function (w) {
+                var s2 = w.stats || {};
+                return '<tr><td>' + esc(w.pid) + '</td><td>' + esc(fmtBytes(s2.rss)) + '</td><td>' + esc(fmtCpu(s2.cpuMs)) + '</td>' +
+                  '<td><span class="badge' + (w.busy ? ' badge--primary' : '') + '">' + esc(t(w.busy ? 'proc.busy' : 'proc.idle')) + '</span></td></tr>';
+              }).join('') + '</tbody></table></div>'
+            : '') +
           '<h3 class="proc-sub">' + esc(t('proc.current')) + '</h3>' +
           (cur
             ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(cur.name) + '</strong> · ' +
-                esc(t(cur.full ? 'manage.modeFull' : 'manage.modeChanges')) + ' · ' + esc(t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
+                esc(t(cur.full ? 'manage.modeFull' : 'manage.modeChanges')) + ' · ' +
+                esc(cur.toAnalyze ? t('proc.progress', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0, total: cur.toAnalyze }) : t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
             : '<p class="muted small">' + esc(t('proc.idle')) + '</p>') +
           '<h3 class="proc-sub">' + esc(t('proc.queue')) + '</h3>' +
           (sc.queue.length
@@ -680,6 +691,66 @@
       }).then(function () {
         // Live view: refresh every 2 seconds while the page is open
         procTimer = setTimeout(function () { if (location.hash === route.hash) processes.enter(route); }, 2000);
+      });
+    }
+  };
+
+  /* ================= SERVER SETTINGS (admins) ================= */
+  var SETTINGS_FIELDS = [
+    { key: 'scanWorkers', label: 'cfg.scanWorkers', help: 'cfg.scanWorkersHelp' },
+    { key: 'scanConcurrency', label: 'cfg.scanConcurrency', help: 'cfg.scanConcurrencyHelp' }
+  ];
+  var serverSettings = {
+    title: function () { return t('nav.serverSettings'); },
+    render: function () {
+      var c = cache.config;
+      var head = '<h1 class="page-title">' + esc(t('nav.serverSettings')) + '</h1><p class="page-lead">' + esc(t('cfg.intro')) + '</p>';
+      if (!c) return head + spinner;
+      if (c.error) return head + errorBanner(c.error);
+      return head +
+        '<section class="card card--wide"><form class="form" id="config-form" novalidate>' +
+          '<h2 class="card__title">' + esc(t('cfg.scanning')) + '</h2>' +
+          '<p class="muted small">' + esc(t('cfg.cpus', { count: c.cpus })) + '</p>' +
+          SETTINGS_FIELDS.map(function (f) {
+            var s = c.schema[f.key];
+            return '<div class="field">' +
+              '<label for="cfg-' + f.key + '">' + esc(t(f.label)) + '</label>' +
+              '<input id="cfg-' + f.key + '" name="' + f.key + '" type="number" inputmode="numeric" min="' + s.min + '" max="' + s.max + '" step="1" value="' + esc(c.values[f.key]) + '" class="input--short" />' +
+              '<small class="field__help">' + esc(t(f.help)) + ' ' + esc(t('cfg.range', { min: s.min, max: s.max, def: s.default })) + '</small>' +
+            '</div>';
+          }).join('') +
+          '<p class="form__error" id="config-error" role="alert" hidden></p>' +
+          '<div class="form__actions">' +
+            '<button type="button" class="btn btn--text" data-lib="config-defaults">' + esc(t('cfg.defaults')) + '</button>' +
+            '<button type="submit" class="btn btn--primary">' + esc(t('common.save')) + '</button>' +
+          '</div>' +
+        '</form></section>';
+    },
+    mount: function (el) {
+      var form = $('#config-form', el);
+      if (!form) return;
+      form.addEventListener('submit', function (e) {
+        e.preventDefault();
+        var patch = {};
+        SETTINGS_FIELDS.forEach(function (f) { patch[f.key] = Number(form.elements[f.key].value); });
+        api('PATCH', '/api/config', patch).then(function (r) {
+          cache.config = r;
+          A().toast(t('cfg.saved'));
+          A().renderPage();
+        }, function (err) {
+          var box = $('#config-error');
+          box.textContent = err.code === 'invalid' && err.message ? err.message : A().errMsg(err);
+          box.hidden = false;
+        });
+      });
+    },
+    enter: function (route) {
+      load(route.hash, function () {
+        return api('GET', '/api/config').then(function (r) { cache.config = r; }, function (e) {
+          if (e && e.status === 404) e = { code: 'unknownEndpoint', status: 404 }; // older server
+          cache.config = { error: e };
+          throw e;
+        });
       });
     }
   };
@@ -854,7 +925,7 @@
   // One-shot settings of a library; a server that doesn't send them uses the default (on, library folder)
   function oneshotsOf(l) {
     var o = (l && l.oneshots) || {};
-    return { enabled: o.enabled !== false, folder: o.folder || '' };
+    return { folder: o.enabled === false ? '' : (o.folder || '') };
   }
 
   function libraryForm(lib) {
@@ -865,9 +936,9 @@
         { name: 'name', label: t('manage.name'), value: lib ? lib.name : '', placeholder: 'Comics' },
         { name: 'root', label: t('manage.folder'), type: 'folder', value: lib ? lib.root : '', placeholder: '/media/comics' },
         // One-shots: on by default, using the library folder itself
-        { name: 'oneshotsEnabled', type: 'checkbox', label: t('manage.oneshots'), value: lib ? oneshotsOf(lib).enabled : true },
-        { name: 'oneshotsFolder', label: t('manage.oneshotsFolder'), value: lib ? oneshotsOf(lib).folder : '',
-          placeholder: t('manage.oneshotsBase'), help: t('manage.oneshotsHelp'), showWhen: { field: 'oneshotsEnabled', value: true } }
+        // Files directly in the library folder are always individual works; optionally one more folder
+        { name: 'oneshotsFolder', label: t('manage.oneshotsFolderExtra'), value: lib ? oneshotsOf(lib).folder : '',
+          placeholder: t('manage.oneshotsNone'), help: t('manage.oneshotsHelpExtra') }
       ],
       onSubmit: function (v) {
         var req = lib ? api('PATCH', '/api/libraries/' + lib.id, v) : api('POST', '/api/libraries', v);
@@ -909,6 +980,12 @@
           A().toast(t({ start: 'proc.started', stop: 'proc.stopped', restart: 'proc.restarted' }[btn.dataset.op]));
           A().renderPage();
         }, function (e) { btn.disabled = false; fail(e); });
+      case 'config-defaults': {
+        var c = cache.config;
+        if (!c || !c.schema) return;
+        Object.keys(c.schema).forEach(function (k) { var input = document.getElementById('cfg-' + k); if (input) input.value = c.schema[k].default; });
+        return;
+      }
       case 'proc-server-restart':
         if (!confirm(t('proc.serverRestartConfirm'))) return;
         btn.disabled = true;
@@ -1024,6 +1101,7 @@
     collections: collections, collection: collection, readlists: readlists, readlist: readlist,
     'manage-libraries': manage,
     processes: processes,
+    'server-settings': serverSettings,
     read: { render: function () { return ''; }, title: function () { return t('reader.title'); } },
     reset: reset,
     invalidate: function () { invalidate(); cache.series = {}; cache.book = {}; }

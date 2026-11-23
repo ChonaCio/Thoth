@@ -46,13 +46,14 @@ function libraryView(lib, user) {
 }
 
 // { oneshotsEnabled, oneshotsFolder } from a request → { enabled, folder }, or undefined if not sent
+// { oneshotsFolder } → { folder } (an extra folder whose files are one-shots, besides the library folder).
+// The old { oneshotsEnabled: false } still means "no extra folder". undefined if not sent.
 function parseOneshots(body, current) {
   if (!('oneshotsEnabled' in body) && !('oneshotsFolder' in body)) return undefined;
-  const cur = current || { enabled: true, folder: '' };
-  const enabled = 'oneshotsEnabled' in body ? Boolean(body.oneshotsEnabled) : cur.enabled;
-  const folder = 'oneshotsFolder' in body ? scanner.normalizeOneshotFolder(body.oneshotsFolder) : cur.folder;
+  let folder = 'oneshotsFolder' in body ? scanner.normalizeOneshotFolder(body.oneshotsFolder) : (current || {}).folder || '';
   if (folder === null) throw httpError(400, 'oneshotsFolderInvalid');
-  return { enabled, folder };
+  if (body.oneshotsEnabled === false) folder = '';
+  return { folder };
 }
 async function validateRoot(root) {
   const abs = path.resolve(clean(root, 4096));
@@ -282,7 +283,7 @@ async function handle(ctx) {
     if (!name) throw httpError(400, 'nameRequired');
     const root = await validateRoot(body.root);
     if (Object.values(db.libraries).some(l => l.root === root)) throw httpError(409, 'folderInUse');
-    const lib = { id: store.newId(), name, root, created: new Date().toISOString(), oneshots: parseOneshots(body) || { enabled: true, folder: '' } };
+    const lib = { id: store.newId(), name, root, created: new Date().toISOString(), oneshots: parseOneshots(body) || { folder: '' } };
     db.libraries[lib.id] = lib;
     store.saveLibrary();
     scanner.scanLibrary(lib.id).catch(() => {});
@@ -314,7 +315,7 @@ async function handle(ctx) {
     const oneshots = parseOneshots(body, scanner.oneshotSettings(lib));
     if (oneshots) {
       const cur = scanner.oneshotSettings(lib);
-      if (oneshots.enabled !== cur.enabled || oneshots.folder !== cur.folder) rescan = true;
+      if (oneshots.folder !== cur.folder) rescan = true;
       lib.oneshots = oneshots;
     }
     store.saveLibrary();

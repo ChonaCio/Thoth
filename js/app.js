@@ -11,6 +11,7 @@
     settings: { key: 'nav.settings' },
     'manage-libraries': { adminOnly: true },
     processes: { adminOnly: true },
+    'server-settings': { adminOnly: true },
     users: { adminOnly: true, key: 'nav.users' },
     updates: { adminOnly: true, key: 'nav.updates' }
   };
@@ -270,6 +271,7 @@
     if (isAdmin()) {
       items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
       items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
+      items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });
       items.push({ href: '#updates', icon: 'update', key: 'nav.updates' });
     }

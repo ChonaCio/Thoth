@@ -1,8 +1,9 @@
-// Library scan service: a long-running, low-priority process started by scanner.js.
-// It does the slow file work (walking folders, opening archives, PDFs) one scan at a time, sends the
-// results back, and reports its memory/CPU every few seconds. It never reads or writes the database.
-// Started, stopped and restarted from the Processes page (or automatically after a crash).
-const { collect } = require('./scan-core');
+// Library scan worker: one of the long-running, low-priority processes of the scan service (scanner.js
+// starts as many as Server settings → "Scan processes" says). It does the slow file work on request and
+// reports its memory/CPU every few seconds. It never reads or writes the database.
+//   { type: 'list', reqId, root }                          → every book file with size and modified time
+//   { type: 'analyze', reqId, root, files, concurrency }   → page counts and ComicInfo.xml for those files
+const { listFiles, analyzeFiles } = require('./scan-core');
 
 // If the server goes away, stop too
 process.on('disconnect', () => process.exit(0));
@@ -15,15 +16,21 @@ function sendStats() {
 setInterval(sendStats, 2000).unref();
 
 process.on('message', async msg => {
-  if (!msg || msg.type !== 'scan') return;
-  const { jobId } = msg;
+  if (!msg || !msg.reqId) return;
+  const { reqId } = msg;
   try {
-    const result = await collect(msg.root, msg.known || {}, p => process.send({ type: 'progress', jobId, ...p }));
-    process.send({ type: 'result', jobId, result });
+    let result;
+    if (msg.type === 'list') {
+      result = await listFiles(msg.root, n => process.send({ type: 'progress', reqId, filesSeen: n }));
+    } else if (msg.type === 'analyze') {
+      result = await analyzeFiles(msg.root, msg.files || [], msg.concurrency || 1, n => process.send({ type: 'progress', reqId, analyzed: n }));
+    } else {
+      throw new Error(`Unknown request ${msg.type}`);
+    }
+    process.send({ type: 'result', reqId, result });
   } catch (e) {
-    process.send({ type: 'error', jobId, code: e.code || null, message: e.message });
+    process.send({ type: 'error', reqId, code: e.code || null, message: e.message });
   }
-  sendStats();
 });
 
 process.send({ type: 'ready' });

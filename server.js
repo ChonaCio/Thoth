@@ -5,6 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const auth = require('./auth');
+const config = require('./config');
 const updater = require('./updater');
 const library = require('./library/api');
 const libraryStore = require('./library/db');
@@ -123,6 +124,15 @@ async function handleApi(req, res, url) {
         },
         scanService: scanner.serviceInfo()
       });
+    }
+    // ---- server settings (administrators) ----
+    if (url.pathname === '/api/config' && (method === 'GET' || method === 'PATCH')) {
+      const { user } = auth.requireAdmin(req);
+      if (method === 'PATCH') {
+        const changed = config.update(body);
+        if (changed.length) console.log(`[config] ${changed.map(k => `${k}=${config.get()[k]}`).join(', ')} (by ${user.username})`);
+      }
+      return sendJson(res, 200, config.describe());
     }
     let pm;
     if ((pm = /^\/api\/processes\/scan-service\/(start|stop|restart)$/.exec(url.pathname)) && method === 'POST') {

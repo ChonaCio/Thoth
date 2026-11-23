@@ -642,6 +642,83 @@
   add('de', { 'edition.base': 'Standard', 'edit.editionHelp': 'Wird aus Ordnernamen wie „One Piece (Colored)" erkannt. Versionen desselben Werks werden als Tabs zusammen angezeigt, auch über Bibliotheken hinweg.' });
   add('pt', { 'edition.base': 'Normal', 'edit.editionHelp': 'Detectada em nomes de pasta como "One Piece (Colored)". Versões da mesma obra aparecem juntas em abas, mesmo entre bibliotecas.' });
 
+  // Server settings, scan pool, one-shots as individual works
+  add('en', {
+    'nav.serverSettings': 'Server settings',
+    'cfg.intro': 'Settings for this server, shared by everyone. Changes apply right away.',
+    'cfg.scanning': 'Library scanning', 'cfg.cpus': 'This server has {count} CPU cores.',
+    'cfg.scanWorkers': 'Scan processes',
+    'cfg.scanWorkersHelp': 'How many processes read library files at the same time. More is faster on servers with several CPU cores; each uses about 40 MB of memory. Changing it restarts the scan service (a scan in progress starts over).',
+    'cfg.scanConcurrency': 'Files at once per process',
+    'cfg.scanConcurrencyHelp': 'How many files each process reads at the same time. Higher helps on fast disks and network storage; lower is gentler on slow disks.',
+    'cfg.range': 'From {min} to {max} (default {def}).', 'cfg.defaults': 'Restore defaults', 'cfg.saved': 'Server settings saved',
+    'proc.processes': 'Processes', 'proc.concurrency': 'Files at once per process', 'proc.status': 'Status', 'proc.busy': 'Working',
+    'proc.changeInSettings': 'Change these in Server settings', 'proc.progress': '{analyzed} of {total} files read ({seen} in the library)',
+    'manage.oneshotsFolderExtra': 'Extra one-shots folder (optional)', 'manage.oneshotsNone': 'None',
+    'manage.oneshotsHelpExtra': 'Book files directly in the library folder are always shown as individual works. Name a folder inside the library (e.g. One-shots) to show its files as individual works too.',
+    'manage.oneshotsLineRoot': 'One-shots: files directly in the library folder', 'manage.oneshotsLineExtra': 'One-shots: files directly in the library folder and in {folder}'
+  });
+  add('es', {
+    'nav.serverSettings': 'Ajustes del servidor',
+    'cfg.intro': 'Ajustes de este servidor, compartidos por todos. Los cambios se aplican al momento.',
+    'cfg.scanning': 'Escaneo de bibliotecas', 'cfg.cpus': 'Este servidor tiene {count} núcleos de CPU.',
+    'cfg.scanWorkers': 'Procesos de escaneo',
+    'cfg.scanWorkersHelp': 'Cuántos procesos leen archivos a la vez. Más es más rápido en servidores con varios núcleos; cada uno usa unos 40 MB de memoria. Cambiarlo reinicia el servicio de escaneo (un escaneo en curso vuelve a empezar).',
+    'cfg.scanConcurrency': 'Archivos a la vez por proceso',
+    'cfg.scanConcurrencyHelp': 'Cuántos archivos lee cada proceso a la vez. Más ayuda con discos rápidos y almacenamiento en red; menos es más suave con discos lentos.',
+    'cfg.range': 'De {min} a {max} (por defecto {def}).', 'cfg.defaults': 'Restaurar valores por defecto', 'cfg.saved': 'Ajustes del servidor guardados',
+    'proc.processes': 'Procesos', 'proc.concurrency': 'Archivos a la vez por proceso', 'proc.status': 'Estado', 'proc.busy': 'Trabajando',
+    'proc.changeInSettings': 'Cámbialos en Ajustes del servidor', 'proc.progress': '{analyzed} de {total} archivos leídos ({seen} en la biblioteca)',
+    'manage.oneshotsFolderExtra': 'Carpeta extra de números únicos (opcional)', 'manage.oneshotsNone': 'Ninguna',
+    'manage.oneshotsHelpExtra': 'Los archivos directamente en la carpeta de la biblioteca siempre se muestran como obras individuales. Indica una carpeta dentro de la biblioteca (p. ej. Unicos) para mostrar también sus archivos como obras individuales.',
+    'manage.oneshotsLineRoot': 'Números únicos: archivos directamente en la carpeta de la biblioteca', 'manage.oneshotsLineExtra': 'Números únicos: archivos en la carpeta de la biblioteca y en {folder}'
+  });
+  add('fr', {
+    'nav.serverSettings': 'Réglages du serveur',
+    'cfg.intro': 'Réglages de ce serveur, communs à tous. Les modifications s’appliquent immédiatement.',
+    'cfg.scanning': 'Analyse des bibliothèques', 'cfg.cpus': 'Ce serveur a {count} cœurs de processeur.',
+    'cfg.scanWorkers': 'Processus d’analyse',
+    'cfg.scanWorkersHelp': 'Nombre de processus qui lisent les fichiers en même temps. Plus est plus rapide sur un serveur à plusieurs cœurs ; chacun utilise environ 40 Mo de mémoire. Modifier ce réglage redémarre le service d’analyse (une analyse en cours recommence).',
+    'cfg.scanConcurrency': 'Fichiers à la fois par processus',
+    'cfg.scanConcurrencyHelp': 'Nombre de fichiers lus en même temps par chaque processus. Plus aide sur les disques rapides et le stockage réseau ; moins ménage les disques lents.',
+    'cfg.range': 'De {min} à {max} (par défaut {def}).', 'cfg.defaults': 'Valeurs par défaut', 'cfg.saved': 'Réglages du serveur enregistrés',
+    'proc.processes': 'Processus', 'proc.concurrency': 'Fichiers à la fois par processus', 'proc.status': 'État', 'proc.busy': 'Au travail',
+    'proc.changeInSettings': 'À modifier dans Réglages du serveur', 'proc.progress': '{analyzed} fichiers lus sur {total} ({seen} dans la bibliothèque)',
+    'manage.oneshotsFolderExtra': 'Dossier de one-shots supplémentaire (facultatif)', 'manage.oneshotsNone': 'Aucun',
+    'manage.oneshotsHelpExtra': 'Les fichiers placés directement dans le dossier de la bibliothèque sont toujours affichés comme des œuvres individuelles. Indiquez un dossier de la bibliothèque (ex. One-shots) pour afficher aussi ses fichiers comme des œuvres individuelles.',
+    'manage.oneshotsLineRoot': 'One-shots : fichiers directement dans le dossier de la bibliothèque', 'manage.oneshotsLineExtra': 'One-shots : fichiers du dossier de la bibliothèque et de {folder}'
+  });
+  add('de', {
+    'nav.serverSettings': 'Servereinstellungen',
+    'cfg.intro': 'Einstellungen dieses Servers, für alle gültig. Änderungen gelten sofort.',
+    'cfg.scanning': 'Bibliotheken durchsuchen', 'cfg.cpus': 'Dieser Server hat {count} CPU-Kerne.',
+    'cfg.scanWorkers': 'Suchprozesse',
+    'cfg.scanWorkersHelp': 'Wie viele Prozesse gleichzeitig Dateien lesen. Mehr ist schneller auf Servern mit mehreren Kernen; jeder braucht etwa 40 MB Speicher. Eine Änderung startet den Suchdienst neu (eine laufende Suche beginnt von vorn).',
+    'cfg.scanConcurrency': 'Dateien gleichzeitig pro Prozess',
+    'cfg.scanConcurrencyHelp': 'Wie viele Dateien jeder Prozess gleichzeitig liest. Mehr hilft bei schnellen Datenträgern und Netzwerkspeicher; weniger schont langsame Festplatten.',
+    'cfg.range': 'Von {min} bis {max} (Standard {def}).', 'cfg.defaults': 'Standardwerte', 'cfg.saved': 'Servereinstellungen gespeichert',
+    'proc.processes': 'Prozesse', 'proc.concurrency': 'Dateien gleichzeitig pro Prozess', 'proc.status': 'Status', 'proc.busy': 'Arbeitet',
+    'proc.changeInSettings': 'In den Servereinstellungen ändern', 'proc.progress': '{analyzed} von {total} Dateien gelesen ({seen} in der Bibliothek)',
+    'manage.oneshotsFolderExtra': 'Zusätzlicher Ordner für Einzelbände (optional)', 'manage.oneshotsNone': 'Keiner',
+    'manage.oneshotsHelpExtra': 'Buchdateien direkt im Bibliotheksordner werden immer als einzelne Werke angezeigt. Gib einen Ordner in der Bibliothek an (z. B. Einzelbaende), um auch dessen Dateien als einzelne Werke anzuzeigen.',
+    'manage.oneshotsLineRoot': 'Einzelbände: Dateien direkt im Bibliotheksordner', 'manage.oneshotsLineExtra': 'Einzelbände: Dateien im Bibliotheksordner und in {folder}'
+  });
+  add('pt', {
+    'nav.serverSettings': 'Configurações do servidor',
+    'cfg.intro': 'Configurações deste servidor, compartilhadas por todos. As mudanças valem na hora.',
+    'cfg.scanning': 'Análise de bibliotecas', 'cfg.cpus': 'Este servidor tem {count} núcleos de CPU.',
+    'cfg.scanWorkers': 'Processos de análise',
+    'cfg.scanWorkersHelp': 'Quantos processos leem arquivos ao mesmo tempo. Mais é mais rápido em servidores com vários núcleos; cada um usa cerca de 40 MB de memória. Mudar reinicia o serviço de análise (uma análise em andamento recomeça).',
+    'cfg.scanConcurrency': 'Arquivos por vez em cada processo',
+    'cfg.scanConcurrencyHelp': 'Quantos arquivos cada processo lê ao mesmo tempo. Mais ajuda em discos rápidos e armazenamento em rede; menos é mais leve para discos lentos.',
+    'cfg.range': 'De {min} a {max} (padrão {def}).', 'cfg.defaults': 'Restaurar padrões', 'cfg.saved': 'Configurações do servidor salvas',
+    'proc.processes': 'Processos', 'proc.concurrency': 'Arquivos por vez em cada processo', 'proc.status': 'Status', 'proc.busy': 'Trabalhando',
+    'proc.changeInSettings': 'Altere em Configurações do servidor', 'proc.progress': '{analyzed} de {total} arquivos lidos ({seen} na biblioteca)',
+    'manage.oneshotsFolderExtra': 'Pasta extra de edições únicas (opcional)', 'manage.oneshotsNone': 'Nenhuma',
+    'manage.oneshotsHelpExtra': 'Arquivos diretamente na pasta da biblioteca sempre aparecem como obras individuais. Informe uma pasta dentro da biblioteca (ex.: Unicos) para mostrar também os arquivos dela como obras individuais.',
+    'manage.oneshotsLineRoot': 'Edições únicas: arquivos diretamente na pasta da biblioteca', 'manage.oneshotsLineExtra': 'Edições únicas: arquivos na pasta da biblioteca e em {folder}'
+  });
+
   // Singular forms
   add('en', { 'manage.unsupported1': "1 file skipped because its format isn't supported ({examples}).", 'manage.failed1': "1 book couldn't be opened. Its page shows an error." });
   add('es', { 'manage.unsupported1': '1 archivo omitido porque su formato no es compatible ({examples}).', 'manage.failed1': 'No se pudo abrir 1 libro. Su página muestra un error.' });

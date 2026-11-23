@@ -243,11 +243,9 @@
   function showEnd() {
     markEnd();
     var end = $('#reader-end');
-    var oneshot = st.book.oneshot && st.series;
-    var backHref = st.readlist ? '#readlist/' + st.readlist
-      : oneshot ? '#library/' + st.series.libraryId
-      : (st.series ? '#series/' + st.series.id : '#home');
-    var backKey = st.readlist ? 'reader.backToReadlist' : oneshot ? 'reader.backToLibrary' : 'reader.backToSeries';
+    // Back to the work (one-shots included: they have a work page like any other work)
+    var backHref = st.readlist ? '#readlist/' + st.readlist : (st.series ? '#series/' + st.series.id : '#home');
+    var backKey = st.readlist ? 'reader.backToReadlist' : 'reader.backToSeries';
     end.innerHTML =
       '<div class="reader__end-card">' +
         '<p class="reader__end-title">' + esc(t('reader.finished', { title: st.book.title })) + '</p>' +

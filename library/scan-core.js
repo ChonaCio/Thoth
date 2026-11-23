@@ -107,42 +107,51 @@ async function walk(root, rel, out) {
   }
 }
 
+// Run fn over items with at most `limit` running at the same time
+async function mapLimit(items, limit, fn) {
+  const out = new Array(items.length);
+  let next = 0;
+  const runner = async () => { while (next < items.length) { const i = next++; out[i] = await fn(items[i], i); } };
+  await Promise.all(Array.from({ length: Math.max(1, Math.min(limit, items.length)) }, runner));
+  return out;
+}
+
 /*
- * Scan a library folder.
- *   known: { [relPath]: [size, modifiedISO] } for books already in the database
- * Returns every book file found; only new or changed ones are analyzed (changed: true, pageCount, meta, error).
+ * Step 1 of a scan: every book file in the library with its size and modification time (cheap).
+ * onProgress(filesSeen)
  */
-async function collect(root, known, onProgress) {
+async function listFiles(root, onProgress) {
   const found = { books: [], unsupported: [], errors: [] };
   await walk(root, '', found);
-  let analyzed = 0;
-  const report = () => onProgress && onProgress({ filesSeen: found.books.length, analyzed });
-  report();
-  const files = [];
-  for (const rel of found.books) {
-    const abs = path.join(root, rel);
+  let seen = 0;
+  const files = (await mapLimit(found.books, 16, async rel => {
     let st;
-    try { st = await fs.promises.stat(abs); } catch { continue; }
-    const entry = { rel, size: st.size, fileModified: st.mtime.toISOString() };
-    const k = known[rel];
-    if (!k || k[0] !== entry.size || k[1] !== entry.fileModified) {
-      entry.changed = true;
-      try {
-        const r = await analyze(abs, BOOK_EXT[path.extname(rel).toLowerCase()]);
-        entry.pageCount = r.pageCount;
-        entry.meta = r.meta;
-      } catch (e) {
-        entry.pageCount = 0;
-        entry.meta = {};
-        entry.error = e.message;
-      }
-      analyzed++;
-      if (analyzed % 10 === 0) report();
-    }
-    files.push(entry);
-  }
-  report();
+    try { st = await fs.promises.stat(path.join(root, rel)); } catch { return null; }
+    if (++seen % 200 === 0 && onProgress) onProgress(seen);
+    return { rel, size: st.size, fileModified: st.mtime.toISOString() };
+  })).filter(Boolean);
+  if (onProgress) onProgress(files.length);
   return { files, unsupported: found.unsupported, errors: found.errors };
 }
 
-module.exports = { collect, listImages, parseComicInfo, BOOK_EXT, IMAGE_TYPES };
+/*
+ * Step 2: open new/changed files (page count, ComicInfo.xml), `concurrency` at a time.
+ * Returns [{ rel, pageCount, meta, error? }] in the same order. onProgress(analyzedSoFar)
+ */
+async function analyzeFiles(root, rels, concurrency, onProgress) {
+  let done = 0;
+  return mapLimit(rels, concurrency || 1, async rel => {
+    let r;
+    try {
+      const a = await analyze(path.join(root, rel), BOOK_EXT[path.extname(rel).toLowerCase()]);
+      r = { rel, pageCount: a.pageCount, meta: a.meta };
+    } catch (e) {
+      r = { rel, pageCount: 0, meta: {}, error: e.message };
+    }
+    done++;
+    if (onProgress && (done % 5 === 0 || done === rels.length)) onProgress(done);
+    return r;
+  });
+}
+
+module.exports = { listFiles, analyzeFiles, mapLimit, listImages, parseComicInfo, BOOK_EXT, IMAGE_TYPES };
