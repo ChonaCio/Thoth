@@ -64,10 +64,22 @@ const scanned = async id => until(async () => { const l = (await call('GET', '/a
   const rb = await call('GET', '/api/series?limit=50', null, bob);
   ok(rb.data.items.every(s => s.libraryId === LB), 'cached answers are per user (another user sees only their libraries)');
   // Covers of every work are read ahead into the cover cache after the scans
-  const procs = await until(async () => { const p = (await call('GET', '/api/processes')).data; return p.media.warm.finishedAt && !p.media.warm.running && p; }, 30000);
+  const coversOf = p => (p.caches.find(c => c.kind === 'covers') || {}).stats || {};
+  const procs = await until(async () => { const p = (await call('GET', '/api/processes')).data; const w = coversOf(p).warm; return w && w.finishedAt && !w.running && p; }, 30000);
   const thumbs = fs.readdirSync(path.join(DATA, 'cache', 'thumbs'));
-  ok(procs.media.warm.total === 6 && thumbs.length >= 6, `covers of every work cached ahead (${thumbs.length} on disk, ${procs.media.warm.total} works)`);
-  ok(procs.media.responses.hits >= 1, 'the Processes page reports the works cache');
+  ok(coversOf(procs).warm.total === 6 && thumbs.length >= 6, `covers of every work read ahead by the Covers cache (${thumbs.length} on disk, ${coversOf(procs).warm.total} works)`);
+  const works = await until(async () => { const c = (await call('GET', '/api/processes')).data.caches.find(x => x.kind === 'works'); return c && c.stats && c.stats.hits >= 1 && c; }, 10000);
+  ok(works.pid && works.pid !== procs.server.pid && works.pid !== (procs.caches.find(c => c.kind === 'covers') || {}).pid, `the Works cache is its own process (pid ${works.pid}, ${works.stats.hits} answered)`);
+
+  // ---- Search cache: titles, and genres/tags/people looked up (its own process) ----
+  const found = (await call('GET', '/api/search?q=saga')).data.series;
+  ok(found.length >= 2 && found.every(s => /saga/i.test(s.title)), `search finds works by title (${found.map(s => s.title).join(', ')})`);
+  const tagTerms = (await call('GET', '/api/search/terms?field=genre&q=')).data.terms;
+  ok(Array.isArray(tagTerms), 'genres/categories can be looked up');
+  const bobFound = (await call('GET', '/api/search?q=saga', null, bob)).data.series;
+  ok(bobFound.every(s => s.libraryId === LB), 'search answers only show what that user may see');
+  const search = await until(async () => { const c = (await call('GET', '/api/processes')).data.caches.find(x => x.kind === 'search'); return c && c.pid && c.stats && c.stats.docs && c; }, 10000);
+  ok(search.pid !== works.pid && search.stats.docs === 5, `the Search cache is its own process (pid ${search.pid}, ${search.stats.docs} works indexed: the Colored folder is a version of Saga)`);
 
   // ---- deleting files whose new name is taken ----
   let pv = (await call('GET', `/api/rename/preview?library=${LA}`)).data;

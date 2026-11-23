@@ -30,6 +30,12 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   and people chips on a work page open the library filtered by them. Works can also be sorted by **score**
   (best first, works without one last). Click a work's cover to see it full size. Global search covers series, books, authors,
   genres, tags, collections and read lists.
+- **Four caches, each its own process** (started when needed, closed after a long idle time, shown on the
+  Processes page): **Pages** (chapter pages, the next ones read ahead), **Covers** (in memory and on disk, read ahead
+  after scans), **Works** and **Search**. If a cache process can't start, that cache runs inside the server.
+- **Search cache:** an index of every work's titles, genres (categories), tags and people answers the search box
+  and the *Search & filters* panel's find boxes (any genre, tag or person, not only those listed), counting only
+  works in the libraries the user may see; recent answers are kept.
 - **Works are cached too**: work lists, filters, work pages and Home are answered from a key-value cache of
   ready answers (per user, `THOTH_RESPONSE_CACHE_MB`, default 32) until something changes (any edit, scan or
   metadata update, or that user's reading progress). After every scan the **covers of every work are read
@@ -464,11 +470,13 @@ sites added as **sources**, with its metadata and chapter list.
 - **Merge tab (administrators):** the same work found on several sites (or twice on one) can become one catalog
   entry: the main one's title, cover and summary, every site's chapters. Suggestions come from the same MangaDex
   entry or the same title/alternative title; *Not the same* hides one; a merged entry can be separated again.
-- **Adding a source: Detect.** Give the site's address and Thoth works out the settings: it reads the site's
-  **robots.txt** (its rules and the sitemaps it names; else `/sitemap.xml` and the usual WordPress ones), reads the
+- **Adding a source: a name and the site's address, nothing else.** Thoth works out the rest, when the source is
+  added and again at **every crawl** (so new sitemaps and changed addresses are picked up): it reads the site's
+  **robots.txt** (its rules and the sitemaps it names) and looks for **every sitemap** at the usual places too
+  (`/sitemap.xml`, `/sitemap_index.xml`, `/wp-sitemap.xml`…), reads the
   **sitemaps** (indexes followed, `.xml.gz` too) to learn the address pattern of work pages and chapter pages,
-  reads the home page (name, icon, the Madara or MangaReader theme if it runs one) and one work page. The form then
-  opens filled in, with what was found; everything can be changed. Sources set up this way list their works from
+  reads the home page (icon, the Madara or MangaReader theme if it runs one) and one work page. The source's card
+  says what was found. *Edit* → turning off *Detect the settings automatically* shows every setting to set by hand. Sources set up this way list their works from
   the **sitemaps**: a few requests instead of every list page, and updates only read works whose sitemap date
   changed. Sites without a known theme use the generic reader (title, cover and summary from the page's standard
   tags; chapters = links whose address matches the chapter pattern).

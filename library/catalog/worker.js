@@ -18,7 +18,29 @@ const FIELDS = ['title', 'altTitles', 'cover', 'summary', 'authors', 'genres', '
 const filled = v => v != null && v !== '' && !(Array.isArray(v) && !v.length) && v !== 'unknown';
 const errText = e => (e && e.code ? `${e.code}: ` : '') + (e && e.message || String(e));
 
+// The settings Detect finds are what a crawl uses for sources set up automatically (only a name and an
+// address): found again at the start of every crawl (new sitemaps, changed addresses), and left in
+// detected.json for the server to keep in the source's settings
+const AUTO_FIELDS = ['type', 'baseUrl', 'listing', 'sitemaps', 'workPattern', 'chapterPattern', 'listPath', 'iconUrl', 'languages'];
+async function redetect(msg) {
+  const src = msg.source;
+  if (src.autoDetect !== true) return src; // (sources set up before automatic detection keep their settings)
+  try {
+    const d = await require('./detect').detect({ url: src.siteUrl || src.baseUrl, allowLocal: msg.allowLocal });
+    const found = { at: new Date().toISOString(), notes: d.notes, found: Object.assign({}, d.found, { patterns: undefined }), blocked: d.blocked, error: d.error || null, settings: d.settings || null };
+    try { require('fs').writeFileSync(require('path').join(msg.dir, 'detected.json'), JSON.stringify(found)); } catch { /* best effort */ }
+    if (!d.settings) return src;
+    const next = Object.assign({}, src);
+    for (const k of AUTO_FIELDS) if (d.settings[k] != null && d.settings[k] !== '' && !(k === 'languages' && src.languages)) next[k] = d.settings[k];
+    return next;
+  } catch (e) {
+    if (e.code === 'blocked') throw e;
+    return src; // the settings it has
+  }
+}
+
 async function crawl(msg, send) {
+  msg = Object.assign({}, msg, { source: await redetect(msg) });
   const { source: src, dir, mode } = msg;
   const adapter = ADAPTERS[src.type];
   if (!adapter) throw new Error(`Unknown source type ${src.type}`);

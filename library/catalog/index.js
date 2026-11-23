@@ -56,6 +56,8 @@ function parseSource(body, current) {
     for (const k of keys) if (b.selectors[k] != null && String(b.selectors[k]).trim()) s.selectors[k] = String(b.selectors[k]).trim().slice(0, 400);
   }
   if ('enabled' in b) s.enabled = b.enabled !== false;
+  if ('autoDetect' in b) s.autoDetect = b.autoDetect !== false;
+  if ('siteUrl' in b) { const u = String(b.siteUrl || '').trim().replace(/\/+$/, ''); if (u && !publicUrl(u, ALLOW_LOCAL)) throw err(400, 'invalidUrl'); if (u) s.siteUrl = u; }
   // Found by "Detect" (or set by hand): list the works from the sitemaps, by the address pattern of work pages
   if ('listing' in b) s.listing = b.listing === 'sitemap' ? 'sitemap' : 'pages';
   if ('sitemaps' in b) s.sitemaps = (Array.isArray(b.sitemaps) ? b.sitemaps : String(b.sitemaps || '').split(/\s+/)).map(x => String(x).trim()).filter(u => publicUrl(u, ALLOW_LOCAL)).slice(0, 20);
@@ -69,6 +71,7 @@ function listSources() {
   return Object.values(db.catalogSources).sort((a, b) => String(a.created).localeCompare(String(b.created))).map(sourceView);
 }
 function sourceView(s) {
+  if (!liveCrawl(s.id)) adoptDetected(s.id); // (a finished crawl's detection, kept)
   const st = cstore.readState(sourceDir(s.id));
   const job = sourceJob(s.id);
   return Object.assign({}, s, {
@@ -77,8 +80,26 @@ function sourceView(s) {
     interrupted: Boolean(st.running && !job), job, label: ADAPTERS[s.type].label, icon: Boolean(s.iconUrl)
   });
 }
-function createSource(body) {
-  const s = parseSource(body);
+// A new source needs only a name and its address: the rest is detected now (robots.txt, every sitemap, the
+// address patterns, the theme, the icon) and again at every crawl (autoDetect). Settings given in full (type
+// included) are kept as given.
+async function createSource(body) {
+  body = body || {};
+  let s;
+  if (!body.type) {
+    const url = String(body.baseUrl || body.url || '').trim();
+    if (!publicUrl(url, ALLOW_LOCAL)) throw err(400, 'invalidUrl');
+    let d = null;
+    try { d = await detectSource(url); } catch (e) { d = { error: e.message, notes: ['failed'] }; }
+    const found = (d && d.settings) || {};
+    s = parseSource(Object.assign({ type: 'custom', includeChapters: true }, found, { name: String(body.name || '').trim() || found.name || new URL(url).hostname, baseUrl: found.baseUrl || url }));
+    s.siteUrl = url;
+    s.autoDetect = true;
+    s.detected = d ? { at: new Date().toISOString(), notes: d.notes || [], blocked: Boolean(d.blocked), error: d.error || null, found: d.found ? Object.assign({}, d.found, { patterns: undefined }) : null } : null;
+  } else {
+    s = parseSource(body);
+    s.autoDetect = false;
+  }
   s.id = 'src-' + crypto.randomBytes(5).toString('hex');
   s.created = new Date().toISOString();
   s.enabled = true;
@@ -184,12 +205,24 @@ function pumpCrawls() {
       const first = recent.size === 0 && !pumpTimer; // (at startup, old results aren't news)
       recent.set(id, p);
       catalogVersion++;
+      adoptDetected(id);
       if (!first) console.log(`[catalog] crawl of "${db.catalogSources[id].name}" ${p.status}${p.error ? `: ${p.error}` : ''}`);
     }
   }
   clearTimeout(pumpTimer);
   pumpTimer = setTimeout(pumpCrawls, queue.length || running ? 2000 : 30000);
   pumpTimer.unref();
+}
+// What a crawl's detection found, kept in the source's settings (automatic sources only)
+function adoptDetected(id) {
+  const s = db.catalogSources[id];
+  if (!s || s.autoDetect !== true) return;
+  let d;
+  try { d = JSON.parse(fs.readFileSync(path.join(sourceDir(id), 'detected.json'), 'utf8')); } catch { return; }
+  if (s.detected && s.detected.at === d.at) return;
+  s.detected = { at: d.at, notes: d.notes || [], blocked: Boolean(d.blocked), error: d.error || null, found: d.found || null };
+  if (d.settings) for (const k of ['type', 'baseUrl', 'listing', 'sitemaps', 'workPattern', 'chapterPattern', 'listPath', 'iconUrl']) if (d.settings[k] != null && d.settings[k] !== '') s[k] = d.settings[k];
+  store.saveLibrary();
 }
 function stopCrawl(sourceId) {
   const i = queue.findIndex(j => j.sourceId === sourceId);

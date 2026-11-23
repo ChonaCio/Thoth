@@ -20,8 +20,11 @@ let extraChapter = false;
 const madaraWorks = {
   'blue-moon': { title: 'Blue Moon', alt: 'Luna Azul, 青い月', genres: ['Fantasy', 'Sci Fi'], chapters: [1, 2, 3, 4], ajax: false },
   'red-sun': { title: 'Red Sun', alt: '', genres: ['Action'], chapters: [1, 2], ajax: true },
-  'green-field': { title: 'Green Field', alt: '', genres: ['Drama'], chapters: [1], ajax: false }
+  'green-field': { title: 'Green Field', alt: '', genres: ['Drama'], chapters: [1], ajax: false },
+  'yellow-star': { title: 'Yellow Star', alt: '', genres: ['Comedy'], chapters: [1, 2], ajax: false, extra: true } // only in /wp-sitemap.xml, once extraSitemap is on
 };
+let extraSitemap = false;
+const listed = () => Object.keys(madaraWorks).filter(s => !madaraWorks[s].extra);
 const madaraItem = slug => `<div class="page-item-detail"><div class="item-thumb"><a href="${SITE}/madara/manga/${slug}/"><img data-src="${SITE}/img/${slug}.png" src="x.gif"></a></div><div class="post-title"><h3><a href="${SITE}/madara/manga/${slug}/">${madaraWorks[slug].title}</a></h3></div></div>`;
 function madaraWork(slug) {
   const w = madaraWorks[slug];
@@ -43,12 +46,14 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/robots.txt') return send(200, `User-agent: *\nDisallow: /custom/private/\nSitemap: ${SITE}/sitemap_index.xml\n`, 'text/plain');
   // Sitemaps: an index → the works sitemap (works and their chapters), and one that lists tags (skipped)
   if (u.pathname === '/sitemap_index.xml') return send(200, `<?xml version="1.0"?><sitemapindex><sitemap><loc>${SITE}/manga-sitemap.xml</loc></sitemap><sitemap><loc>${SITE}/tag-sitemap.xml</loc></sitemap></sitemapindex>`, 'application/xml');
-  if (u.pathname === '/manga-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${Object.keys(madaraWorks).map(s => `<url><loc>${SITE}/madara/manga/${s}/</loc><lastmod>2025-01-0${s.length % 9 + 1}</lastmod></url>` + madaraWorks[s].chapters.map(n => `<url><loc>${SITE}/madara/manga/${s}/chapter-${n}/</loc></url>`).join('')).join('')}</urlset>`, 'application/xml');
+  if (u.pathname === '/manga-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${listed().map(s => `<url><loc>${SITE}/madara/manga/${s}/</loc><lastmod>2025-01-0${s.length % 9 + 1}</lastmod></url>` + madaraWorks[s].chapters.map(n => `<url><loc>${SITE}/madara/manga/${s}/chapter-${n}/</loc></url>`).join('')).join('')}</urlset>`, 'application/xml');
+  // A sitemap robots.txt doesn't name (found by looking in the usual places)
+  if (u.pathname === '/wp-sitemap.xml' && extraSitemap) return send(200, `<?xml version="1.0"?><urlset><url><loc>${SITE}/madara/manga/yellow-star/</loc></url></urlset>`, 'application/xml');
   if (u.pathname === '/tag-sitemap.xml') return send(200, `<urlset><url><loc>${SITE}/tag/action/</loc></url></urlset>`, 'application/xml');
   if (u.pathname === '/') return send(200, `<html><head><title>Fake Scans - Read manga</title><meta property="og:site_name" content="Fake Scans"><link rel="icon" href="/favicon.png"></head><body class="wp-manga-template">${madaraItem('blue-moon')}</body></html>`);
   if (u.pathname === '/favicon.png') return send(200, png(16, 16, [10, 200, 10], 4), 'image/png');
   // A slow copy of the list (the crawl lasts long enough to restart the server meanwhile); its works are the Madara ones
-  if (u.pathname.startsWith('/slow/')) { setTimeout(() => send(200, u.pathname === '/slow/manga/' ? `<div>${Object.keys(madaraWorks).map(madaraItem).join('')}</div>` : '<div></div>'), 400); return; }
+  if (u.pathname.startsWith('/slow/')) { setTimeout(() => send(200, u.pathname === '/slow/manga/' ? `<div>${listed().map(madaraItem).join('')}</div>` : '<div></div>'), 400); return; }
   if (u.pathname.startsWith('/img/')) return send(200, png(20, 30, [200, 20, 20], 3), 'image/png');
   // Madara: two list pages, then the last page repeats (as such sites do)
   if (u.pathname === '/madara/manga/' && u.searchParams.get('m_orderby')) return send(200, `<div class="c-page">${madaraItem('blue-moon')}${madaraItem('red-sun')}</div>`);
@@ -162,6 +167,19 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const icon = await fetch(`${BASE}/api/catalog/sources/${viaSitemap.id}/icon`, { headers: { Cookie: cookie } });
   ok(icon.status === 200 && icon.headers.get('content-type') === 'image/png', 'the source’s icon is the site’s own (served through the server)');
   await call('DELETE', `/api/catalog/sources/${viaSitemap.id}`);
+
+  // ---- a source from just its name and address: everything detected, again at every crawl ----
+  const autoSrc = (await call('POST', '/api/catalog/sources', { name: 'Just a name', baseUrl: SITE + '/' })).data.source;
+  ok(autoSrc.autoDetect === true && autoSrc.type === 'madara' && autoSrc.listing === 'sitemap' && autoSrc.workPattern === '/madara/*/*/' && autoSrc.sitemaps.includes(SITE + '/sitemap_index.xml') && autoSrc.detected && autoSrc.detected.found.sitemaps.length >= 1,
+    `only a name and an address: the rest detected (${autoSrc.type}, ${autoSrc.sitemaps.length} sitemap(s), works at ${autoSrc.workPattern})`);
+  extraSitemap = true; // the site adds a sitemap robots.txt doesn't name
+  await call('POST', `/api/catalog/sources/${autoSrc.id}/crawl`, { mode: 'full' });
+  const autoDone = await crawled(autoSrc.id);
+  const autoNow = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === autoSrc.id);
+  ok(autoDone.works === 4 && autoNow.sitemaps.includes(SITE + '/wp-sitemap.xml'), `the crawl looked for every sitemap again: the new one was found and read (${autoDone.works} works; sitemaps: ${autoNow.sitemaps.map(s => s.replace(SITE, '')).join(', ')})`);
+  ok((await call('PATCH', `/api/catalog/sources/${autoSrc.id}`, { autoDetect: false })).data.source.autoDetect === false, 'automatic settings can be turned off (then set by hand)');
+  extraSitemap = false;
+  await call('DELETE', `/api/catalog/sources/${autoSrc.id}`);
 
   // ---- a crawl keeps going while the server restarts ----
   const slow = (await call('POST', '/api/catalog/sources', { name: 'Slow', type: 'madara', baseUrl: SITE + '/slow', listing: 'pages', gapMs: 600 })).data.source;

@@ -154,7 +154,7 @@ async function handleApi(req, res, url) {
         metadata: metadata.info(),
         rename: rename.info(),
         catalog: require('./library/catalog').info(),
-        media: Object.assign(media.info(), { responses: library.cacheInfo() })
+        caches: require('./library/cache/client').allInfo() // Pages, Covers, Works, Search: a process each
       });
     }
     // ---- server settings (administrators) ----

@@ -35,14 +35,18 @@ async function detect(msg) {
     const robots = await fetcher.robotsFile(origin);
     const rules = parseRobots(robots || '');
     out.found.robots = robots == null ? 'none' : 'found';
-    let roots = sitemapsIn(robots || '');
-    if (!roots.length) {
-      for (const p of ['/sitemap.xml', '/sitemap_index.xml', '/wp-sitemap.xml', '/sitemap-index.xml']) {
-        try { const x = await sm.readSitemap(get, origin + p); if (x.sitemaps.length || x.urls.length) { roots = [origin + p]; break; } } catch (e) { if (e.code === 'blocked') throw e; }
-      }
-      if (roots.length) notes.push('sitemapGuessed');
+    // Every sitemap: the ones robots.txt names, and the usual places (WordPress, Yoast, Rank Math, generic)
+    // that answer with a sitemap and aren't already among them
+    const fromRobots = sitemapsIn(robots || '');
+    const roots = fromRobots.slice();
+    for (const p of ['/sitemap.xml', '/sitemap_index.xml', '/wp-sitemap.xml', '/sitemap-index.xml', '/sitemap1.xml', '/manga-sitemap.xml', '/sitemaps.xml']) {
+      const u = origin + p;
+      if (roots.includes(u)) continue;
+      try { const x = await sm.readSitemap(get, u); if (x.sitemaps.length || x.urls.length) roots.push(u); } catch (e) { if (e.code === 'blocked') throw e; }
     }
+    if (roots.length > fromRobots.length) notes.push('sitemapGuessed');
     out.found.sitemaps = roots;
+    out.found.sitemapsFromRobots = fromRobots.length;
     // 2. The home page: the site's name, its icon, its theme
     let home = null;
     try { home = await get(origin + '/'); } catch (e) { if (e.code === 'blocked') throw e; notes.push('noHome'); }
@@ -56,7 +60,7 @@ async function detect(msg) {
     const urls = [], hints = new Map();
     let files = 0;
     if (roots.length) {
-      for await (const { file, urls: list } of sm.walk(get, roots, { maxFiles: 12 })) {
+      for await (const { file, urls: list } of sm.walk(get, roots, { maxFiles: 30 })) {
         files++;
         for (const u of list.slice(0, 3000)) { urls.push(u.loc); hints.set(u.loc, file); }
         if (urls.length > 20000) break;

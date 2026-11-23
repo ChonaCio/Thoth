@@ -9,6 +9,7 @@ const metadata = require('./metadata');
 const rename = require('./rename');
 const terms = require('./metadata/terms');
 const media = require('./media');
+const { cacheService } = require('./cache/client');
 const catalog = require('./catalog');
 
 const { db } = store;
@@ -477,30 +478,43 @@ async function sendFile(req, res, book, download) {
 
 /* ---------------- router ---------------- */
 // ctx: { method, pathname, query, body, req, res, user, send(status, body) } → true when handled
-/* ---------------- works responses: key-value cache ----------------
- * Work lists, filters, work pages and home are answered from memory when nothing changed since they were
- * built: the key is the user (and what they may see) + the request; an entry is valid while the data
- * generation (any save/reindex) and the reading-progress version are the same. LRU by bytes. */
+/* ---------------- works responses: the Works cache process ----------------
+ * Work lists, filters, work pages and Home are answered from the Works cache (cache/works.js, a process of its
+ * own) when nothing changed since they were built: the key is the user (and what they may see) + the request;
+ * an answer counts only for the data version it was built for (the data generation — any save/reindex — and
+ * the reading-progress version). If that process can't answer, the request is simply built here. */
 const RESPONSE_ROUTES = /^\/api\/(series|series\/facets|series\/[\w-]+|home)$/;
-const RESPONSE_MAX_BYTES = Math.max(4, Number(process.env.THOTH_RESPONSE_CACHE_MB) || 32) * 1024 * 1024;
-const responses = new Map();
-let responseBytes = 0;
-const responseStats = { hits: 0, misses: 0 };
+const worksCache = cacheService('works', { label: 'Works', idleMs: 30 * 60 * 1000 });
 function responseVersion() { return store.generation() + ':' + store.progressVersion(); }
 function responseKey(user, p, q) {
   const sorted = [...q.entries()].sort((a, b) => (a[0] + '=' + a[1]).localeCompare(b[0] + '=' + b[1]));
   return [user.username.toLowerCase(), user.role, Array.isArray(user.libraries) ? user.libraries.join(',') : '*', p, new URLSearchParams(sorted).toString()].join('\0');
 }
-function responsePut(key, body) {
-  const old = responses.get(key);
-  if (old) { responseBytes -= old.body.length; responses.delete(key); }
-  if (body.length > RESPONSE_MAX_BYTES / 8) return;
-  responses.set(key, { ver: responseVersion(), body });
-  responseBytes += body.length;
-  while (responseBytes > RESPONSE_MAX_BYTES && responses.size) { const [k, o] = responses.entries().next().value; responses.delete(k); responseBytes -= o.body.length; }
+function cacheInfo() { const i = worksCache.info(); return Object.assign({ pid: i.pid }, i.stats || {}); }
+
+/* ---------------- the Search cache process ----------------
+ * An index of every work (titles, genres, tags, people, types, libraries) lives in the Search cache process
+ * (cache/search.js). It's sent again when the data changed (checked on each search: its loaded generation
+ * against the current one), and answers only count works in the libraries the asker may see. */
+const searchCache = cacheService('search', { label: 'Search', idleMs: 30 * 60 * 1000 });
+const SEARCH_USER = { username: '\0search', role: 'admin' }; // sees every library (answers are filtered per user)
+let searchLoading = null;
+async function ensureSearch() {
+  const gen = store.generation();
+  const st = await searchCache.call('status');
+  if (st.gen === gen) return;
+  if (!searchLoading) {
+    const docs = workIndex(SEARCH_USER, null).map(e => ({
+      id: e.v.id, libs: [...new Set(e.list.map(v => v.libraryId))], title: e.workTitle || e.v.title, sort: e.v.sortTitle, text: textOf(e),
+      genres: e.v.genres, tags: e.v.tags, people: [...new Set(e.v.authors.map(a => a.name))], type: e.v.type || 'unknown', status: e.v.status
+    }));
+    searchLoading = searchCache.call('load', { gen, docs }).finally(() => { searchLoading = null; });
+  }
+  await searchLoading;
 }
-function cacheInfo() {
-  return { entries: responses.size, bytes: responseBytes, maxBytes: RESPONSE_MAX_BYTES, hits: responseStats.hits, misses: responseStats.misses };
+async function searchWorks(text, user, limit) {
+  await ensureSearch();
+  return searchCache.call('query', { q: text, libs: store.accessibleLibraries(user).map(l => l.id), limit });
 }
 const sendCachedJson = (res, body, hit) => {
   res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Thoth-Cache': hit ? 'hit' : 'miss' });
@@ -513,18 +527,13 @@ async function handle(ctx) {
   let { send } = ctx;
   if (method === 'GET' && RESPONSE_ROUTES.test(p)) {
     const key = responseKey(user, p, q);
-    const hit = responses.get(key);
-    if (hit && hit.ver === responseVersion()) {
-      responses.delete(key); responses.set(key, hit); // LRU bump
-      responseStats.hits++;
-      return sendCachedJson(res, hit.body, true);
-    }
-    responseStats.misses++;
     const ver = responseVersion();
+    const hit = await worksCache.call('get', { key, ver }).catch(() => null);
+    if (hit) return sendCachedJson(res, hit, true);
     send = (status, data) => {
       if (status !== 200) return ctx.send(status, data);
       const json = JSON.stringify(data);
-      if (ver === responseVersion()) responsePut(key, json); // (not if something changed while it was built)
+      if (ver === responseVersion()) worksCache.call('put', { key, ver, body: json }).catch(() => {}); // (not if something changed while it was built)
       return sendCachedJson(res, json, false);
     };
   }
@@ -748,7 +757,8 @@ async function handle(ctx) {
     requireAdmin();
     if (p === '/api/catalog/types' && method === 'GET') return send(200, { types: catalog.types() });
     if (p === '/api/catalog/sources' && method === 'GET') return send(200, { sources: catalog.listSources(), jobs: catalog.jobs() });
-    if (p === '/api/catalog/sources' && method === 'POST') return send(201, { source: catalog.createSource(body) });
+    // POST { name, baseUrl } → settings detected from the site; or the full settings (with type) as given
+    if (p === '/api/catalog/sources' && method === 'POST') return send(201, { source: await catalog.createSource(body) });
     if (p === '/api/catalog/sources/test' && method === 'POST') return send(200, { test: await catalog.testSource(body) });
     // POST /api/catalog/sources/detect { url } → proposed settings from the site's robots.txt, sitemaps and pages
     if (p === '/api/catalog/sources/detect' && method === 'POST') return send(200, { detect: await catalog.detectSource(body.url) });
@@ -1035,13 +1045,34 @@ async function handle(ctx) {
     return send(200, { pageCount: n });
   }
 
+  // GET /api/search/terms?field=genre|tag|person|type&q=&library= → { terms: [{ name, count }] }: genres
+  // (categories), tags, people and types matching what was typed, with how many works have each (only works
+  // the user may see; with a library, only that library's), from the Search cache process
+  if (p === '/api/search/terms' && method === 'GET') {
+    const field = String(q.get('field') || '');
+    if (!['genre', 'tag', 'person', 'type'].includes(field)) throw httpError(400, 'invalid');
+    const lib = q.get('library');
+    const libs = store.accessibleLibraries(user).map(l => l.id).filter(id => !lib || lib === 'all' || id === lib);
+    await ensureSearch();
+    const terms = await searchCache.call('terms', { field, q: String(q.get('q') || '').slice(0, 100), libs, limit: Math.min(200, Number(q.get('limit')) || 60) });
+    return send(200, { terms });
+  }
   // ---- home & search ----
   if (p === '/api/home' && method === 'GET') return send(200, home(user));
   if (p === '/api/search' && method === 'GET') {
     const term = searchable(q.get('q'));
     if (!term) return send(200, { series: [], books: [], collections: [], readlists: [] });
     const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-    const series = workIndex(user, null).filter(e => textOf(e).includes(term)).sort(SORTERS.title).slice(0, 30).map(e => workObject(e, user));
+    // Works: from the Search cache process (built here if it can't answer)
+    let series;
+    try {
+      const ids = await searchWorks(q.get('q'), user, 30);
+      const byId = new Map();
+      for (const e of workIndex(user, null)) for (const v of e.list) byId.set(v.id, e);
+      series = [...new Set(ids.map(id => byId.get(id)).filter(Boolean))].map(e => workObject(e, user));
+    } catch (e) {
+      series = workIndex(user, null).filter(x => textOf(x).includes(term)).sort(SORTERS.title).slice(0, 30).map(x => workObject(x, user));
+    }
     // Books: matched on their memoized metadata; views only for the first 30 found
     const books = [];
     for (const b of Object.values(db.books)) {

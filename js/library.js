@@ -419,9 +419,22 @@
       box.addEventListener('input', function (e) {
         var t2 = e.target;
         if (t2.dataset.advSearch) {
-          // Narrow the chips of one section (client side)
-          var term = t2.value.trim().toLowerCase();
-          $$('[data-adv="' + t2.dataset.advSearch + '"]', box).forEach(function (c) { c.hidden = term && c.dataset.value.toLowerCase().indexOf(term) === -1; });
+          // Find any genre, tag or person (not only the ones listed): asked to the Search cache; the chips shown
+          // narrow at once while the answer comes
+          var f = t2.dataset.advSearch, term = t2.value.trim(), lower = term.toLowerCase();
+          $$('[data-adv="' + f + '"]', box).forEach(function (c) { c.hidden = lower && c.dataset.value.toLowerCase().indexOf(lower) === -1; });
+          clearTimeout(advTermTimer);
+          if (!term) return;
+          advTermTimer = setTimeout(function () {
+            var lib = libId(route);
+            api('GET', '/api/search/terms?' + Store.qs({ field: f, q: term, library: lib === 'all' ? '' : lib, limit: 60 })).then(function (r) {
+              var holder = $('[data-adv-chips="' + f + '"]', box);
+              if (!holder || t2.value.trim() !== term) return;
+              var chosen = st.inc[f].concat(st.exc[f]);
+              var list = chosen.filter(function (v) { return !r.terms.some(function (x) { return x.name === v; }); }).map(function (v) { return { name: v, count: 0 }; }).concat(r.terms);
+              holder.innerHTML = list.length ? list.map(function (x) { return advChip(st, f, x.name, x.name, x.count); }).join('') : '<span class="muted small">' + esc(t('lib.noMatch')) + '</span>';
+            }, function () { /* the chips narrowed above stay */ });
+          }, 200);
           return;
         }
         if (t2.dataset.advField) {
@@ -490,24 +503,27 @@
         esc(c[3]) + ' ' + icon('close') + '</button>';
     }).join('') + '<button type="button" class="btn btn--text btn--small" data-filter-clear>' + esc(t('filter.clear')) + '</button>' : '') + '</div>';
   }
+  // One value in the search panel: click → include → exclude → neither
+  var advTermTimer = null;
+  function advChip(st, f, v, label, count) {
+    var s = st.inc[f].indexOf(v) !== -1 ? 'inc' : st.exc[f].indexOf(v) !== -1 ? 'exc' : '';
+    return '<button type="button" class="chip chip--adv' + (s ? ' is-' + s : '') + '" data-adv="' + f + '" data-value="' + esc(v) + '" aria-pressed="' + (s ? 'true' : 'false') + '"' +
+      ' title="' + esc(t(s === 'inc' ? 'adv.stateInc' : s === 'exc' ? 'adv.stateExc' : 'adv.stateNone')) + '">' +
+      (s === 'inc' ? '+ ' : s === 'exc' ? '− ' : '') + esc(label) + (count ? ' <span class="chip__count">' + count + '</span>' : '') + '</button>';
+  }
   // The "Search & filters" button, the active criteria and (when open) the panel with every value
   function filtersHtml(route) {
     var st = libState(route), fc = cache.facets[libId(route)] || null, n = activeFilters(st);
     var stateOf = function (f, v) { return st.inc[f].indexOf(v) !== -1 ? 'inc' : st.exc[f].indexOf(v) !== -1 ? 'exc' : ''; };
-    var chip = function (f, v, label, count) {
-      var s = stateOf(f, v);
-      return '<button type="button" class="chip chip--adv' + (s ? ' is-' + s : '') + '" data-adv="' + f + '" data-value="' + esc(v) + '" aria-pressed="' + (s ? 'true' : 'false') + '"' +
-        ' title="' + esc(t(s === 'inc' ? 'adv.stateInc' : s === 'exc' ? 'adv.stateExc' : 'adv.stateNone')) + '">' +
-        (s === 'inc' ? '+ ' : s === 'exc' ? '− ' : '') + esc(label) + (count ? ' <span class="chip__count">' + count + '</span>' : '') + '</button>';
-    };
+    var chip = function (f, v, label, count) { return advChip(st, f, v, label, count); };
     var section = function (f, values, searchable) {
       var chosen = st.inc[f].concat(st.exc[f]);
       // Keep chosen values visible even if the counts don't list them
       chosen.forEach(function (v) { if (!values.some(function (x) { return x.value === v; })) values.unshift({ value: v, label: v, count: 0 }); });
       if (!values.length) return '';
       return '<div class="adv-section"><div class="adv-section__head"><span class="adv-section__title">' + esc(t('filter.' + f)) + '</span>' +
-          (searchable && values.length > 12 ? '<input type="search" class="adv-section__find" data-adv-search="' + f + '" placeholder="' + esc(t('adv.find')) + '" aria-label="' + esc(t('adv.find')) + ' ' + esc(t('filter.' + f)) + '" />' : '') +
-        '</div><div class="adv-chips">' + values.map(function (x) { return chip(f, x.value, x.label, x.count); }).join('') + '</div></div>';
+          (searchable ? '<input type="search" class="adv-section__find" data-adv-search="' + f + '" placeholder="' + esc(t('adv.find')) + '" aria-label="' + esc(t('adv.find')) + ' ' + esc(t('filter.' + f)) + '" />' : '') +
+        '</div><div class="adv-chips" data-adv-chips="' + f + '">' + values.map(function (x) { return chip(f, x.value, x.label, x.count); }).join('') + '</div></div>';
     };
     var map = function (obj, labeler, order) {
       return (order || Object.keys(obj || {})).filter(function (k) { return !fc || (obj && obj[k]); }).map(function (k) { return { value: k, label: labeler(k), count: obj ? obj[k] || 0 : 0 }; });
@@ -1645,6 +1661,9 @@
         '<p class="small">' + esc(t('cat.srcWorks', { count: s.works })) + (s.lastCrawlAt ? ' · ' + esc(t('cat.srcLast', { time: A().fmtDate(s.lastCompleteAt || s.lastCrawlAt) })) : ' · ' + esc(t('cat.srcNever'))) +
           ' · ' + esc(t('cat.schedule.' + (s.schedule || 'manual'))) + '</p>' +
         (stats ? '<p class="muted small">' + esc(t('cat.srcStats', { listed: stats.listed, added: stats.added, read: stats.read, errors: stats.errors, chapters: stats.chapters })) + (stats.partial ? ' · ' + esc(t('cat.srcPartial', { count: stats.partial })) : '') + '</p>' : '') +
+        // What detection found (automatic sources: at creation, then at every crawl)
+        (s.autoDetect === true && s.detected ? '<p class="muted small cat-detected">' + icon('search') + '<span>' + esc(t('cat.detectedAt', { time: A().fmtDate(s.detected.at) }) + ' ' + detectSummary({ notes: s.detected.notes, found: s.detected.found || {}, blocked: s.detected.blocked, settings: s })) + '</span></p>' : '') +
+        (s.autoDetect !== true ? '<p class="muted small">' + esc(t('cat.manualSettings')) + '</p>' : '') +
         (s.lastError ? '<p class="notice notice--error small">' + esc(s.lastError) + '</p>' : '') +
         (s.interrupted ? '<p class="notice notice--info small">' + esc(t('cat.interrupted')) + '</p>' : '') +
         crawlLine(s) +
@@ -1661,16 +1680,18 @@
   }
   // The settings form; the fields shown depend on the kind of site
   // Adding a source: the site's address first; its robots.txt, sitemaps and pages fill the settings
+  // Adding a source: its name and its address. Everything else is detected (robots.txt, every sitemap, the
+  // addresses of works and chapters, the theme, the icon), now and again at every crawl.
   function catalogDetectForm() {
     openForm({
-      title: t('cat.addSource'), submitLabel: t('cat.detect'), note: t('cat.detectNote'),
-      fields: [{ name: 'url', label: t('cat.srcUrl'), placeholder: 'https://example.com', help: t('cat.detectHelp') },
-        { name: 'manual', label: t('cat.detectManual'), type: 'checkbox', value: false }],
+      title: t('cat.addSource'), submitLabel: t('cat.addAndDetect'), note: t('cat.detectNote'),
+      fields: [{ name: 'name', label: t('manage.name'), placeholder: 'My source' },
+        { name: 'url', label: t('cat.srcUrl'), placeholder: 'https://example.com', help: t('cat.detectHelp') }],
       onSubmit: function (v) {
-        if (v.manual) { setTimeout(function () { catalogSourceForm(null, null, v.url); }, 0); return Promise.resolve(); }
         if (!v.url) return Promise.reject({ code: 'invalidUrl' });
-        return api('POST', '/api/catalog/sources/detect', { url: v.url }).then(function (r) {
-          setTimeout(function () { catalogSourceForm(null, r.detect, v.url); }, 0);
+        return api('POST', '/api/catalog/sources', { name: v.name, baseUrl: v.url }).then(function (r) {
+          A().toast(detectSummary(r.source.detected ? { notes: r.source.detected.notes, found: r.source.detected.found, blocked: r.source.detected.blocked, settings: r.source } : null) || t('common.saved'));
+          loadCatSources();
         });
       }
     });
@@ -1699,22 +1720,27 @@
     var types = st.types || [];
     var cur = s || Object.assign({ type: 'custom', includeChapters: true, schedule: 'manual', languages: '', baseUrl: url || '' }, detected && detected.settings ? detected.settings : {});
     var sel = cur.selectors || {};
-    var ty = function (list) { return { field: 'type', value: list }; };
+    // Shown only with automatic settings off (and, for some, for some kinds of site)
+    var manual = { field: 'autoDetect', value: false };
+    var ty = function (list) { return [manual, { field: 'type', value: list }]; };
+    var auto = cur.autoDetect === true;
     var fields = [
       { name: 'name', label: t('manage.name'), value: cur.name || '' },
-      { name: 'type', label: t('cat.srcType'), type: 'select', value: cur.type, options: types.map(function (x) { return { value: x.type, label: x.label }; }), help: t('cat.srcTypeHelp') },
-      { name: 'baseUrl', label: t('cat.srcUrl'), value: cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcUrlHelp') },
+      { name: 'siteUrl', label: t('cat.srcSiteUrl'), value: cur.siteUrl || cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcSiteUrlHelp') },
+      { name: 'schedule', label: t('cat.srcSchedule'), type: 'select', value: cur.schedule || 'manual', options: ['manual', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) },
+      { name: 'autoDetect', label: t('cat.srcAuto'), type: 'checkbox', value: auto, help: t('cat.srcAutoHelp') },
+      { name: 'type', label: t('cat.srcType'), type: 'select', value: cur.type, options: types.map(function (x) { return { value: x.type, label: x.label }; }), help: t('cat.srcTypeHelp'), showWhen: manual },
+      { name: 'baseUrl', label: t('cat.srcUrl'), value: cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcUrlHelp'), showWhen: manual },
       { name: 'listing', label: t('cat.srcListing'), type: 'select', value: cur.listing || 'pages', options: [{ value: 'sitemap', label: t('cat.listing.sitemap') }, { value: 'pages', label: t('cat.listing.pages') }], showWhen: ty(['madara', 'mangareader', 'custom']), help: t('cat.srcListingHelp') },
-      { name: 'sitemaps', label: t('cat.srcSitemaps'), type: 'textarea', rows: 2, value: (cur.sitemaps || []).join('\n'), showWhen: { field: 'listing', value: 'sitemap' }, help: t('cat.srcSitemapsHelp') },
-      { name: 'workPattern', label: t('cat.srcWorkPattern'), value: cur.workPattern || '', placeholder: '/manga/*/', showWhen: { field: 'listing', value: 'sitemap' }, help: t('cat.srcPatternHelp') },
+      { name: 'sitemaps', label: t('cat.srcSitemaps'), type: 'textarea', rows: 2, value: (cur.sitemaps || []).join('\n'), showWhen: [manual, { field: 'listing', value: 'sitemap' }], help: t('cat.srcSitemapsHelp') },
+      { name: 'workPattern', label: t('cat.srcWorkPattern'), value: cur.workPattern || '', placeholder: '/manga/*/', showWhen: [manual, { field: 'listing', value: 'sitemap' }], help: t('cat.srcPatternHelp') },
       { name: 'chapterPattern', label: t('cat.srcChapterPattern'), value: cur.chapterPattern || '', placeholder: '/manga/*/*/', showWhen: ty(['custom']), help: t('cat.srcChapterPatternHelp') },
       { name: 'listPath', label: t('cat.srcListPath'), value: cur.listPath || '', placeholder: 'manga', showWhen: ty(['madara', 'mangareader']), help: t('cat.srcListPathHelp') },
-      { name: 'languages', label: t('cat.srcLanguages'), value: cur.languages || '', placeholder: 'en, es', help: t('cat.srcLanguagesHelp') },
+      { name: 'languages', label: t('cat.srcLanguages'), value: cur.languages || '', placeholder: 'en, es', help: t('cat.srcLanguagesHelp'), showWhen: manual },
       { name: 'contentRating', label: t('cat.srcRating'), value: cur.contentRating || 'safe,suggestive,erotica', showWhen: ty(['mangadex']), help: t('cat.srcRatingHelp') },
-      { name: 'includeChapters', label: t('cat.srcChapters'), type: 'checkbox', value: cur.includeChapters !== false, help: t('cat.srcChaptersHelp') },
-      { name: 'maxWorks', label: t('cat.srcMax'), value: cur.maxWorks || '', placeholder: '0', help: t('cat.srcMaxHelp') },
-      { name: 'schedule', label: t('cat.srcSchedule'), type: 'select', value: cur.schedule || 'manual', options: ['manual', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) },
-      { name: 'gapMs', label: t('cat.srcGap'), value: cur.gapMs || '', placeholder: '1500', help: t('cat.srcGapHelp') }
+      { name: 'includeChapters', label: t('cat.srcChapters'), type: 'checkbox', value: cur.includeChapters !== false, help: t('cat.srcChaptersHelp'), showWhen: manual },
+      { name: 'maxWorks', label: t('cat.srcMax'), value: cur.maxWorks || '', placeholder: '0', help: t('cat.srcMaxHelp'), showWhen: manual },
+      { name: 'gapMs', label: t('cat.srcGap'), value: cur.gapMs || '', placeholder: '1500', help: t('cat.srcGapHelp'), showWhen: manual }
     ];
     var selField = function (k, ph) { return { name: 'sel_' + k, label: t('cat.sel.' + k), value: sel[k] || '', placeholder: ph, showWhen: ty(['custom']) }; };
     fields = fields.concat([
@@ -1725,7 +1751,9 @@
     openForm({
       title: t(s ? 'cat.editSource' : 'cat.addSource'), fields: fields, note: (detected ? detectSummary(detected) + ' ' : '') + t('cat.srcNote'),
       onSubmit: function (v) {
-        var body = { name: v.name, type: v.type, baseUrl: v.baseUrl, listPath: v.listPath, languages: v.languages, contentRating: v.contentRating, includeChapters: v.includeChapters,
+        // Automatic: the name, the address and the schedule are all there is to keep
+        if (v.autoDetect) return api('PATCH', '/api/catalog/sources/' + s.id, { name: v.name, siteUrl: v.siteUrl, schedule: v.schedule, autoDetect: true }).then(function () { A().toast(t('common.saved')); loadCatSources(); });
+        var body = { name: v.name, type: v.type, baseUrl: v.baseUrl, siteUrl: v.siteUrl, autoDetect: false, listPath: v.listPath, languages: v.languages, contentRating: v.contentRating, includeChapters: v.includeChapters,
           listing: v.listing, sitemaps: (v.sitemaps || '').split(/\s+/).filter(Boolean), workPattern: v.workPattern, chapterPattern: v.chapterPattern,
           iconUrl: cur.iconUrl || undefined,
           maxWorks: Number(v.maxWorks) || 0, schedule: v.schedule, gapMs: Number(v.gapMs) || undefined, selectors: {} };
@@ -2040,24 +2068,29 @@
           ]) +
           '<p class="field__help">' + esc(t('proc.renameHelp')) + ' <a href="#files">' + esc(t('nav.files')) + '</a></p>' +
         '</section>' : '';
-      // Pages and covers: key-value cache in front of the media process (started when needed)
-      var mi = p.media;
-      var mediaCard = mi ? '<section class="card proc-card">' +
+      // The caches, each its own process (started when needed, closed after a long idle time)
+      var caches = p.caches || [];
+      var order = ['pages', 'covers', 'works', 'search'];
+      caches.sort(function (a, b) { return order.indexOf(a.kind) - order.indexOf(b.kind); });
+      var cacheRow = function (c) {
+        var s = c.stats || {};
+        var size = s.maxBytes && c.kind !== 'search' ? t('proc.cache.size', { size: s.bytes ? fmtBytes(s.bytes) : '0 MB', max: fmtBytes(s.maxBytes) }) : '';
+        var extra = c.kind === 'search' && s.docs != null ? t('proc.cache.searchDocs', { docs: s.docs, tags: (s.terms || {}).tag || 0, people: (s.terms || {}).person || 0 })
+          : c.kind === 'covers' && s.warm && (s.warm.running || s.warm.finishedAt) ? (s.warm.running ? t('proc.media.warmRunning', { done: s.warm.done, total: s.warm.total }) : t('proc.media.warmDone', { total: s.warm.total, added: s.warm.added })) : '';
+        return '<tr><td><strong>' + esc(t('proc.cache.' + c.kind)) + '</strong></td>' +
+          '<td>' + (c.pid ? esc(c.pid) : '<span class="muted">' + esc(t(c.mode === 'inline' ? 'proc.cache.inline' : 'proc.cache.closed')) + '</span>') + '</td>' +
+          '<td>' + esc(c.pid || c.mode === 'inline' ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—') + '</td>' +
+          '<td>' + esc(c.pid || c.mode === 'inline' ? t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 }) : t('proc.cache.requests', { count: c.requests })) + '</td>' +
+          '<td>' + esc(s.rss ? fmtBytes(s.rss) : '—') + '</td></tr>' + (extra ? '<tr class="proc-sub-row"><td></td><td colspan="4" class="muted small">' + esc(extra) + '</td></tr>' : '');
+      };
+      var mediaCard = caches.length ? '<section class="card proc-card proc-card--wide">' +
           '<div class="proc-card__head"><span class="lib-card__icon">' + icon('collections') + '</span>' +
-            '<div><h2 class="card__title">' + esc(t('proc.media')) + '</h2>' +
-            '<span class="badge ' + (mi.busy ? 'badge--primary' : 'badge--ok') + '">' + esc(t(mi.busy ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
-          (mi.mode === 'inline' ? '<p class="notice">' + esc(t('proc.media.inline')) + '</p>' : '') +
-          facts([
-            mi.pid ? ['proc.pid', esc(mi.pid)] : ['proc.processes', esc(t('proc.media.none'))],
-            ['proc.media.cache', esc(t('proc.media.cacheValue', { entries: mi.cache.entries, size: mi.cache.bytes ? fmtBytes(mi.cache.bytes) : '0 MB', max: fmtBytes(mi.cache.maxBytes) }))],
-            ['proc.media.hits', esc(t('proc.media.hitsValue', { hits: mi.stats.hits + mi.stats.diskHits, misses: mi.stats.misses, prefetched: mi.stats.prefetched }))],
-            mi.responses ? ['proc.media.works', esc(t('proc.media.worksValue', { entries: mi.responses.entries, hits: mi.responses.hits, misses: mi.responses.misses }))] : null,
-            mi.warm && (mi.warm.running || mi.warm.finishedAt) ? ['proc.media.warm', esc(mi.warm.running
-              ? t('proc.media.warmRunning', { done: mi.warm.done, total: mi.warm.total })
-              : t('proc.media.warmDone', { total: mi.warm.total, added: mi.warm.added }))] : null,
-            mi.lastError ? ['proc.lastError', esc(mi.lastError)] : null
-          ]) +
-          '<p class="field__help">' + esc(t('proc.media.help')) + '</p>' +
+            '<div><h2 class="card__title">' + esc(t('proc.caches')) + '</h2>' +
+            '<span class="badge badge--ok">' + esc(t('proc.cache.running', { count: caches.filter(function (c) { return c.pid; }).length, total: caches.length })) + '</span></div></div>' +
+          '<div class="table-wrap"><table class="table proc-workers"><thead><tr><th>' + esc(t('proc.cache.name')) + '</th><th>' + esc(t('proc.pid')) + '</th><th>' + esc(t('proc.cache.content')) +
+            '</th><th>' + esc(t('proc.cache.answered')) + '</th><th>' + esc(t('proc.memory')) + '</th></tr></thead><tbody>' + caches.map(cacheRow).join('') + '</tbody></table></div>' +
+          caches.filter(function (c) { return c.lastError; }).map(function (c) { return '<p class="notice notice--error small">' + esc(c.lastError) + '</p>'; }).join('') +
+          '<p class="field__help">' + esc(t('proc.cache.help')) + '</p>' +
         '</section>' : '';
       return head + '<div class="cards">' + serverCard + scanCard + metaCard + renameCard + mediaCard + '</div>';
     },
@@ -2213,7 +2246,7 @@
           (f.help ? '<small class="field__help">' + esc(f.help) + '</small>' : '') + '</div>';
       }
       else if (f.type === 'checkbox') {
-        return '<div class="field" data-field="' + f.name + '"><label class="checkbox"><input type="checkbox" id="' + id + '" name="' + f.name + '"' + (f.value ? ' checked' : '') + ' />' +
+        return '<div class="field" data-field="' + f.name + '"' + (f.showWhen ? ' data-show-when="' + esc(JSON.stringify(f.showWhen)) + '"' : '') + '><label class="checkbox"><input type="checkbox" id="' + id + '" name="' + f.name + '"' + (f.value ? ' checked' : '') + ' />' +
           '<span>' + esc(f.label) + '</span></label>' + (f.help ? '<small class="field__help">' + esc(f.help) + '</small>' : '') + '</div>';
       }
       else input = '<input id="' + id + '" name="' + f.name + '" value="' + esc(f.value || '') + '" placeholder="' + esc(f.placeholder || '') + '"' + (f.type === 'date' ? ' type="text" inputmode="numeric"' : '') + ' />';
@@ -2237,8 +2270,9 @@
   function syncShowWhen() {
     var v = formValues();
     $$('#form-dialog-fields [data-show-when]').forEach(function (el) {
-      var w = JSON.parse(el.dataset.showWhen);
-      el.hidden = Array.isArray(w.value) ? w.value.indexOf(v[w.field]) === -1 : v[w.field] !== w.value;
+      // One condition { field, value (or list of values) }, or a list of them that must all hold
+      var conds = [].concat(JSON.parse(el.dataset.showWhen));
+      el.hidden = !conds.every(function (w) { return Array.isArray(w.value) ? w.value.indexOf(v[w.field]) !== -1 : v[w.field] === w.value; });
     });
   }
   function formError(err) {

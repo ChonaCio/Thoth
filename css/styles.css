@@ -905,3 +905,9 @@ body.is-reading { overflow: hidden; }
 .ren-involved td:nth-child(4) { white-space: nowrap; }
 .files-dup { min-width: 0; max-width: 100%; }
 .files-dup .table-wrap, .files-dup { overflow-x: auto; }
+
+/* Processes page: the caches (one process each) */
+.proc-card--wide { grid-column: 1 / -1; }
+.proc-sub-row td { padding-top: 0; border-top: 0; }
+.cat-detected { display: flex; gap: 6px; align-items: flex-start; }
+.cat-detected .icon svg { width: 14px; height: 14px; margin-top: 2px; flex: none; }

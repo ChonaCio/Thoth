@@ -144,12 +144,16 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   const img = Buffer.from(await p1.arrayBuffer());
   ok(p1.status === 200 && p1.headers.get('content-type') === 'image/png' && img.slice(1, 4).toString() === 'PNG', 'a page is served (through the media service)');
   const p1b = await fetch(`${BASE}/api/books/${anyBook.id}/pages/1`, { headers: { Cookie: cookie } });
-  const med = (await call('GET', '/api/processes')).data.media;
-  ok(p1b.status === 200 && Buffer.from(await p1b.arrayBuffer()).equals(img) && med.stats.hits >= 1 && med.cache.entries >= 1, `asked again: answered from the cache (${med.stats.hits} hits, ${med.cache.entries} cached)`);
-  ok(med.mode === 'process' && med.pid && med.pid !== procs.server.pid, `pages are read by a separate media process (pid ${med.pid})`);
+  // (the cache processes report every 2 s)
+  const med = await until(async () => { const c = (await call('GET', '/api/processes')).data.caches.find(x => x.kind === 'pages'); return c && c.stats && c.stats.hits >= 1 && c; }, 10000);
+  ok(p1b.status === 200 && Buffer.from(await p1b.arrayBuffer()).equals(img) && med.stats.entries >= 1, `asked again: answered from the Pages cache (${med.stats.hits} hits, ${med.stats.entries} kept)`);
+  ok(med.mode === 'process' && med.pid && med.pid !== procs.server.pid, `the Pages cache is its own process (pid ${med.pid})`);
   const th = await fetch(`${BASE}/api/series/${workA.id}/thumbnail`, { headers: { Cookie: cookie } });
   await until(async () => fs.existsSync(path.join(DATA, 'cache', 'thumbs')) && fs.readdirSync(path.join(DATA, 'cache', 'thumbs')).length >= 1, 5000); // written just after answering
-  ok(th.status === 200 && fs.readdirSync(path.join(DATA, 'cache', 'thumbs')).length >= 1,'a work’s cover is served and kept on disk (key-value)');
+  ok(th.status === 200 && fs.readdirSync(path.join(DATA, 'cache', 'thumbs')).length >= 1, 'a work’s cover is served and kept on disk (key-value)');
+  const caches = await until(async () => { const c = (await call('GET', '/api/processes')).data.caches; return c.find(x => x.kind === 'covers' && x.pid) && c; }, 10000);
+  const pids = caches.filter(c => c.pid).map(c => c.pid);
+  ok(new Set(pids).size === pids.length && !pids.includes(procs.server.pid) && caches.find(c => c.kind === 'covers').pid !== med.pid, `Pages and Covers are separate processes (${caches.filter(c => c.pid).map(c => c.kind + ' ' + c.pid).join(', ')})`);
   ok((await fetch(`${BASE}/api/books/${anyBook.id}/pages/99`, { headers: { Cookie: cookie } })).status === 404, 'a missing page is a 404');
   srv.kill();
 
