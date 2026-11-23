@@ -73,7 +73,9 @@ function memoGet(map, key, deps) {
   return c.v;
 }
 function memoSet(map, key, deps, v) { map.set(key, { gen, deps, v }); return v; }
-const saveProgress = () => scheduleSave('progress');
+// Reading progress has its own version (cached responses that show progress depend on it)
+let progressVer = 0;
+const saveProgress = () => { progressVer++; scheduleSave('progress'); };
 
 /* ---------------- indexes ---------------- */
 // Defined before the first reindex() below: sorting books with equal numbers falls back to comparing names
@@ -408,7 +410,7 @@ function coverFromMetadata(s) {
 }
 
 module.exports = {
-  DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex, touch, generation: () => version,
+  DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex, touch, generation: () => version, progressVersion: () => progressVer,
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,

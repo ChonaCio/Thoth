@@ -80,9 +80,9 @@ function preview(libraryId, { limit = PREVIEW_LIMIT } = {}) {
   let checked = 0;
   for (const lib of libs) {
     const books = Object.values(db.books).filter(b => b.libraryId === lib.id);
-    const taken = new Map(); // folder\0lowercase name → relPath (existing files and proposals)
+    const taken = new Map(); // folder\0lowercase name → the book with that file
     const key = (rel, name) => sep(rel).slice(0, -1).join('/') + '\0' + name.toLowerCase();
-    for (const b of books) taken.set(key(b.relPath, b.fileName), b.relPath);
+    for (const b of books) taken.set(key(b.relPath, b.fileName), b);
     const props = [];
     for (const b of books) {
       checked++;
@@ -98,17 +98,21 @@ function preview(libraryId, { limit = PREVIEW_LIMIT } = {}) {
     for (const x of props) {
       const k = key(x.b.relPath, x.toName);
       const other = taken.get(k);
-      const status = other && other !== x.b.relPath ? 'exists' : wanted.get(k) > 1 ? 'conflict' : 'ok';
+      const status = other && other !== x.b ? 'exists' : wanted.get(k) > 1 ? 'conflict' : 'ok';
       items.push({
         bookId: x.b.id, seriesId: x.b.seriesId, libraryId: lib.id, library: lib.name, work: x.work,
         from: sep(x.b.relPath).join('/'), to: sep(relWithName(x.b.relPath, x.toName)).join('/'), fromName: x.b.fileName, toName: x.toName,
-        status, with: status === 'exists' ? sep(other).join('/') : undefined
+        status, with: status === 'exists' ? sep(other.relPath).join('/') : undefined,
+        // The new name is taken by another file: what the page needs to choose which one to keep
+        size: x.b.size, pageCount: x.b.pageCount,
+        other: status === 'exists' ? { bookId: other.id, fileName: other.fileName, size: other.size, pageCount: other.pageCount, modified: other.fileModified } : undefined
       });
     }
   }
   items.sort((a, b) => store.collator.compare(a.library + '\0' + a.work, b.library + '\0' + b.work) || store.collator.compare(a.fromName, b.fromName));
   const ok = items.reduce((n, x) => n + (x.status === 'ok' ? 1 : 0), 0);
-  return { checked, total: items.length, ok, conflicts: items.length - ok, truncated: items.length > limit, items: items.slice(0, limit) };
+  const exists = items.reduce((n, x) => n + (x.status === 'exists' ? 1 : 0), 0);
+  return { checked, total: items.length, ok, conflicts: items.length - ok, exists, truncated: items.length > limit, items: items.slice(0, limit) };
 }
 
 // Folder-source JSON files that describe this book (same name next to it in path mode, or by name)
@@ -142,8 +146,8 @@ let jobSeq = 0, pumping = false;
 const state = { worker: null, last: null };
 
 const jobView = j => ({
-  id: j.id, status: j.status, createdAt: j.createdAt, startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
-  by: j.by || null, total: j.total, done: j.done, renamed: j.renamed, json: j.json, failedCount: j.failed.length,
+  id: j.id, kind: j.kind, status: j.status, createdAt: j.createdAt, startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
+  by: j.by || null, total: j.total, done: j.done, renamed: j.renamed, deleted: j.deleted, moved: j.moved, json: j.json, failedCount: j.failed.length, foldersKept: j.foldersKept || [],
   failed: j.failed.slice(0, 50), error: j.error || null, libraries: j.libraries ? [...j.libraries] : [], process: j.process || null,
   progress: j.total ? Math.min(100, Math.floor(j.done / j.total * 100)) : (j.status === 'done' ? 100 : 0)
 });
@@ -195,11 +199,14 @@ function runOps(ops, onProgress) {
   });
 }
 
-// picks: [{ bookId, toName }] or { all: true, library, exclude: [bookId] } (every valid proposal of a library)
-function enqueue(picks, { renameJson = true, metadata, by, onDone } = {}) {
-  if (jobs.filter(j => j.status === 'queued').length >= MAX_QUEUED) throw Object.assign(new Error('Too many rename jobs waiting'), { status: 429, code: 'renameQueueFull' });
-  const job = { id: 'r' + (++jobSeq), status: 'queued', createdAt: new Date().toISOString(), by, picks, renameJson, metadata, onDone,
-    total: Array.isArray(picks) ? picks.length : 0, done: 0, renamed: 0, json: 0, failed: [], libraries: new Set() };
+// kind 'rename': picks = [{ bookId, toName }] or { all: true, library, exclude: [bookId] } (every valid proposal)
+// kind 'delete': picks = [{ bookId, replace? }] (replace: delete the file holding this book's proposed name, then
+//   rename this one) or { allExists: true, library, keep: 'existing' | 'renamed' } (every "name exists" proposal)
+// kind 'merge':  picks = { target: seriesId, sources: [seriesId] } (their files move into the target's folder)
+function enqueue(picks, { kind = 'rename', renameJson = true, metadata, by, onDone } = {}) {
+  if (jobs.filter(j => j.status === 'queued').length >= MAX_QUEUED) throw Object.assign(new Error('Too many file jobs waiting'), { status: 429, code: 'renameQueueFull' });
+  const job = { id: 'r' + (++jobSeq), kind, status: 'queued', createdAt: new Date().toISOString(), by, picks, renameJson, metadata, onDone,
+    total: Array.isArray(picks) ? picks.length : 0, done: 0, renamed: 0, deleted: 0, moved: 0, json: 0, failed: [], libraries: new Set() };
   jobs.push(job);
   setImmediate(pump);
   return jobView(job);
@@ -213,7 +220,7 @@ async function pump() {
     while ((job = jobs.find(j => j.status === 'queued'))) {
       job.status = 'running';
       job.startedAt = new Date().toISOString();
-      try { await runJob(job); job.status = 'done'; } catch (e) { job.status = 'failed'; job.error = e.message; console.error('[library] rename job failed:', e.message); }
+      try { await (job.kind === 'delete' ? runDeleteJob(job) : job.kind === 'merge' ? runMergeJob(job) : runJob(job)); job.status = 'done'; } catch (e) { job.status = 'failed'; job.error = e.message; console.error('[library] rename job failed:', e.message); }
       job.finishedAt = new Date().toISOString();
       const w = state.worker;
       state.last = { at: job.finishedAt, files: job.total, renamed: job.renamed, mode: w ? w.mode : null, pid: w ? w.pid : null, durationMs: Date.parse(job.finishedAt) - Date.parse(job.startedAt) };
@@ -287,6 +294,195 @@ async function runJob(job) {
   store.saveProgress();
 }
 
+/* ---------------- deleting files (a "name exists" proposal: keep one of the two) ---------------- */
+const absOf = b => { const lib = db.libraries[b.libraryId]; if (!lib) return null; const root = path.resolve(lib.root); const a = path.resolve(root, b.relPath); return a.startsWith(root + path.sep) ? a : null; };
+// A deleted file's book disappears with its reading progress and read-list entries (its work goes with the
+// quick scan afterwards if nothing is left in it)
+function removeBooks(ids) {
+  if (!ids.size) return;
+  for (const id of ids) delete db.books[id];
+  for (const user of Object.keys(store.progress)) { const p = store.progress[user]; for (const id of ids) delete p[id]; }
+  for (const rl of Object.values(db.readlists)) if (rl.bookIds.some(id => ids.has(id))) rl.bookIds = rl.bookIds.filter(id => !ids.has(id));
+}
+async function runDeleteJob(job) {
+  const current = new Map(preview('all', { limit: Infinity }).items.map(x => [x.bookId, x]));
+  let picks = job.picks;
+  if (!Array.isArray(picks)) {
+    const replace = picks.keep === 'renamed';
+    picks = [...current.values()].filter(x => x.status === 'exists' && (!picks.library || picks.library === 'all' || x.libraryId === picks.library))
+      .map(x => ({ bookId: x.bookId, replace }));
+  }
+  job.total = picks.length;
+  for (let i = 0; i < picks.length; i += CHUNK) {
+    const chunk = picks.slice(i, i + CHUNK);
+    const todo = [], ops = [];
+    for (const pick of chunk) {
+      const b = db.books[pick.bookId];
+      const from = b && absOf(b);
+      if (!b || !from) { job.failed.push({ from: pick.bookId, error: 'changed' }); continue; }
+      if (!pick.replace) { todo.push({ b, at: ops.length, n: 1 }); ops.push({ kind: 'delete', from }); continue; }
+      // Keep this one under its new name: the file that has that name goes first
+      const x = current.get(b.id);
+      const other = x && x.status === 'exists' && x.other && db.books[x.other.bookId];
+      const otherAbs = other && absOf(other);
+      if (!otherAbs || b.fileName !== x.fromName) { job.failed.push({ from: x ? x.from : b.relPath, error: 'changed' }); continue; }
+      const newRel = relWithName(b.relPath, x.toName);
+      todo.push({ b, other, newRel, at: ops.length, n: 2, from: x.from });
+      ops.push({ kind: 'delete', from: otherAbs }, { kind: 'rename', from, to: path.resolve(path.dirname(from), x.toName) });
+    }
+    const base = job.done;
+    const results = ops.length ? await runOps(ops, n => { job.done = base + Math.round(n / ops.length * chunk.length); }) : [];
+    const gone = new Set(), renames = [];
+    for (const t of todo) {
+      const r1 = results[t.at] || { ok: false, error: 'not done' };
+      if (t.n === 1) {
+        if (r1.ok || r1.error === 'missing') { gone.add(t.b.id); job.deleted++; job.libraries.add(t.b.libraryId); }
+        else job.failed.push({ from: t.b.relPath.split(/[\\/]/).join('/'), error: r1.error });
+        continue;
+      }
+      const r2 = results[t.at + 1] || { ok: false, error: 'not done' };
+      if (r1.ok || r1.error === 'missing') { gone.add(t.other.id); job.deleted++; job.libraries.add(t.other.libraryId); }
+      else { job.failed.push({ from: t.other.relPath.split(/[\\/]/).join('/'), error: r1.error }); continue; }
+      if (r2.ok) { renames.push(t); job.renamed++; } else job.failed.push({ from: t.from, error: r2.error });
+    }
+    // Deleted books first: a kept file takes the deleted one's name, so its new id is the deleted book's id
+    removeBooks(gone);
+    for (const t of renames) moveBook(t.b, t.newRel);
+    job.done = base + chunk.length;
+    if (gone.size) { store.saveLibrary(); store.saveProgress(); }
+    await new Promise(r => setImmediate(r));
+  }
+  store.reindex();
+  store.saveLibrary();
+  store.saveProgress();
+}
+
+/* ---------------- merging works: their files move into one work's folder ---------------- */
+async function runMergeJob(job) {
+  const { target, sources } = job.picks;
+  const t = db.series[target];
+  const tLib = t && db.libraries[t.libraryId];
+  if (!t || !tLib || t.oneshot) throw Object.assign(new Error('The work to merge into must be a folder'), { code: 'mergeTarget' });
+  const tRoot = path.resolve(tLib.root);
+  const tDir = path.resolve(tRoot, t.relPath);
+  if (!tDir.startsWith(tRoot + path.sep)) throw new Error('outside the library folder');
+  const srcs = (sources || []).map(id => db.series[id]).filter(s => s && s.id !== t.id);
+  // Names already in the target folder (and claimed by earlier files of this merge): never overwritten
+  const names = new Set(store.booksOf(t.id).map(b => b.fileName.toLowerCase()));
+  const plan = [];
+  for (const s of srcs) for (const b of store.booksOf(s.id).slice()) plan.push({ s, b });
+  job.total = plan.length;
+  for (let i = 0; i < plan.length; i += CHUNK) {
+    const chunk = plan.slice(i, i + CHUNK);
+    const todo = [];
+    for (const { s, b } of chunk) {
+      const from = absOf(b);
+      if (!from || db.books[b.id] !== b) { job.failed.push({ from: b.relPath, error: 'changed' }); continue; }
+      if (names.has(b.fileName.toLowerCase())) { job.failed.push({ from: b.relPath.split(/[\\/]/).join('/'), error: 'exists' }); continue; }
+      names.add(b.fileName.toLowerCase());
+      todo.push({ s, b, newRel: path.join(t.relPath, b.fileName), op: { kind: 'move', from, to: path.join(tDir, b.fileName) } });
+    }
+    const base = job.done;
+    const results = todo.length ? await runOps(todo.map(x => x.op), n => { job.done = base + Math.round(n / todo.length * chunk.length); }) : [];
+    const moved = new Map();
+    todo.forEach((x, k) => {
+      const r = results[k] || { ok: false, error: 'not done' };
+      if (!r.ok) { names.delete(x.b.fileName.toLowerCase()); job.failed.push({ from: x.b.relPath.split(/[\\/]/).join('/'), error: r.error }); return; }
+      job.libraries.add(x.b.libraryId);
+      x.b.libraryId = t.libraryId;
+      const oldId = x.b.id;
+      moved.set(oldId, moveBook(x.b, x.newRel));
+      x.b.seriesId = t.id;
+      job.moved++;
+    });
+    if (moved.size) for (const rl of Object.values(db.readlists)) if (rl.bookIds.some(id => moved.has(id))) rl.bookIds = rl.bookIds.map(id => moved.get(id) || id);
+    job.done = base + chunk.length;
+    if (moved.size) { store.reindex(); store.saveLibrary(); store.saveProgress(); }
+    await new Promise(r => setImmediate(r));
+  }
+  job.libraries.add(t.libraryId);
+  store.reindex();
+  // Works left without books are gone (their collections now hold the target); their emptied folders too
+  const rmdirs = [];
+  for (const s of srcs) {
+    if (store.booksOf(s.id).length) continue;
+    for (const c of Object.values(db.collections)) if (c.seriesIds.includes(s.id)) c.seriesIds = [...new Set(c.seriesIds.map(id => (id === s.id ? t.id : id)))];
+    if (job.metadata) job.metadata.forgetSeries(s);
+    delete db.series[s.id];
+    const lib = db.libraries[s.libraryId];
+    if (!s.oneshot && lib && s.relPath) {
+      const root = path.resolve(lib.root), dir = path.resolve(root, s.relPath);
+      if (dir.startsWith(root + path.sep)) rmdirs.push({ kind: 'rmdir', from: dir, rel: s.relPath });
+    }
+  }
+  if (rmdirs.length) {
+    const res = await runOps(rmdirs.map(({ kind, from }) => ({ kind, from })));
+    job.foldersKept = rmdirs.filter((d, k) => !(res[k] && res[k].ok)).map(d => d.rel.split(/[\\/]/).join('/')); // other files are still in them
+  }
+  t.updated = new Date().toISOString();
+  store.reindex();
+  store.saveLibrary();
+  store.saveProgress();
+}
+
+/* ---------------- works that look like the same work (merge suggestions) ----------------
+ * Two works (series of the same version: Regular with Regular…) are suggested together when their metadata
+ * says they're one: matched to the same entry of a metadata site, sharing a link, or sharing a title (main or
+ * alternative, ignoring case/punctuation). Different versions (Colored, Raw…) are never suggested: they're
+ * grouped as versions already. Groups an administrator dismissed ("not the same") aren't suggested again. */
+const REASONS = ['match', 'link', 'title']; // strongest first
+function mergeSuggestions({ library = 'all', limit = 200 } = {}) {
+  const { normTitle } = require('./metadata/providers');
+  const dismissed = new Set((db.settings && db.settings.mergeDismissed) || []);
+  const list = Object.values(db.series).filter(s => !s.hidden && (library === 'all' || !library || s.libraryId === library));
+  const meta = new Map(list.map(s => [s.id, store.seriesMeta(s)]));
+  const parent = new Map(list.map(s => [s.id, s.id]));
+  const find = id => { while (parent.get(id) !== id) { parent.set(id, parent.get(parent.get(id))); id = parent.get(id); } return id; };
+  const why = new Map(); // root → { reason, detail }
+  const keys = new Map(); // `${reason}\0${key}` → [series ids]
+  const add = (reason, key, id, detail) => { if (!key) return; const k = reason + '\0' + key; if (!keys.has(k)) keys.set(k, { ids: [], detail }); const e = keys.get(k); if (!e.ids.includes(id)) e.ids.push(id); };
+  for (const s of list) {
+    for (const m of (s.provider && s.provider.matches) || []) add('match', m.provider + ':' + m.id, s.id, { provider: m.provider, id: m.id });
+    for (const url of meta.get(s.id).links) add('link', String(url).replace(/\/+$/, '').toLowerCase(), s.id, { url });
+    const m = meta.get(s.id);
+    for (const title of [m.title, s.name].concat(m.altTitles || [])) { const n = normTitle(title); if (n && n.length > 2) add('title', n, s.id, { title }); }
+  }
+  for (const [k, e] of keys) {
+    if (e.ids.length < 2 || e.ids.length > 20) continue; // (a key shared by dozens of works says nothing)
+    const reason = k.split('\0')[0];
+    for (let i = 1; i < e.ids.length; i++) {
+      const a = e.ids[0], b = e.ids[i];
+      if (meta.get(a).edition !== meta.get(b).edition) continue; // versions of one work, not duplicates
+      const ra = find(a), rb = find(b);
+      const best = [why.get(ra), why.get(rb), { reason, detail: e.detail }].filter(Boolean).sort((x, y) => REASONS.indexOf(x.reason) - REASONS.indexOf(y.reason))[0];
+      if (ra !== rb) parent.set(rb, ra);
+      why.set(find(a), best);
+    }
+  }
+  const groups = new Map();
+  for (const s of list) { const r = find(s.id); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(s); }
+  const out = [];
+  for (const [root, members] of groups) {
+    if (members.length < 2) continue;
+    const key = members.map(s => s.id).sort().join(',');
+    if (dismissed.has(key)) continue;
+    const works = members.map(s => {
+      const m = meta.get(s.id), lib = db.libraries[s.libraryId] || {};
+      return { id: s.id, title: m.title, edition: m.edition, libraryId: s.libraryId, library: lib.name || '', path: String(s.relPath || '').split(/[\\/]/).join('/'),
+        oneshot: Boolean(s.oneshot), books: store.booksOf(s.id).length, matched: Boolean(s.provider && (s.provider.matches || []).length) };
+    }).sort((a, b) => (a.oneshot - b.oneshot) || (b.books - a.books) || store.collator.compare(a.path, b.path));
+    // Suggested target: a folder work, the one with the most books
+    const target = (works.find(w => !w.oneshot) || {}).id || null;
+    out.push(Object.assign({ key, works, target }, why.get(root) || { reason: 'title', detail: {} }));
+  }
+  out.sort((a, b) => REASONS.indexOf(a.reason) - REASONS.indexOf(b.reason) || store.collator.compare(a.works[0].title, b.works[0].title));
+  return { total: out.length, groups: out.slice(0, limit) };
+}
+function dismissSuggestion(key) {
+  db.settings.mergeDismissed = [...new Set(((db.settings.mergeDismissed) || []).concat(String(key)))].slice(-5000);
+  store.saveLibrary();
+}
+
 // Waits for a job to finish (tests, small batches): resolves with its final view
 function waitFor(id, timeoutMs = 600000) {
   return new Promise((resolve, reject) => {
@@ -322,4 +518,4 @@ const EXAMPLES = ['chapter-0.cbz', 'chapter-1.1.cbz', 'chapter-1x1.cbz', 'Chapte
   'chapter-83-the-end.cbz', 'Chapter 5 - Spider-Man.cbz', 'ch_12_the_end.cbz', 'vol.3.cbz', 'ep-04.pdf', 'Saga 001.cbz'];
 function examples() { return EXAMPLES.map(f => ({ from: f, to: proposedName(f) })); }
 
-module.exports = { preview, enqueue, waitFor, getJob, proposedName, parse, info, examples };
+module.exports = { preview, enqueue, waitFor, getJob, proposedName, parse, info, examples, mergeSuggestions, dismissSuggestion };

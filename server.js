@@ -104,7 +104,7 @@ async function handleApi(req, res, url) {
       }
       // A cover upload (image as base64 in JSON) may be bigger than other requests
       // Bigger bodies: an uploaded cover image, a long list of files to rename
-      body = await readBody(req, /^\/api\/series\/[\w-]+\/cover$/.test(url.pathname) ? 12 * 1024 * 1024 : url.pathname === '/api/rename/apply' ? 16 * 1024 * 1024 : MAX_BODY);
+      body = await readBody(req, /^\/api\/series\/[\w-]+\/cover$/.test(url.pathname) ? 12 * 1024 * 1024 : (url.pathname === '/api/rename/apply' || url.pathname === '/api/files/delete') ? 16 * 1024 * 1024 : MAX_BODY);
       if (!body || typeof body !== 'object' || Array.isArray(body)) body = {};
     }
 
@@ -153,7 +153,7 @@ async function handleApi(req, res, url) {
         scanService: scanner.serviceInfo(),
         metadata: metadata.info(),
         rename: rename.info(),
-        media: media.info()
+        media: Object.assign(media.info(), { responses: library.cacheInfo() })
       });
     }
     // ---- server settings (administrators) ----
@@ -250,6 +250,7 @@ server.listen(PORT, HOST, () => {
   console.log(`Libraries: ${libs}${libs ? ' (scanning for changes)' : ' (add one on the Libraries page)'}`);
   scanner.init();      // start the scan service (unless an admin stopped it)
   scanner.scanAll();
+media.scheduleWarm(15000); // work covers into the cover cache (also after every scan)
   scanner.startSchedule();
 });
 

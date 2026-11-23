@@ -179,16 +179,16 @@ function readAhead(book, file, mtimeMs, n, prefetch, pageCount) {
 }
 
 // A book's cover (its first page), also kept on disk: { buf, type, etag }
-async function bookCover(book, file) {
-  stats.requests++;
+async function bookCover(book, file, { warming = false } = {}) {
+  if (!warming) stats.requests++;
   const st = await fileStat(file);
   const key = `t:${book.id}:${Math.round(st.mtimeMs)}`;
   const etag = `"${book.id}-${Math.round(st.mtimeMs)}-1"`;
   let v = get(key);
-  if (v) { stats.hits++; return Object.assign({ etag }, v); }
+  if (v) { if (!warming) stats.hits++; return Object.assign({ etag }, v); }
   v = await diskGet(key);
-  if (v) { stats.diskHits++; set(key, v); return Object.assign({ etag }, v); }
-  stats.misses++;
+  if (v) { if (!warming) stats.diskHits++; set(key, v); return Object.assign({ etag }, v); }
+  if (!warming) stats.misses++;
   v = await load(book, file, st.mtimeMs, 1, 0);
   set(key, v);
   diskSet(key, v);
@@ -210,16 +210,64 @@ async function imageFile(file, version, etag) {
   return Object.assign({ etag }, v);
 }
 
+/* ---------------- works: covers ready before they're asked for ----------------
+ * After scans (and once after startup) the covers of every work that shows a page of its own (first page of
+ * its first CBZ) are read into the disk cache, one at a time, so a grid of thousands of works never waits for
+ * archives. Works whose cover is a downloaded/custom image are skipped (that's already a file). */
+const warm = { running: false, total: 0, done: 0, added: 0, startedAt: null, finishedAt: null, again: false };
+function coverBookOf(s) {
+  if (s.hidden || store.coverFromMetadata(s)) return null;
+  return store.booksOf(s.id).find(b => b.format === 'cbz' && b.pageCount) || null;
+}
+async function warmCovers() {
+  if (warm.running) { warm.again = true; return; }
+  Object.assign(warm, { running: true, again: false, total: 0, done: 0, added: 0, startedAt: new Date().toISOString(), finishedAt: null });
+  try {
+    const have = new Set((await fs.promises.readdir(THUMB_DIR).catch(() => [])).map(n => n.replace(/\.[^.]+$/, '')));
+    const todo = [];
+    for (const s of Object.values(store.db.series)) {
+      const b = coverBookOf(s);
+      const lib = b && store.db.libraries[b.libraryId];
+      if (!lib) continue;
+      todo.push({ b, file: path.join(lib.root, b.relPath) });
+    }
+    warm.total = todo.length;
+    for (const { b, file } of todo) {
+      // Already on disk? (the key needs the file's date)
+      const st = await fs.promises.stat(file).catch(() => null);
+      if (st && !have.has(diskName(`t:${b.id}:${Math.round(st.mtimeMs)}`)) && store.db.books[b.id] === b) {
+        try { await bookCover(b, file, { warming: true }); warm.added++; } catch { /* unreadable: the grid shows a placeholder */ }
+      }
+      warm.done++;
+      await new Promise(r => setImmediate(r)); // requests from people go first
+    }
+  } finally {
+    warm.running = false;
+    warm.finishedAt = new Date().toISOString();
+    if (warm.added) console.log(`[media] ${warm.added} work cover(s) cached ahead (${warm.total} works)`);
+    if (warm.again) setTimeout(warmCovers, 1000).unref();
+  }
+}
+// Started a little after startup, and after every scan (scanner.js)
+let warmTimer = null;
+function scheduleWarm(ms = 3000) {
+  if (process.env.THOTH_NO_WARM === '1') return;
+  clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => warmCovers().catch(e => console.error('[media] warming covers:', e.message)), ms);
+  warmTimer.unref();
+}
+
 // What the Processes page shows
 function info() {
   return {
     mode: proc.mode, pid: proc.pid, startedAt: proc.child ? proc.startedAt : null, busy: proc.pending.size, lastError: proc.lastError,
     idleCloseMs: IDLE_MS, prefetch: PREFETCH,
     cache: { entries: lru.size, bytes, maxBytes: MAX_BYTES },
+    warm: Object.assign({}, warm),
     stats: Object.assign({}, stats)
   };
 }
 // Drop what's cached for a book or everything (tests, changed covers)
 function clear() { lru.clear(); bytes = 0; }
 
-module.exports = { page, bookCover, imageFile, info, clear, THUMB_DIR };
+module.exports = { page, bookCover, imageFile, info, clear, warmCovers, scheduleWarm, THUMB_DIR };

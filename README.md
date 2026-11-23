@@ -30,6 +30,10 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   and people chips on a work page open the library filtered by them. Works can also be sorted by **score**
   (best first, works without one last). Click a work's cover to see it full size. Global search covers series, books, authors,
   genres, tags, collections and read lists.
+- **Works are cached too**: work lists, filters, work pages and Home are answered from a key-value cache of
+  ready answers (per user, `THOTH_RESPONSE_CACHE_MB`, default 32) until something changes (any edit, scan or
+  metadata update, or that user's reading progress). After every scan the **covers of every work are read
+  ahead** into the cover cache, one at a time in the background, so big grids never wait for archives.
 - **Pages and covers are fast**: they're answered from a key-value cache (recent images in memory,
   `THOTH_MEDIA_CACHE_MB`, default 128; covers also on disk in `data/cache/thumbs/`, so thousands of covers
   aren't read from their archives again after a restart). What isn't cached is read by a separate media
@@ -168,8 +172,8 @@ them in small batches, each process reading several files at once. Libraries are
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
 **Processes page (administrators).** Shows the web server, the scan service, the metadata lookups, file
-renaming (its queue, and a process that exists only while jobs run) and **pages and covers** (the media
-service: its cache and its process):
+management jobs (their queue, and a process that exists only while jobs run) and the **cache** (pages, covers
+and works: sizes, answers from the cache, covers read ahead, and the media process):
 process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting. Scans and
 metadata batches show a **progress bar with the time left**, estimated from the speed so far (scans: finding
 files → reading new/changed files *x of y* → saving; metadata: works done of the batch, and which site each
@@ -356,9 +360,11 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
   -v thoth-app:/app -v /srv/comics:/media:ro thoth
 ```
 
-### Renaming files
+### File management (renaming, deleting duplicates, merging works)
 
-**Rename files** (sidebar, administrators) checks a library, or all of them, for book files whose names don't
+**File management** (sidebar, administrators) has two tabs: *Rename files* and *Merge works*.
+
+**Rename files** checks a library, or all of them, for book files whose names don't
 follow the usual format and suggests new names:
 
 | Now | Suggested |
@@ -384,7 +390,21 @@ Renaming keeps everything attached to the book: reading progress and read lists 
 *Also rename matching JSON files of folder sources* (on by default) `chapter-1.json` becomes `Chapter 1.json` so
 it still matches.
 
-**Large batches.** Renaming is a background **job**: *Rename selected* answers at once and the page shows the
+**Deleting duplicates.** When a file's new name is already taken by another file (*name exists*), the row shows
+both files (pages and size) and offers **Delete this file** or **Keep this one** (the other is deleted and this
+one renamed). A bar above the list does it for all of them at once: delete those files (keep the existing ones)
+or delete the existing ones (rename these). Deleting can't be undone and always asks first; reading progress
+and read-list entries of a deleted file go with it.
+
+**Merging works.** *Merge works* moves the files of some works into the folder of the one you keep, so they
+become one work (reading progress and read lists follow the files; emptied folders are removed; a file whose
+name is already in the kept folder stays where it is and is reported). It **suggests** merges when the
+metadata says two works are the same: matched to the same entry of a metadata site, sharing a link, or sharing
+a title (main or alternative). Different versions (Colored, Raw…) are never suggested: they're already shown
+as versions of one work. *Not the same* hides a suggestion for good. *Merge works by hand* finds any works by
+title or folder to merge them.
+
+**Large batches.** Renaming, deleting and merging are background **jobs**: *Rename selected* answers at once and the page shows the
 job's progress (you can leave and come back). Jobs wait in a queue and run one at a time; each goes through its
 files in chunks of 200, handed to a separate low-priority process (started for the queue, closed when it's
 empty), and the server keeps answering between chunks. The list shows the first 2000 proposals (the counts

@@ -11,7 +11,8 @@
     settings: { key: 'nav.settings' },
     'manage-libraries': { adminOnly: true },
     'metadata-sources': { adminOnly: true },
-    rename: { adminOnly: true },
+    files: { adminOnly: true },
+    rename: { adminOnly: true }, // old address of File management
     processes: { adminOnly: true },
     'server-settings': { adminOnly: true },
     users: { adminOnly: true, key: 'nav.users' },
@@ -339,7 +340,7 @@
     if (isAdmin()) {
       items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
       items.push({ href: '#metadata-sources', icon: 'dataset', key: 'nav.metadataSources' });
-      items.push({ href: '#rename', icon: 'edit', key: 'nav.rename' });
+      items.push({ href: '#files', icon: 'folder_open', key: 'nav.files', match: ['files', 'rename'] });
       items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
       items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });

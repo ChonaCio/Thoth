@@ -4,18 +4,36 @@
 //   { type: 'rename', reqId, ops: [{ from, to, json: [{ from, to }] }] }
 //   → progress { reqId, done } … → result { reqId, result: [{ ok, error, json: [{ ok, error, from }] }] }  (same order as ops)
 const fs = require('fs');
+const path = require('path');
 
 const reason = e => (e.code === 'EROFS' ? 'read-only' : e.code === 'EACCES' || e.code === 'EPERM' ? 'no permission' : e.code || e.message);
 
+// op.kind: 'rename' (default) | 'move' (into another folder, created if needed) — never overwriting —
+// | 'delete' (a file) | 'rmdir' (a folder, only if empty)
 async function run(ops, onProgress = () => {}) {
   const out = [];
   for (let i = 0; i < ops.length; i++) {
     const op = ops[i];
     const r = { ok: false, error: null, json: [] };
-    // A case-only change ("chapter 1" → "Chapter 1") is fine; otherwise never overwrite
-    if (fs.existsSync(op.to) && op.from.toLowerCase() !== op.to.toLowerCase()) r.error = 'exists';
-    else {
-      try { await fs.promises.rename(op.from, op.to); r.ok = true; } catch (e) { r.error = reason(e); }
+    if (op.kind === 'delete') {
+      try { await fs.promises.unlink(op.from); r.ok = true; } catch (e) { r.error = e.code === 'ENOENT' ? 'missing' : reason(e); }
+    } else if (op.kind === 'rmdir') {
+      try { await fs.promises.rmdir(op.from); r.ok = true; } catch (e) { r.error = e.code === 'ENOTEMPTY' || e.code === 'EEXIST' ? 'notEmpty' : reason(e); }
+    } else if (fs.existsSync(op.to) && op.from.toLowerCase() !== op.to.toLowerCase()) {
+      // A case-only change ("chapter 1" → "Chapter 1") is fine; otherwise never overwrite
+      r.error = 'exists';
+    } else {
+      try {
+        if (op.kind === 'move') await fs.promises.mkdir(path.dirname(op.to), { recursive: true });
+        try { await fs.promises.rename(op.from, op.to); }
+        catch (e) {
+          if (e.code !== 'EXDEV' || op.kind !== 'move') throw e;
+          // Another disk: copy (never over an existing file), then remove the original
+          await fs.promises.copyFile(op.from, op.to, fs.constants.COPYFILE_EXCL);
+          await fs.promises.unlink(op.from);
+        }
+        r.ok = true;
+      } catch (e) { r.error = reason(e); }
     }
     if (r.ok) {
       for (const j of op.json || []) {

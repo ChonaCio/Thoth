@@ -476,8 +476,57 @@ async function sendFile(req, res, book, download) {
 
 /* ---------------- router ---------------- */
 // ctx: { method, pathname, query, body, req, res, user, send(status, body) } → true when handled
+/* ---------------- works responses: key-value cache ----------------
+ * Work lists, filters, work pages and home are answered from memory when nothing changed since they were
+ * built: the key is the user (and what they may see) + the request; an entry is valid while the data
+ * generation (any save/reindex) and the reading-progress version are the same. LRU by bytes. */
+const RESPONSE_ROUTES = /^\/api\/(series|series\/facets|series\/[\w-]+|home)$/;
+const RESPONSE_MAX_BYTES = Math.max(4, Number(process.env.THOTH_RESPONSE_CACHE_MB) || 32) * 1024 * 1024;
+const responses = new Map();
+let responseBytes = 0;
+const responseStats = { hits: 0, misses: 0 };
+function responseVersion() { return store.generation() + ':' + store.progressVersion(); }
+function responseKey(user, p, q) {
+  const sorted = [...q.entries()].sort((a, b) => (a[0] + '=' + a[1]).localeCompare(b[0] + '=' + b[1]));
+  return [user.username.toLowerCase(), user.role, Array.isArray(user.libraries) ? user.libraries.join(',') : '*', p, new URLSearchParams(sorted).toString()].join('\0');
+}
+function responsePut(key, body) {
+  const old = responses.get(key);
+  if (old) { responseBytes -= old.body.length; responses.delete(key); }
+  if (body.length > RESPONSE_MAX_BYTES / 8) return;
+  responses.set(key, { ver: responseVersion(), body });
+  responseBytes += body.length;
+  while (responseBytes > RESPONSE_MAX_BYTES && responses.size) { const [k, o] = responses.entries().next().value; responses.delete(k); responseBytes -= o.body.length; }
+}
+function cacheInfo() {
+  return { entries: responses.size, bytes: responseBytes, maxBytes: RESPONSE_MAX_BYTES, hits: responseStats.hits, misses: responseStats.misses };
+}
+const sendCachedJson = (res, body, hit) => {
+  res.writeHead(200, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store', 'X-Thoth-Cache': hit ? 'hit' : 'miss' });
+  res.end(body);
+  return true;
+};
+
 async function handle(ctx) {
-  const { method, pathname: p, query: q, body, req, res, user, send } = ctx;
+  const { method, pathname: p, query: q, body, req, res, user } = ctx;
+  let { send } = ctx;
+  if (method === 'GET' && RESPONSE_ROUTES.test(p)) {
+    const key = responseKey(user, p, q);
+    const hit = responses.get(key);
+    if (hit && hit.ver === responseVersion()) {
+      responses.delete(key); responses.set(key, hit); // LRU bump
+      responseStats.hits++;
+      return sendCachedJson(res, hit.body, true);
+    }
+    responseStats.misses++;
+    const ver = responseVersion();
+    send = (status, data) => {
+      if (status !== 200) return ctx.send(status, data);
+      const json = JSON.stringify(data);
+      if (ver === responseVersion()) responsePut(key, json); // (not if something changed while it was built)
+      return sendCachedJson(res, json, false);
+    };
+  }
   const admin = isAdmin(user);
   const requireAdmin = () => { if (!admin) throw httpError(403, 'forbidden'); };
   let m;
@@ -674,9 +723,65 @@ async function handle(ctx) {
     if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
     return send(202, { job });
   }
+  // ---- File management: deleting files, merging works (same job queue as renaming) ----
+  const fileJobDone = (by, what) => j => {
+    for (const id of j.libraries) if (db.libraries[id]) scanner.scanLibrary(id, { mode: 'quick', reason: 'files' }).catch(() => {});
+    console.log(`[library] ${by} ${what}: ${j.renamed ? `${j.renamed} renamed, ` : ''}${j.deleted ? `${j.deleted} deleted, ` : ''}${j.moved ? `${j.moved} moved, ` : ''}${j.failedCount} failed`);
+  };
+  // POST /api/files/delete { items: [{ bookId, replace }] } or { allExists: true, library, keep: 'existing'|'renamed' } → 202 { job }
+  if (p === '/api/files/delete' && method === 'POST') {
+    requireAdmin();
+    const picks = body.allExists
+      ? { allExists: true, library: typeof body.library === 'string' ? body.library : 'all', keep: body.keep === 'renamed' ? 'renamed' : 'existing' }
+      : (Array.isArray(body.items) ? body.items : []).slice(0, 200000).filter(x => x && typeof x.bookId === 'string').map(x => ({ bookId: x.bookId, replace: x.replace === true }));
+    if (Array.isArray(picks) && !picks.length) throw httpError(400, 'invalid');
+    const job = rename.enqueue(picks, { kind: 'delete', metadata, by: user.username, onDone: fileJobDone(user.username, 'deleted files') });
+    if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
+    return send(202, { job });
+  }
+  // GET /api/files/works?q= → { works: [{ id, title, library, path, books, oneshot }] } (folders/files, not grouped)
+  if (p === '/api/files/works' && method === 'GET') {
+    requireAdmin();
+    const term = searchable(q.get('q'));
+    const works = [];
+    if (term) for (const s of Object.values(db.series)) {
+      if (s.hidden) continue;
+      const m = store.seriesMeta(s);
+      if (!searchable(m.title).includes(term) && !searchable(s.relPath).includes(term) && !m.altTitles.some(x => searchable(x).includes(term))) continue;
+      works.push({ id: s.id, title: m.title, edition: m.edition, library: (db.libraries[s.libraryId] || {}).name || '', libraryId: s.libraryId,
+        path: String(s.relPath || '').split(/[\\/]/).join('/'), books: store.booksOf(s.id).length, oneshot: Boolean(s.oneshot) });
+      if (works.length >= 30) break;
+    }
+    works.sort((a, b) => store.collator.compare(a.title, b.title) || store.collator.compare(a.path, b.path));
+    return send(200, { works });
+  }
+  // GET /api/files/merge-suggestions?library=→ { total, groups: [{ key, reason, detail, target, works }] }
+  if (p === '/api/files/merge-suggestions' && method === 'GET') {
+    requireAdmin();
+    return send(200, rename.mergeSuggestions({ library: q.get('library') || 'all' }));
+  }
+  if (p === '/api/files/merge-suggestions/dismiss' && method === 'POST') {
+    requireAdmin();
+    if (typeof body.key !== 'string' || !body.key) throw httpError(400, 'invalid');
+    rename.dismissSuggestion(body.key);
+    return send(200, { ok: true });
+  }
+  // POST /api/files/merge { target, sources: [seriesId] } → 202 { job }: the sources' files move into the target's folder
+  if (p === '/api/files/merge' && method === 'POST') {
+    requireAdmin();
+    const t = db.series[body.target];
+    if (!t) throw httpError(404, 'notFound');
+    if (t.oneshot) throw httpError(400, 'mergeTarget');
+    const sources = [...new Set((Array.isArray(body.sources) ? body.sources : []).filter(id => typeof id === 'string' && id !== t.id))];
+    if (!sources.length || sources.some(id => !db.series[id])) throw httpError(400, 'invalid');
+    const job = rename.enqueue({ target: t.id, sources }, { kind: 'merge', metadata, by: user.username, onDone: fileJobDone(user.username, `merged ${sources.length} work(s) into "${store.seriesMeta(t).title}"`) });
+    if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
+    return send(202, { job });
+  }
+  if ((p === '/api/files/jobs' || p === '/api/rename/jobs') && method === 'GET') { requireAdmin(); return send(200, { jobs: rename.info().jobs }); }
   // GET /api/rename/jobs → { jobs: [...] } (queued, running, last finished); /api/rename/jobs/:id → { job }
   if (p === '/api/rename/jobs' && method === 'GET') { requireAdmin(); return send(200, { jobs: rename.info().jobs }); }
-  if ((m = p.match(/^\/api\/rename\/jobs\/([\w-]+)$/)) && method === 'GET') {
+  if ((m = p.match(/^\/api\/(?:rename|files)\/jobs\/([\w-]+)$/)) && method === 'GET') {
     requireAdmin();
     const job = rename.getJob(m[1]);
     if (!job) throw httpError(404, 'notFound');
@@ -966,4 +1071,5 @@ async function handle(ctx) {
   return false;
 }
 
-module.exports = { handle, httpError };
+module.exports = {
+  cacheInfo, handle, httpError };

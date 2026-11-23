@@ -410,6 +410,8 @@ async function runScan(job) {
       (job.mode === 'quick' && ls.quick ? `; ${ls.dirsReused} of ${ls.dirs} folders unchanged` : '') + `) in ${Date.now() - started} ms`);
     // Online metadata for works that don't have it yet (in the background, if the library fetches it automatically)
     try { metadata.afterScan(libraryId); } catch (e) { console.error('[metadata]', e.message); }
+    // Covers of new works into the cover cache, in the background
+    require('./media').scheduleWarm();
     return lib.lastScan;
   } catch (e) {
     if (e.code === 'cancelled') throw e; // stopped from the Processes page: not an error, it runs again later

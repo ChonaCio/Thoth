@@ -1041,7 +1041,7 @@
 
   /* ================= RENAME FILES (admins) ================= */
   // Check a library for files to rename (chapter-1.cbz → Chapter 1.cbz), review, rename the picked ones
-  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission' };
+  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', notEmpty: 'files.err.notEmpty' };
   // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
   // except `excluded`; mode 'some' = only the ticked ones (`selected`)
   function renameState() {
@@ -1061,7 +1061,7 @@
     return api('GET', '/api/rename/preview?' + Store.qs({ library: st.library })).then(function (r) {
       st.data = r;
       st.mode = 'all'; st.selected = {}; st.excluded = {};
-    }, function (e) { st.error = e; }).then(function () { st.loading = false; if (A().parseRoute().name === 'rename') A().renderPage(); });
+    }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isFilesRoute()) A().renderPage(); });
   }
   // A queued/running rename job: its progress until it's done, then the result and a fresh check
   var renamePollTimer = null;
@@ -1075,10 +1075,10 @@
       if (finished) {
         st.result = r.job; st.job = null;
         invalidate(); markStale(cache.series); markStale(cache.book);
-        if (A().parseRoute().name === 'rename') runRenamePreview(); else st.data = null;
+        if (isFilesRoute()) runRenamePreview(); else st.data = null;
         return;
       }
-      if (A().parseRoute().name === 'rename') { var el = $('#ren-job'); if (el) el.outerHTML = renameJobHtml(st.job); else A().renderPage(); }
+      if (isFilesRoute()) { var el = $('#ren-job'); if (el) el.outerHTML = renameJobHtml(st.job); else A().renderPage(); }
       renamePollTimer = setTimeout(pollRenameJob, 700);
     }, function () { renamePollTimer = setTimeout(pollRenameJob, 2000); });
   }
@@ -1089,12 +1089,43 @@
       progressBar(p, t(j.status === 'queued' ? 'ren.jobQueued' : 'ren.jobRunning'), t('ren.jobProgress', { done: j.done, total: j.total || '…', renamed: j.renamed })) +
       '<p class="muted small">' + esc(t('ren.jobHelp')) + '</p></div>';
   }
+  // File management: tabs for renaming (and deleting files whose new name is taken) and merging works
+  function isFilesRoute() { var n = A().parseRoute().name; return n === 'files' || n === 'rename'; }
+  function filesTabs(active) {
+    return '<h1 class="page-title">' + esc(t('nav.files')) + '</h1>' +
+      '<nav class="tabs files-tabs" aria-label="' + esc(t('nav.files')) + '">' +
+        '<a class="tab' + (active === 'rename' ? ' is-active' : '') + '" href="#files"' + (active === 'rename' ? ' aria-current="page"' : '') + '>' + icon('edit') + esc(t('files.tabRename')) + '</a>' +
+        '<a class="tab' + (active === 'merge' ? ' is-active' : '') + '" href="#files/merge"' + (active === 'merge' ? ' aria-current="page"' : '') + '>' + icon('collections') + esc(t('files.tabMerge')) + '</a>' +
+      '</nav>';
+  }
+  function fmtFileInfo(x) {
+    return [x.size ? fmtSize(x.size) : '', x.pageCount ? t('series.pages', { count: x.pageCount }) : ''].filter(Boolean).join(' · ');
+  }
+  // The result of a finished file job (rename, delete or merge)
+  function fileJobResult(r) {
+    if (!r) return '';
+    var lines = [];
+    if (r.renamed) lines.push(t('ren.done', { count: r.renamed }));
+    if (r.json) lines.push(t('ren.doneJson', { count: r.json }));
+    if (r.deleted) lines.push(t('files.deletedCount', { count: r.deleted }));
+    if (r.moved) lines.push(t('files.movedCount', { count: r.moved }));
+    if (!lines.length) lines.push(t('ren.done', { count: 0 }));
+    var failed = r.failed || [];
+    return '<div class="banner ' + (failed.length || r.status === 'failed' ? 'banner--error' : 'banner--ok') + '"><div>' +
+      '<strong>' + esc(lines.join(' ')) + '</strong>' +
+      (r.error ? '<p>' + esc(r.error) + '</p>' : '') +
+      (r.foldersKept && r.foldersKept.length ? '<p class="small">' + esc(t('files.foldersKept', { folders: r.foldersKept.join(', ') })) + '</p>' : '') +
+      (r.failedCount > failed.length ? '<p class="small">' + esc(t('ren.failedMore', { count: r.failedCount })) + '</p>' : '') +
+      (failed.length ? '<ul class="msrc-examples">' + failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> — ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
+    '</div></div>';
+  }
   var renamePage = {
-    title: function () { return t('nav.rename'); },
-    render: function () {
+    title: function () { return t('nav.files'); },
+    render: function (route) {
+      if (route && route.param === 'merge') return mergeRender();
       var st = renameState();
       var libs = A().state.libraries || [];
-      var head = '<h1 class="page-title">' + esc(t('nav.rename')) + '</h1>' +
+      var head = filesTabs('rename') +
         '<p class="page-lead">' + esc(t('ren.intro')) + '</p>' +
         '<details class="card card--wide msrc-how"><summary class="card__title">' + esc(t('ren.rulesTitle')) + '</summary>' +
           // Examples worked out by the server with the current rules ("—" = left as it is)
@@ -1115,18 +1146,19 @@
         '</div>';
       if (st.error) return head + errorBanner(st.error);
       if (st.loading) return head + spinner;
-      var res = st.result ? '<div class="banner ' + (st.result.failed.length || st.result.status === 'failed' ? 'banner--error' : 'banner--ok') + '"><div>' +
-          '<strong>' + esc(t('ren.done', { count: st.result.renamed })) + '</strong>' + (st.result.json ? ' ' + esc(t('ren.doneJson', { count: st.result.json })) : '') +
-          (st.result.error ? '<p>' + esc(st.result.error) + '</p>' : '') +
-          (st.result.failedCount > st.result.failed.length ? '<p class="small">' + esc(t('ren.failedMore', { count: st.result.failedCount })) + '</p>' : '') +
-          (st.result.failed.length ? '<ul class="msrc-examples">' + st.result.failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> — ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
-        '</div></div>' : '';
+      var res = fileJobResult(st.result);
       if (!st.data) return head + res + emptyState('edit', '', t('ren.start'));
       var items = st.data.items;
       var okTotal = st.data.ok != null ? st.data.ok : items.filter(function (x) { return x.status === 'ok'; }).length;
       var nSel = renameSelectedCount(st);
       var summary = '<p class="muted small">' + esc(t('ren.summary', { checked: st.data.checked, count: okTotal, conflicts: st.data.conflicts != null ? st.data.conflicts : items.length - okTotal })) + '</p>' +
-        (st.data.truncated ? '<p class="notice notice--info small">' + esc(t('ren.truncated', { shown: items.length, total: st.data.total })) + '</p>' : '');
+        (st.data.truncated ? '<p class="notice notice--info small">' + esc(t('ren.truncated', { shown: items.length, total: st.data.total })) + '</p>' : '') +
+        // Files whose new name is already taken by another file: delete one of the two (all at once or per file)
+        (st.data.exists ? '<div class="notice notice--info files-exists"><span>' + esc(t('files.existsSummary', { count: st.data.exists })) + '</span>' +
+          '<span class="files-exists__actions">' +
+            '<button class="btn btn--outline btn--small" data-lib="files-del-all" data-keep="existing"' + (st.job ? ' disabled' : '') + '>' + icon('delete') + esc(t('files.deleteAllRenamed')) + '</button>' +
+            '<button class="btn btn--outline btn--small" data-lib="files-del-all" data-keep="renamed"' + (st.job ? ' disabled' : '') + '>' + icon('delete') + esc(t('files.deleteAllExisting')) + '</button>' +
+          '</span></div>' : '');
       if (!items.length) return head + res + summary + emptyState('check', t('ren.allGoodTitle'), t('ren.allGood'));
       // Grouped by work
       var groups = [], byWork = {};
@@ -1147,11 +1179,19 @@
               var bad = x.status !== 'ok';
               return '<li class="ren-row' + (bad ? ' is-conflict' : '') + '"><label class="checkbox"><input type="checkbox" data-ren="' + x.bookId + '"' + (bad ? ' disabled' : isRenameSelected(st, x.bookId) ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
                 '<span class="ren-row__names"><code class="ren-from">' + esc(x.fromName) + '</code><span class="ren-arrow" aria-hidden="true">→</span><code class="ren-to">' + esc(x.toName) + '</code></span></label>' +
-                (bad ? '<span class="badge badge--danger" title="' + esc(x.with || '') + '">' + esc(t('ren.status.' + x.status)) + '</span>' : '') + '</li>';
+                (bad ? '<span class="badge badge--danger" title="' + esc(x.with || '') + '">' + esc(t('ren.status.' + x.status)) + '</span>' : '') +
+                // The new name is another file: show both and offer to delete one
+                (x.status === 'exists' && x.other ? '<div class="files-dup">' +
+                  '<span class="muted small">' + esc(t('files.thisFile', { info: fmtFileInfo(x) || '—' })) + ' · ' + esc(t('files.otherFile', { name: x.other.fileName, info: fmtFileInfo(x.other) || '—' })) + '</span>' +
+                  '<span class="files-dup__actions">' +
+                    '<button class="btn btn--text btn--small btn--danger" data-lib="files-del" data-id="' + x.bookId + '" data-name="' + esc(x.fromName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('delete') + esc(t('files.deleteThis')) + '</button>' +
+                    '<button class="btn btn--text btn--small" data-lib="files-replace" data-id="' + x.bookId + '" data-name="' + esc(x.other.fileName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('edit') + esc(t('files.keepThis')) + '</button>' +
+                  '</span></div>' : '') + '</li>';
             }).join('') + '</ul></section>';
         }).join('');
     },
-    mount: function (el) {
+    mount: function (el, route) {
+      if (route && route.param === 'merge') return mergeMount(el);
       var st = renameState();
       var lib = $('#ren-library', el);
       if (lib) lib.addEventListener('change', function () { st.library = lib.value; st.data = null; st.result = null; runRenamePreview(); });
@@ -1170,9 +1210,10 @@
         }
       });
     },
-    enter: function () {
+    enter: function (route) {
+      if (route && route.param === 'merge') return mergeEnter();
       var st = renameState();
-      if (!st.rules) api('GET', '/api/rename/rules').then(function (r) { st.rules = r.examples; if (A().parseRoute().name === 'rename') A().renderPage(); }, function () {});
+      if (!st.rules) api('GET', '/api/rename/rules').then(function (r) { st.rules = r.examples; if (isFilesRoute()) A().renderPage(); }, function () {});
       // A job still running (or started on another visit): follow it
       if (!st.job) api('GET', '/api/rename/jobs').then(function (r) {
         var live = (r.jobs || []).filter(function (j) { return j.status === 'queued' || j.status === 'running'; }).pop();
@@ -1182,6 +1223,161 @@
       if (!st.data && !st.loading) runRenamePreview();
     }
   };
+
+  /* ---- File management → Merge works ----
+   * Suggestions (works the metadata says are the same) and a manual merge: pick works, choose the one to keep;
+   * the others' files move into its folder (a job in the same queue as renaming). */
+  function mergeState() {
+    if (!cache.merge) cache.merge = { library: 'all', data: null, loading: false, error: null, choice: {}, job: null, result: null, q: '', found: null, manual: [], manualTarget: null };
+    return cache.merge;
+  }
+  function loadMergeSuggestions() {
+    var st = mergeState();
+    st.loading = true; st.error = null;
+    if (isFilesRoute()) A().renderPage();
+    return api('GET', '/api/files/merge-suggestions?' + Store.qs({ library: st.library })).then(function (r) {
+      st.data = r; st.choice = {};
+      r.groups.forEach(function (g) { var inc = {}; g.works.forEach(function (w) { inc[w.id] = true; }); st.choice[g.key] = { target: g.target, include: inc }; });
+    }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isFilesRoute()) A().renderPage(); });
+  }
+  var mergePollTimer = null;
+  function pollMergeJob() {
+    clearTimeout(mergePollTimer);
+    var st = mergeState();
+    if (!st.job) return;
+    api('GET', '/api/files/jobs/' + st.job.id).then(function (r) {
+      st.job = r.job;
+      if (r.job.status === 'done' || r.job.status === 'failed') {
+        st.result = r.job; st.job = null; st.manual = []; st.manualTarget = null; st.found = null;
+        invalidate(); markStale(cache.series); markStale(cache.book); A().refreshLibraries();
+        if (isFilesRoute()) loadMergeSuggestions(); else st.data = null;
+        return;
+      }
+      if (isFilesRoute()) A().renderPage();
+      mergePollTimer = setTimeout(pollMergeJob, 700);
+    }, function () { mergePollTimer = setTimeout(pollMergeJob, 2000); });
+  }
+  function mergeJobHtml(j) {
+    if (!j) return '';
+    var p = { percent: j.status === 'queued' ? null : j.progress, done: j.done, total: j.total, etaMs: null, elapsedMs: 0 };
+    return '<div class="card card--wide ren-job" role="status">' + progressBar(p, t(j.status === 'queued' ? 'files.mergeQueued' : 'files.merging'), t('files.mergeProgress', { done: j.done, total: j.total || '…' })) + '</div>';
+  }
+  function reasonText(g) {
+    var d = g.detail || {};
+    if (g.reason === 'match') return t('files.reason.match', { site: providerName(d.provider || ''), id: d.id || '' });
+    if (g.reason === 'link') return t('files.reason.link', { url: d.url || '' });
+    return t('files.reason.title', { title: d.title || '' });
+  }
+  // One work in a merge list: keep it (radio) / include it (checkbox)
+  function mergeRow(name, w, target, included) {
+    var isTarget = w.id === target;
+    return '<li class="merge-row' + (isTarget ? ' is-target' : '') + '">' +
+      '<label class="merge-row__keep" title="' + esc(t('files.keepTitle')) + '"><input type="radio" name="' + esc(name) + '" value="' + w.id + '" data-merge-target="' + esc(name) + '"' + (isTarget ? ' checked' : '') + (w.oneshot ? ' disabled' : '') + ' /><span class="small">' + esc(t('files.keep')) + '</span></label>' +
+      '<label class="checkbox"><input type="checkbox" data-merge-include="' + esc(name) + '" value="' + w.id + '"' + (included || isTarget ? ' checked' : '') + (isTarget ? ' disabled' : '') + ' />' +
+        '<span class="merge-row__what"><a href="#series/' + w.id + '">' + esc(w.title) + '</a>' +
+        ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span>' +
+        (w.oneshot ? ' <span class="badge">' + esc(t('lib.oneshot')) + '</span>' : '') + '</span></label></li>';
+  }
+  function mergeRender() {
+    var st = mergeState();
+    var libs = A().state.libraries || [];
+    var head = filesTabs('merge') + '<p class="page-lead">' + esc(t('files.mergeIntro')) + '</p>' +
+      mergeJobHtml(st.job) + fileJobResult(st.result);
+    // Manual merge: find works, add them, choose the one to keep
+    var manual = '<section class="card card--wide merge-manual"><h2 class="card__title">' + esc(t('files.manualTitle')) + '</h2>' +
+      '<p class="muted small">' + esc(t('files.manualHelp')) + '</p>' +
+      '<label class="search-field">' + icon('search') + '<input type="search" id="merge-find" placeholder="' + esc(t('files.findWorks')) + '" value="' + esc(st.q) + '" /></label>' +
+      (st.found ? (st.found.length ? '<ul class="merge-found">' + st.found.map(function (w) {
+        var added = st.manual.some(function (x) { return x.id === w.id; });
+        return '<li><span>' + esc(w.title) + ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span></span>' +
+          '<button class="btn btn--text btn--small" data-lib="merge-add" data-id="' + w.id + '"' + (added ? ' disabled' : '') + '>' + icon('add') + esc(t(added ? 'files.added' : 'files.add')) + '</button></li>';
+      }).join('') + '</ul>' : '<p class="muted small">' + esc(t('lib.noMatch')) + '</p>') : '') +
+      (st.manual.length ? '<ul class="merge-list">' + st.manual.map(function (w) { return mergeRow('manual', w, st.manualTarget, true); }).join('') + '</ul>' +
+        '<div class="merge-actions"><button class="btn btn--primary" data-lib="merge-go" data-key="manual"' + (st.manual.length < 2 || !st.manualTarget || st.job ? ' disabled' : '') + '>' + icon('collections') + esc(t('files.mergeN', { count: st.manual.length })) + '</button>' +
+        '<button class="btn btn--text" data-lib="merge-clear">' + esc(t('filter.clear')) + '</button></div>' : '') +
+      '</section>';
+    var toolbar = '<div class="toolbar"><div class="toolbar__group">' +
+      '<select class="select select--compact" id="merge-library" aria-label="' + esc(t('ren.library')) + '">' +
+        '<option value="all"' + (st.library === 'all' ? ' selected' : '') + '>' + esc(t('nav.allLibraries')) + '</option>' +
+        libs.map(function (l) { return '<option value="' + l.id + '"' + (st.library === l.id ? ' selected' : '') + '>' + esc(l.name) + '</option>'; }).join('') +
+      '</select>' +
+      '<button class="btn btn--primary btn--pill" data-lib="merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button>' +
+    '</div></div>';
+    var body;
+    if (st.error) body = errorBanner(st.error);
+    else if (st.loading || !st.data) body = spinner;
+    else if (!st.data.groups.length) body = emptyState('check', t('files.noSuggestionsTitle'), t('files.noSuggestions'));
+    else body = '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
+      var ch = st.choice[g.key] || { target: g.target, include: {} };
+      var n = g.works.filter(function (w) { return ch.include[w.id] || w.id === ch.target; }).length;
+      return '<section class="card card--wide merge-group" data-key="' + esc(g.key) + '">' +
+        '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(reasonText(g)) + '</span></p>' +
+        '<ul class="merge-list">' + g.works.map(function (w) { return mergeRow(g.key, w, ch.target, ch.include[w.id]); }).join('') + '</ul>' +
+        '<div class="merge-actions">' +
+          '<button class="btn btn--primary" data-lib="merge-go" data-key="' + esc(g.key) + '"' + (n < 2 || !ch.target || st.job ? ' disabled' : '') + '>' + icon('collections') + esc(t('files.mergeN', { count: n })) + '</button>' +
+          '<button class="btn btn--text" data-lib="merge-dismiss" data-key="' + esc(g.key) + '">' + esc(t('files.notSame')) + '</button>' +
+        '</div></section>';
+    }).join('');
+    return head + manual + toolbar + body;
+  }
+  var mergeFindTimer = null;
+  function mergeMount(el) {
+    var st = mergeState();
+    var lib = $('#merge-library', el);
+    if (lib) lib.addEventListener('change', function () { st.library = lib.value; loadMergeSuggestions(); });
+    var find = $('#merge-find', el);
+    if (find) find.addEventListener('input', function () {
+      st.q = find.value;
+      clearTimeout(mergeFindTimer);
+      mergeFindTimer = setTimeout(function () {
+        if (!st.q.trim()) { st.found = null; return A().renderPage(); }
+        api('GET', '/api/files/works?' + Store.qs({ q: st.q })).then(function (r) {
+          st.found = r.works;
+          A().renderPage();
+          var again = $('#merge-find'); if (again) { again.focus(); var v = again.value; again.value = ''; again.value = v; }
+        }, function () {});
+      }, 300);
+    });
+    el.addEventListener('change', function (e) {
+      var tg = e.target, key;
+      if ((key = tg.dataset.mergeTarget)) {
+        if (key === 'manual') st.manualTarget = tg.value;
+        else { st.choice[key].target = tg.value; st.choice[key].include[tg.value] = true; }
+        return A().renderPage();
+      }
+      if ((key = tg.dataset.mergeInclude)) {
+        if (key === 'manual') { if (!tg.checked) st.manual = st.manual.filter(function (w) { return w.id !== tg.value; }); }
+        else st.choice[key].include[tg.value] = tg.checked;
+        return A().renderPage();
+      }
+    });
+  }
+  function mergeEnter() {
+    var st = mergeState();
+    if (!st.data && !st.loading) loadMergeSuggestions();
+    if (st.job) pollMergeJob();
+  }
+  function startMerge(key) {
+    var st = mergeState();
+    var target, sources, works;
+    if (key === 'manual') { works = st.manual; target = st.manualTarget; sources = works.map(function (w) { return w.id; }); }
+    else {
+      var g = st.data.groups.filter(function (x) { return x.key === key; })[0];
+      var ch = st.choice[key];
+      works = g.works; target = ch.target;
+      sources = g.works.filter(function (w) { return ch.include[w.id]; }).map(function (w) { return w.id; });
+    }
+    sources = sources.filter(function (id) { return id !== target; });
+    var tw = works.filter(function (w) { return w.id === target; })[0];
+    if (!tw || !sources.length) return;
+    if (!confirm(t('files.mergeConfirm', { count: sources.length, title: tw.title, path: tw.path }))) return;
+    return api('POST', '/api/files/merge', { target: target, sources: sources }).then(function (r) {
+      st.job = r.job; st.result = null;
+      A().toast(t('files.mergeStarted'));
+      A().renderPage();
+      pollMergeJob();
+    }, fail);
+  }
 
   /* ================= METADATA SOURCES (admins) ================= */
   // Folder sources (JSON files the admin keeps) can be added, edited, checked and deleted; online sites are
@@ -1451,7 +1647,7 @@
             rn.queued ? ['proc.queue', esc(rn.queued)] : null,
             !rr && rn.last ? ['proc.renameLast', esc(t('proc.renameLastValue', { files: rn.last.files, when: fmtDuration(rn.last.at) }))] : null
           ]) +
-          '<p class="field__help">' + esc(t('proc.renameHelp')) + ' <a href="#rename">' + esc(t('nav.rename')) + '</a></p>' +
+          '<p class="field__help">' + esc(t('proc.renameHelp')) + ' <a href="#files">' + esc(t('nav.files')) + '</a></p>' +
         '</section>' : '';
       // Pages and covers: key-value cache in front of the media process (started when needed)
       var mi = p.media;
@@ -1464,6 +1660,10 @@
             mi.pid ? ['proc.pid', esc(mi.pid)] : ['proc.processes', esc(t('proc.media.none'))],
             ['proc.media.cache', esc(t('proc.media.cacheValue', { entries: mi.cache.entries, size: mi.cache.bytes ? fmtBytes(mi.cache.bytes) : '0 MB', max: fmtBytes(mi.cache.maxBytes) }))],
             ['proc.media.hits', esc(t('proc.media.hitsValue', { hits: mi.stats.hits + mi.stats.diskHits, misses: mi.stats.misses, prefetched: mi.stats.prefetched }))],
+            mi.responses ? ['proc.media.works', esc(t('proc.media.worksValue', { entries: mi.responses.entries, hits: mi.responses.hits, misses: mi.responses.misses }))] : null,
+            mi.warm && (mi.warm.running || mi.warm.finishedAt) ? ['proc.media.warm', esc(mi.warm.running
+              ? t('proc.media.warmRunning', { done: mi.warm.done, total: mi.warm.total })
+              : t('proc.media.warmDone', { total: mi.warm.total, added: mi.warm.added }))] : null,
             mi.lastError ? ['proc.lastError', esc(mi.lastError)] : null
           ]) +
           '<p class="field__help">' + esc(t('proc.media.help')) + '</p>' +
@@ -2147,6 +2347,47 @@
         return A().renderPage();
       }
       case 'ren-check': renameState().result = null; return runRenamePreview();
+      // File management: delete one of two files competing for a name, or all of them at once
+      case 'files-del':
+      case 'files-replace':
+      case 'files-del-all': {
+        var fs2 = renameState(), bodyDel, question;
+        if (action === 'files-del-all') {
+          bodyDel = { allExists: true, library: fs2.library, keep: btn.dataset.keep };
+          question = t(btn.dataset.keep === 'renamed' ? 'files.confirmAllExisting' : 'files.confirmAllRenamed', { count: fs2.data.exists });
+        } else {
+          bodyDel = { items: [{ bookId: id, replace: action === 'files-replace' }] };
+          question = t('files.confirmDelete', { name: btn.dataset.name });
+        }
+        if (!confirm(question)) return;
+        btn.disabled = true;
+        return api('POST', '/api/files/delete', bodyDel).then(function (r) {
+          fs2.job = r.job; fs2.result = null;
+          A().renderPage();
+          pollRenameJob();
+        }, function (e) { btn.disabled = false; fail(e); });
+      }
+      case 'merge-check': mergeState().result = null; return loadMergeSuggestions();
+      case 'merge-go': return startMerge(btn.dataset.key);
+      case 'merge-dismiss': {
+        var ms = mergeState(), key = btn.dataset.key;
+        return api('POST', '/api/files/merge-suggestions/dismiss', { key: key }).then(function () {
+          ms.data.groups = ms.data.groups.filter(function (g) { return g.key !== key; });
+          ms.data.total--;
+          A().renderPage();
+        }, fail);
+      }
+      case 'merge-add': {
+        var ma = mergeState();
+        var w = (ma.found || []).filter(function (x) { return x.id === id; })[0];
+        if (w && !ma.manual.some(function (x) { return x.id === id; })) ma.manual.push(w);
+        if (!ma.manualTarget || !ma.manual.some(function (x) { return x.id === ma.manualTarget; })) {
+          var firstFolder = ma.manual.filter(function (x) { return !x.oneshot; })[0];
+          ma.manualTarget = firstFolder ? firstFolder.id : null;
+        }
+        return A().renderPage();
+      }
+      case 'merge-clear': { var mc = mergeState(); mc.manual = []; mc.manualTarget = null; return A().renderPage(); }
       case 'ren-apply': {
         var rs = renameState();
         var nPick = renameSelectedCount(rs);
@@ -2365,6 +2606,7 @@
     collections: collections, collection: collection, readlists: readlists, readlist: readlist,
     'manage-libraries': manage,
     'metadata-sources': metadataSources,
+    files: renamePage,
     rename: renamePage,
     processes: processes,
     'server-settings': serverSettings,
