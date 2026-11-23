@@ -59,9 +59,12 @@ async function crawl(msg, send) {
   const adapter = ADAPTERS[src.type];
   if (!adapter) throw new Error(`Unknown source type ${src.type}`);
   const gapMs = Math.max(Number(src.gapMs) || adapter.defaults.gapMs || 1000, src.type === 'mangadex' ? 200 : 500);
-  const fetcher = createFetcher({ gapMs, allowLocal: msg.allowLocal });
+  // Several requests to the site at once (one per work read at once), each lane pausing gapMs between its own
+  // requests; a robots.txt Crawl-delay brings it back to one at a time
+  const parallel = Math.max(1, Math.min(8, Number(msg.concurrency) || 1));
+  const fetcher = createFetcher({ gapMs, parallel, allowLocal: msg.allowLocal });
   // How it's crawling right now: works read at once, requests in progress / waiting for their turn, the pause
-  const concurrencyNow = () => ({ lanes: stats.concurrency || 1, active: fetcher.stats.active, waiting: fetcher.stats.waiting, gapMs });
+  const concurrencyNow = () => { const l = fetcher.limits(); return { lanes: stats.concurrency || 1, parallel: l.parallel, crawlDelay: l.crawlDelay, active: fetcher.stats.active, waiting: fetcher.stats.waiting, gapMs }; };
   const run = current = { stop: false, fetcher };
   const incremental = mode === 'update';
   const data = store.readWorks(dir);
@@ -117,7 +120,8 @@ async function crawl(msg, send) {
       const etaMs = readCount >= 3 && elapsed >= 3000 ? Math.round(elapsed / readCount * left) : null;
       return { phase: 'works', done, total: queue.length, concurrency: lanes, requestsNow: concurrencyNow(), etaMs, at: Date.now() };
     };
-    say(`reading the works: ${lanes} at once, at most one request to the site every ${gapMs} ms`);
+    const lim = fetcher.limits();
+    say(`reading the works: ${lanes} at once; up to ${lim.parallel} request(s) to the site at once, each waiting ${gapMs} ms after its previous one` + (lim.crawlDelay != null ? ` (robots.txt asks for ${lim.crawlDelay} s between requests: one at a time)` : ''));
     report(worksProgress());
     const readWork = async sid => {
       const w = works[sid];

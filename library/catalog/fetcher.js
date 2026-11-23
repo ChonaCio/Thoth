@@ -1,7 +1,9 @@
 // A polite fetcher for crawling sites:
 //   - identifies itself with Thoth's generic user agent (nothing about the server or its users)
 //   - follows robots.txt (Allow/Disallow with * and $, the longest rule wins; a site without one allows all)
-//   - waits between requests to the same host (gapMs) and backs off when told to (429/503 + Retry-After)
+//   - at most `parallel` requests to a site at once (lanes); each lane waits gapMs between its requests, and
+//     starts are staggered (staggerMs, or the site's robots.txt Crawl-delay, which then also means one at a time)
+//   - backs off when told to (429/503 + Retry-After): the whole site waits
 //   - only public addresses: never this machine or the local network, also not through a redirect
 //   - stops at bot challenges (Cloudflare and the like): the site doesn't want automated visitors, so the
 //     source reports "blocked" instead of trying to get around it
@@ -38,6 +40,7 @@ function parseRobots(text) {
       continue;
     }
     lastWasAgent = false;
+    if (cur && key === 'crawl-delay') { const d = parseFloat(val); if (Number.isFinite(d) && d >= 0) cur.crawlDelay = Math.min(d, 60); continue; }
     if (!cur || (key !== 'allow' && key !== 'disallow')) continue;
     if (key === 'disallow' && !val) continue; // "Disallow:" (empty) allows everything
     const pattern = new RegExp('^' + val.replace(/[.+?^{}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*').replace(/\\\$$|\$$/, '$'));
@@ -45,7 +48,11 @@ function parseRobots(text) {
   }
   const mine = groups.find(g => g.agents.some(a => a !== '*' && UA_TOKEN.startsWith(a)));
   const any = groups.filter(g => g.agents.includes('*'));
-  return mine ? mine.rules : any.flatMap(g => g.rules);
+  const rules = mine ? mine.rules : any.flatMap(g => g.rules);
+  // (the seconds the site asks between requests, if it says: rules.crawlDelay)
+  const delay = mine ? mine.crawlDelay : any.map(g => g.crawlDelay).find(d => d != null);
+  if (delay != null) rules.crawlDelay = delay;
+  return rules;
 }
 // The sitemaps a robots.txt names ("Sitemap: https://…")
 function sitemapsIn(text) {
@@ -59,20 +66,38 @@ function robotsAllows(rules, url) {
   return !best || best.allow;
 }
 
-function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, onRequest } = {}) {
+function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal = false, timeoutMs = 25000, onRequest } = {}) {
+  parallel = Math.max(1, Math.min(16, Math.round(Number(parallel) || 1)));
   const robots = new Map(); // origin → Promise<rules>
   const robotsText = new Map(); // origin → the file itself
-  const nextAt = new Map(); // host → time of the next allowed request
+  // Per site: requests in progress, each lane's next allowed start, the last start, a pause the site asked for
+  // (Retry-After), and the spacing between any two starts (staggerMs, or robots.txt Crawl-delay)
+  const hosts = new Map();
+  const hostState = host => {
+    if (!hosts.has(host)) hosts.set(host, { inFlight: 0, lanes: new Array(parallel).fill(0), lastStart: 0, pauseUntil: 0, spacing: Math.min(staggerMs, gapMs), crawlDelay: null });
+    return hosts.get(host);
+  };
   // active: requests in progress right now (sent, answer not read yet); waiting: requests waiting for their turn at a site
   const stats = { requests: 0, bytes: 0, retries: 0, active: 0, waiting: 0, maxActive: 0 };
   let stopped = false;
 
+  // Waits for a free lane at this site; → release() (called when the answer has been read)
   async function slot(host) {
+    const h = hostState(host);
     for (;;) {
       if (stopped) throw err('stopped', 'Stopped');
-      const now = Date.now(), at = nextAt.get(host) || 0;
-      if (now >= at) { nextAt.set(host, now + gapMs); return; }
-      await new Promise(r => setTimeout(r, Math.min(at - now, 1000)));
+      const now = Date.now();
+      // Crawl-delay: the site wants one request at a time, that many seconds apart
+      const lanes = h.crawlDelay != null ? 1 : parallel;
+      const notBefore = Math.max(h.pauseUntil, h.lastStart + h.spacing);
+      const lane = h.inFlight < lanes && now >= notBefore ? h.lanes.slice(0, lanes).findIndex(at => at <= now) : -1;
+      if (lane !== -1) {
+        h.lanes[lane] = now + gapMs; h.lastStart = now; h.inFlight++;
+        let released = false;
+        return () => { if (!released) { released = true; h.inFlight--; } };
+      }
+      const wake = Math.max(notBefore, Math.min(...h.lanes.slice(0, lanes))) - now;
+      await new Promise(r => setTimeout(r, Math.max(15, Math.min(wake > 0 ? wake : 50, 1000))));
     }
   }
   async function raw(url, opts = {}) {
@@ -81,7 +106,8 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
       if (!publicUrl(current, allowLocal)) throw err('notPublic', `Not a public address: ${current}`);
       const u = new URL(current);
       stats.waiting++;
-      try { await slot(u.host); } finally { stats.waiting--; }
+      let release;
+      try { release = await slot(u.host); } finally { stats.waiting--; }
       stats.requests++;
       if (onRequest) onRequest(current);
       stats.active++; stats.maxActive = Math.max(stats.maxActive, stats.active);
@@ -91,8 +117,8 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
         method: opts.method || 'GET', body: opts.body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
         headers: Object.assign({ 'User-Agent': UA, Accept: opts.accept || 'text/html,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'en' }, opts.headers || {})
         });
-      } catch (e) { stats.active--; throw e; }
-      res.counted = true; // (readBody or the redirect below ends it)
+      } catch (e) { stats.active--; release(); throw e; }
+      res.counted = true; res.release = release; // (readBody or the redirect below ends it)
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
         done(res); try { await res.body.cancel(); } catch {}
         current = new URL(res.headers.get('location'), current).href; // checked again at the top
@@ -103,7 +129,7 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
     }
     throw err('redirects', 'Too many redirects');
   }
-  function done(res) { if (res && res.counted) { res.counted = false; stats.active--; } }
+  function done(res) { if (res && res.counted) { res.counted = false; stats.active--; if (res.release) res.release(); } }
   async function readBody(res) {
     try { return await readAll(res); } finally { done(res); }
   }
@@ -128,7 +154,9 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
           if (res.status >= 400) { done(res); try { await res.body.cancel(); } catch {} return []; } // none: everything allowed
           const text = (await readBody(res)).toString('utf8');
           robotsText.set(origin, text);
-          return parseRobots(text);
+          const rules = parseRobots(text);
+          if (rules.crawlDelay != null) { const h = hostState(new URL(origin).host); h.crawlDelay = rules.crawlDelay; h.spacing = Math.max(h.spacing, rules.crawlDelay * 1000); }
+          return rules;
         } catch (e) { if (e.code === 'stopped' || e.code === 'notPublic') throw e; return []; }
       })());
     }
@@ -150,14 +178,16 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
       if ((res.status === 429 || res.status >= 500) && attempt < 3) {
         stats.retries++;
         const wait = Math.min(60000, (Number(res.headers.get('retry-after')) || 2 ** attempt * 2) * 1000);
-        nextAt.set(u.host, Date.now() + wait);
+        hostState(u.host).pauseUntil = Date.now() + wait; // (the whole site waits)
         continue;
       }
       if (res.status >= 400) throw err('http', `${res.status} from ${finalUrl}`, { status: res.status });
       return { status: res.status, url: finalUrl, text, buf: body, json: () => JSON.parse(text), type: res.headers.get('content-type') || '' };
     }
   }
-  return { get, stats, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url),
+  // How it fetches from a site now: { parallel, crawlDelay } (crawlDelay: robots.txt asked for one at a time)
+  const limits = host => { const h = host ? hosts.get(host) : [...hosts.values()][0]; return { parallel: h && h.crawlDelay != null ? 1 : parallel, crawlDelay: h ? h.crawlDelay : null }; };
+  return { get, stats, limits, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url),
     robotsFile: async origin => { await rulesFor(origin); return robotsText.get(origin) || null; } };
 }
 

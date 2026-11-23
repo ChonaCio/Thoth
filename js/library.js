@@ -1695,7 +1695,9 @@
   // How a crawl is fetching right now: works at once, requests in progress and waiting, the pause per site
   function requestsLine(r) {
     if (!r) return '';
-    return '<p class="muted small crawl-requests">' + esc(t('cat.crawlRequests', { lanes: r.lanes || 1, active: r.active || 0, waiting: r.waiting || 0, gap: ((r.gapMs || 0) / 1000).toFixed(1).replace(/\.0$/, '') })) + '</p>';
+    var gap = function (ms) { return ((ms || 0) / 1000).toFixed(1).replace(/\.0$/, ''); };
+    return '<p class="muted small crawl-requests">' + esc(t('cat.crawlRequests', { lanes: r.lanes || 1, active: r.active || 0, waiting: r.waiting || 0, parallel: r.parallel || 1, gap: gap(r.gapMs) }) +
+      (r.crawlDelay != null ? ' · ' + t('cat.crawlDelay', { s: r.crawlDelay }) : '')) + '</p>';
   }
   function testReport(r) {
     if (!r) return '';

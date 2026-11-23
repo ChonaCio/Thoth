@@ -3471,4 +3471,49 @@
     "meta.stepCovers": "baixando as capas",
     "proc.task.phase.covers": "Baixando capas"
   });
+  add('en', {
+    "cat.crawlRequests": "{lanes} works at once · {active} requests in progress, {waiting} waiting their turn · up to {parallel} requests to the site at once, each pausing {gap} s after its previous one",
+    "cat.crawlDelay": "the site’s robots.txt asks for {s} s between requests, so one at a time"
+  });
+  add('es', {
+    "cat.crawlRequests": "{lanes} obras a la vez · {active} peticiones en curso, {waiting} esperando su turno · hasta {parallel} peticiones al sitio a la vez, cada una con una pausa de {gap} s tras la anterior",
+    "cat.crawlDelay": "el robots.txt del sitio pide {s} s entre peticiones, así que de una en una"
+  });
+  add('fr', {
+    "cat.crawlRequests": "{lanes} œuvres à la fois · {active} requêtes en cours, {waiting} en attente · jusqu’à {parallel} requêtes au site à la fois, chacune avec une pause de {gap} s après la précédente",
+    "cat.crawlDelay": "le robots.txt du site demande {s} s entre les requêtes, donc une à la fois"
+  });
+  add('de', {
+    "cat.crawlRequests": "{lanes} Werke gleichzeitig · {active} Anfragen laufen, {waiting} warten · bis zu {parallel} Anfragen an die Seite gleichzeitig, jede mit {gap} s Pause nach der vorigen",
+    "cat.crawlDelay": "die robots.txt der Seite verlangt {s} s zwischen Anfragen, daher eine nach der anderen"
+  });
+  add('pt', {
+    "cat.crawlRequests": "{lanes} obras ao mesmo tempo · {active} pedidos em andamento, {waiting} esperando a vez · até {parallel} pedidos ao site ao mesmo tempo, cada um com pausa de {gap} s após o anterior",
+    "cat.crawlDelay": "o robots.txt do site pede {s} s entre pedidos, então um de cada vez"
+  });
+  add('en', {
+    "cat.srcConcurrencyHelp": "Works read at the same time while crawling, and requests to the site at once (1–8; empty: the server setting). Each of those requests still pauses before its next one; a site whose robots.txt sets a Crawl-delay gets one at a time.",
+    "cfg.catalogConcurrencyHelp": "For sources without their own setting: works read at once, and requests to the site at once. Each still pauses before its next request; robots.txt Crawl-delay is respected.",
+    "proc.catalog.help": "Each crawl is an independent process that keeps going if the server restarts. A crawl reads several works at once, with as many requests to the site in progress; each pauses between its requests."
+  });
+  add('es', {
+    "cat.srcConcurrencyHelp": "Obras leídas a la vez al rastrear, y peticiones al sitio a la vez (1–8; vacío: la configuración del servidor). Cada una de esas peticiones sigue haciendo una pausa antes de la siguiente; un sitio cuyo robots.txt fija un Crawl-delay recibe una a la vez.",
+    "cfg.catalogConcurrencyHelp": "Para las fuentes sin configuración propia: obras leídas a la vez y peticiones al sitio a la vez. Cada una sigue con su pausa antes de la siguiente; se respeta el Crawl-delay del robots.txt.",
+    "proc.catalog.help": "Cada rastreo es un proceso independiente que sigue aunque el servidor se reinicie. Un rastreo lee varias obras a la vez, con otras tantas peticiones al sitio en curso; cada una hace una pausa entre sus peticiones."
+  });
+  add('fr', {
+    "cat.srcConcurrencyHelp": "Œuvres lues en même temps pendant l’exploration, et requêtes au site en même temps (1–8 ; vide : le réglage du serveur). Chacune de ces requêtes garde une pause avant la suivante ; un site dont le robots.txt fixe un Crawl-delay en reçoit une à la fois.",
+    "cfg.catalogConcurrencyHelp": "Pour les sources sans réglage propre : œuvres lues et requêtes au site en même temps. Chacune garde sa pause avant la suivante ; le Crawl-delay du robots.txt est respecté.",
+    "proc.catalog.help": "Chaque exploration est un processus indépendant qui continue si le serveur redémarre. Une exploration lit plusieurs œuvres à la fois, avec autant de requêtes au site en cours ; chacune fait une pause entre ses requêtes."
+  });
+  add('de', {
+    "cat.srcConcurrencyHelp": "Beim Durchsuchen gleichzeitig gelesene Werke und gleichzeitige Anfragen an die Seite (1–8; leer: die Servereinstellung). Jede dieser Anfragen macht weiterhin eine Pause vor der nächsten; eine Seite mit Crawl-delay in der robots.txt bekommt eine nach der anderen.",
+    "cfg.catalogConcurrencyHelp": "Für Quellen ohne eigene Einstellung: gleichzeitig gelesene Werke und gleichzeitige Anfragen an die Seite. Jede pausiert vor ihrer nächsten; das Crawl-delay der robots.txt wird beachtet.",
+    "proc.catalog.help": "Jede Durchsuchung ist ein eigenständiger Prozess, der auch bei einem Serverneustart weiterläuft. Eine Durchsuchung liest mehrere Werke gleichzeitig, mit ebenso vielen laufenden Anfragen an die Seite; jede pausiert zwischen ihren Anfragen."
+  });
+  add('pt', {
+    "cat.srcConcurrencyHelp": "Obras lidas ao mesmo tempo no rastreio, e pedidos ao site ao mesmo tempo (1–8; vazio: a configuração do servidor). Cada um desses pedidos ainda faz uma pausa antes do próximo; um site cujo robots.txt define um Crawl-delay recebe um de cada vez.",
+    "cfg.catalogConcurrencyHelp": "Para fontes sem configuração própria: obras lidas e pedidos ao site ao mesmo tempo. Cada um ainda pausa antes do próximo; o Crawl-delay do robots.txt é respeitado.",
+    "proc.catalog.help": "Cada rastreio é um processo independente que continua mesmo se o servidor reiniciar. Um rastreio lê várias obras ao mesmo tempo, com o mesmo número de pedidos ao site em andamento; cada um pausa entre seus pedidos."
+  });
 })();

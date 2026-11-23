@@ -70,7 +70,7 @@ const site = http.createServer((req, res) => {
   if ((m = /^\/madara\/manga\/([\w-]+)\/$/.exec(u.pathname)) && madaraWorks[m[1]]) {
     if (!slowWorks) return send(200, madaraWork(m[1]));
     workHits.push(Date.now()); inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
-    setTimeout(() => { inFlight--; send(200, madaraWork(m[1])); }, 700); return;
+    setTimeout(() => { inFlight--; send(200, madaraWork(m[1])); }, 200); return; // (faster than the pause)
   }
   // Custom site: one list page; one work's page is not allowed by robots.txt
   if (u.pathname === '/custom/list') {
@@ -124,6 +124,27 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const can = p => robotsAllows(rules, 'https://s.example' + p);
   ok(can('/en/genres') && !can('/en/search?q=a') && can('/en/a/b/list?title_no=1') && !can('/en/a/b/list?title_no=1&page=1') && can('/en/a/b/list?title_no=1&page=2') && can('/wp-admin/admin-ajax.php') && !can('/wp-admin/x'),
     'robots.txt: wildcards, prefixes, the longest rule wins');
+  {
+    const { createFetcher } = require(path.join(APP, 'library', 'catalog', 'fetcher.js'));
+    let delay = null, now = 0, most = 0; const starts = [];
+    const srv2 = http.createServer((req, res) => {
+      if (req.url === '/robots.txt') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end(delay == null ? 'User-agent: *\nDisallow:' : `User-agent: *\nCrawl-delay: ${delay}`); }
+      starts.push(Date.now()); now++; most = Math.max(most, now);
+      setTimeout(() => { now--; res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>ok</p>'); }, 400); // (faster than the 600 ms pause)
+    });
+    await new Promise(r => srv2.listen(3982, '127.0.0.1', r));
+    const f1 = createFetcher({ gapMs: 600, parallel: 4, allowLocal: true });
+    const t0 = Date.now();
+    await Promise.all([1, 2, 3, 4, 5, 6, 7, 8].map(i => f1.get(`http://127.0.0.1:3982/p${i}`)));
+    const took = Date.now() - t0;
+    ok(most >= 3 && most <= 4 && took < 2600 && f1.stats.active === 0 && f1.stats.waiting === 0, `fetcher: up to 4 requests to a site at once, each lane pausing between its requests (${most} at once; 8 pages in ${took} ms; one at a time, one per pause, would take ≥ 4600 ms)`);
+    delay = 0.4; now = 0; most = 0; starts.length = 0;
+    const f2 = createFetcher({ gapMs: 200, parallel: 4, allowLocal: true });
+    await Promise.all([1, 2, 3].map(i => f2.get(`http://127.0.0.1:3982/q${i}`)));
+    const apart = starts.slice(1).map((t, i) => t - starts[i]);
+    ok(most === 1 && apart.every(g => g >= 380) && f2.limits().crawlDelay === 0.4, `robots.txt Crawl-delay: one request at a time, that far apart (${apart.join(', ')} ms)`);
+    srv2.close();
+  }
 
   await new Promise(r => site.listen(SITE_PORT, '127.0.0.1', r));
   await start();
@@ -164,7 +185,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const dl = await fetch(`${BASE}/api/logs/${crawlTask.log}?download=1`, { headers: { Cookie: cookie } });
   ok(dl.status === 200 && /attachment/.test(dl.headers.get('content-disposition') || '') && (await dl.text()).startsWith('# Crawl of'), 'a log can be downloaded');
   ok((await call('GET', '/api/logs/..%2Fconfig.json')).status === 404 && (await call('GET', '/api/logs', null, bob)).status === 403, 'only log files can be read, and only by administrators');
-  // Several works at once (the source's setting), still one request to the site per gapMs
+  // Several works at once (the source's setting) with as many requests to the site in progress, even when its
+  // pages answer faster than the pause (each lane pauses between its own requests; starts staggered)
   await call('PATCH', `/api/catalog/sources/${madara.id}`, { concurrency: 3 });
   slowWorks = true;
   await call('POST', `/api/catalog/sources/${madara.id}/crawl`, { mode: 'full' });
@@ -172,8 +194,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   slowWorks = false;
   const gaps = workHits.slice(1).map((t, i) => t - workHits[i]);
   ok(s1.lastStats.maxActiveRequests >= 2, `the crawl says how many requests it had in progress at once (up to ${s1.lastStats.maxActiveRequests})`);
-  ok(s1.works === 3 && s1.lastStats.errors === 0 && s1.lastStats.concurrency === 3 && maxInFlight >= 2 && gaps.every(g => g >= 150),
-    `several works read at once (${maxInFlight} pages in flight, ${s1.lastStats.concurrency} lanes) while requests still start one per pause (gaps ${gaps.join(', ')} ms)`);
+  ok(s1.works === 3 && s1.lastStats.errors === 0 && s1.lastStats.concurrency === 3 && maxInFlight >= 2 && maxInFlight <= 3 && gaps.every(g => g >= 100),
+    `several requests to the site in progress at once although its pages answer faster than the pause (${maxInFlight} in flight, at most ${s1.lastStats.concurrency}; starts ${gaps.join(', ')} ms apart)`);
   await call('POST', `/api/catalog/sources/${custom.id}/crawl`, { mode: 'full' });
   const s2 = await crawled(custom.id);
   ok(s2.works === 2 && s2.lastStats.errors === 1 && !hits.some(h => h.includes('/custom/private/')), 'custom selectors: works found; a page robots.txt forbids is never fetched (counted as an error)');

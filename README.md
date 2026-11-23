@@ -178,7 +178,7 @@ them in small batches, each process reading several files at once. Libraries are
 | Works looked up at once | 3 | Metadata lookups running in parallel (1–8). Each site still gets a pause between requests. |
 | Sources crawled at once | 2 | External catalog crawls running at the same time (1–8), each its own process; others wait in line. |
 | Keep task logs (days) | 30 | Each task's log file (Logs page) is deleted after this many days; checked every hour. |
-| Works read at once per crawl | 3 | Works one crawl reads at the same time (1–8), for sources without their own *Works at once*. Requests to one site still start no faster than its pause, so more only helps when pages are slow to answer. |
+| Works read at once per crawl | 3 | Works one crawl reads at the same time (1–8), for sources without their own *Works at once*; also the requests to the site in progress at once. Each pauses before its next request, and a site whose robots.txt sets a `Crawl-delay` gets one request at a time. |
 | Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
@@ -520,7 +520,10 @@ sites added as **sources**, with its metadata and chapter list.
   *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
   Each source can update every day or week by itself. While it runs, a crawl shows how it's fetching: works at
   once, requests in progress and waiting their turn, and the pause per site. A crawl reads several works at once (*Works at once*,
-  default from Server settings); requests to the site still keep the pause between them. Kinds of site:
+  default from Server settings) with as many **requests to the site in progress at once** (crawling is mostly
+  waiting for answers): each of those lanes pauses before its next request, starts are staggered, a site asking
+  to slow down (429/503, Retry-After) makes them all wait, and a robots.txt `Crawl-delay` means one at a time.
+  Kinds of site:
 
 | Kind | For | Notes |
 | --- | --- | --- |
@@ -534,7 +537,7 @@ sites added as **sources**, with its metadata and chapter list.
   if the server restarts or stops, and the server picks it up again from its progress file (two at a time; others
   wait in line). *Stop* asks it to save and end; a source being crawled can't be removed until it's stopped.
 - **Polite crawling:** the crawler identifies itself with Thoth's generic user agent, **follows each site's robots.txt**, waits between
-  requests to a site (setting, 500 ms at least), backs off when the site asks, and never fetches this machine or
+  requests (setting, 500 ms at least, per lane; robots.txt `Crawl-delay` respected), backs off when the site asks, and never fetches this machine or
   the local network. Sites behind **bot protection** (e.g. Cloudflare challenges) are reported as *blocked*: Thoth
   doesn't try to get around it. Only crawl sites whose terms allow it.
 - An interrupted full crawl continues where it stopped; a complete full crawl drops works a site no longer lists.
