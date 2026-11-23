@@ -50,7 +50,29 @@ function flushAll() {
 }
 process.on('exit', flushAll);
 
-const saveLibrary = () => scheduleSave('library');
+// Generation of the data: every save and reindex bumps it, so memoized values (seriesMeta, bookMeta, the
+// user-independent part of seriesView) are worked out again after any change. With tens of thousands of
+// works, listing them then costs a lookup per work instead of merging every source again.
+// version: bumped by every change (lists and counts built from many works are rebuilt from the memoized parts).
+// A change to one work can say so (saveLibrary({ series })): only that work's memoized values are redone.
+let gen = 0, version = 0;
+const seriesMemo = new WeakMap(), bookMemo = new WeakMap(), viewMemo = new WeakMap(), viewMemoAdmin = new WeakMap();
+const seriesVersion = new WeakMap();
+const touch = () => { gen++; version++; };
+const saveLibrary = (scope) => {
+  if (scope && scope.series) for (const s of [].concat(scope.series)) seriesVersion.set(s, (seriesVersion.get(s) || 0) + 1);
+  else gen++;
+  version++;
+  scheduleSave('library');
+};
+// memo(obj, deps) → cached value while the generation and the objects it was built from are the same
+function memoGet(map, key, deps) {
+  const c = map.get(key);
+  if (!c || c.gen !== gen || c.deps.length !== deps.length) return undefined;
+  for (let i = 0; i < deps.length; i++) if (c.deps[i] !== deps[i]) return undefined;
+  return c.v;
+}
+function memoSet(map, key, deps, v) { map.set(key, { gen, deps, v }); return v; }
 const saveProgress = () => scheduleSave('progress');
 
 /* ---------------- indexes ---------------- */
@@ -58,6 +80,7 @@ const saveProgress = () => scheduleSave('progress');
 const collator = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
 let booksBySeries = new Map();
 function reindex() {
+  gen++; version++;
   booksBySeries = new Map();
   for (const b of Object.values(db.books)) {
     if (!booksBySeries.has(b.seriesId)) booksBySeries.set(b.seriesId, []);
@@ -117,7 +140,13 @@ function libraryDefaults(lib) {
 }
 // (a function declaration: bookMeta uses it during the first reindex(), before this line runs)
 function filled(o) { return Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))); }
+const seriesDeps = s => [s.provider, s.local, s.overrides, s.meta, s.name, s.libraryId, s.relPath, seriesVersion.get(s)];
 function seriesMeta(s) {
+  const deps = seriesDeps(s);
+  const hit = memoGet(seriesMemo, s, deps);
+  return hit !== undefined ? hit : memoSet(seriesMemo, s, deps, computeSeriesMeta(s));
+}
+function computeSeriesMeta(s) {
   const online = filled(s.provider && s.provider.merged);
   delete online.title;
   // Folder sources (JSON files the admin keeps) beat the files' ComicInfo.xml and online sites. Their main
@@ -222,6 +251,11 @@ function fromBooks(s) {
 }
 // Book precedence: admin edits > folder source JSON (e.g. 11.json for 11.cbz) > ComicInfo.xml
 function bookMeta(b) {
+  const deps = [b.meta, b.local, b.overrides, b.fileName, b.index];
+  const hit = memoGet(bookMemo, b, deps);
+  return hit !== undefined ? hit : memoSet(bookMemo, b, deps, computeBookMeta(b));
+}
+function computeBookMeta(b) {
   const m = Object.assign({}, filled(b.meta), filled(b.local && b.local.merged), filled(b.overrides));
   const number = m.number != null && m.number !== '' ? String(m.number) : String(b.index + 1);
   const parsed = parseFloat(number);
@@ -299,7 +333,19 @@ function seriesCounts(s, user) {
   }
   return { booksCount: books.length, booksRead: read, booksInProgress: inProgress, booksUnread: books.length - read - inProgress, lastRead };
 }
+// A work as the browser sees it: the part that doesn't depend on the user is memoized (per admin/not),
+// the reading counts are added for each user
 function seriesView(s, user, { admin = false } = {}) {
+  return Object.assign({}, seriesBaseView(s, admin), seriesCounts(s, user));
+}
+// The memoized, user-independent view (shared: read it, never change it)
+function seriesBaseView(s, admin = false) {
+  const deps = [s.provider, s.local, s.overrides, s.meta, s.name, s.libraryId, s.relPath, s.customCover, s.hidden, s.updated, s.created, seriesVersion.get(s)];
+  const map = admin ? viewMemoAdmin : viewMemo;
+  const base = memoGet(map, s, deps);
+  return base !== undefined ? base : memoSet(map, s, deps, seriesBase(s, admin));
+}
+function seriesBase(s, admin) {
   const m = seriesMeta(s);
   const books = booksBySeries.get(s.id) || [];
   const cover = books.find(b => b.format === 'cbz' && b.pageCount) || books[0];
@@ -334,7 +380,7 @@ function seriesView(s, user, { admin = false } = {}) {
     customCover: s.customCover ? { from: s.customCover.from, at: s.customCover.at } : null,
     localFile: admin && s.local ? s.local.file || null : undefined,
     overrides: s.overrides || {}
-  }, seriesCounts(s, user));
+  });
   if (admin) { v.path = s.relPath; v.fieldSources = fieldSources(s); }
   if (online) v.coverV = metadataCover(s).version;
   return v;
@@ -362,9 +408,9 @@ function coverFromMetadata(s) {
 }
 
 module.exports = {
-  DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex,
+  DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex, touch, generation: () => version,
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
-  bookView, seriesView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS, SORTS, BOOK_ORDERS
+  bookView, seriesView, seriesBaseView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS, SORTS, BOOK_ORDERS
 };

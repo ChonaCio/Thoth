@@ -313,6 +313,15 @@ a { color: var(--primary); text-decoration: none; }
 .update-item__info { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
 .update-item__tag { font-weight: 600; font-variant-numeric: tabular-nums; }
 .update-item .btn { height: 36px; padding: 0 16px; flex: none; }
+/* Library grid while new results load */
+#lib-grid { position: relative; }
+#lib-grid.is-loading .media-grid, #lib-grid.is-loading .grid-count { opacity: .45; transition: opacity .15s; pointer-events: none; }
+.grid-loading { position: sticky; top: 8px; z-index: 5; display: flex; align-items: center; gap: 8px; width: max-content; margin: 0 auto 8px;
+  padding: 6px 14px; border-radius: 999px; background: var(--surface); box-shadow: 0 2px 10px rgba(0,0,0,.2); font-size: 13px; font-weight: 500; }
+.update-all { width: 100%; }
+.update-all > summary { cursor: pointer; font-weight: 500; padding: 6px 0; color: var(--primary); }
+.update-list--all { max-height: 420px; overflow-y: auto; }
+.update-item.is-current .update-item__tag { color: var(--primary); }
 .badge { font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 999px; background: var(--bg-alt); color: var(--text-muted); }
 .badge--ok { background: var(--ok-soft); color: var(--ok); }
 .banner { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 16px 20px; border-radius: var(--radius); margin-bottom: 16px; }

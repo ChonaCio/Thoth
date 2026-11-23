@@ -71,7 +71,10 @@ function relWithName(relPath, name) {
 
 // Proposals for a library ('all' = every library). Each: { bookId, seriesId, libraryId, library, work, from,
 // to, fromName, toName, status: 'ok' | 'conflict' | 'exists', with: … } — conflicts are never applied.
-function preview(libraryId) {
+// Only the first `limit` proposals are listed (a page can't show 100 000 rows); the counts cover all of them.
+const PREVIEW_LIMIT = 2000;
+function preview(libraryId, { limit = PREVIEW_LIMIT } = {}) {
+  const titles = new Map(); // work titles, once per work
   const libs = Object.values(db.libraries).filter(l => !libraryId || libraryId === 'all' || l.id === libraryId);
   const items = [];
   let checked = 0;
@@ -86,7 +89,8 @@ function preview(libraryId) {
       const toName = proposedName(b.fileName);
       if (!toName) continue;
       const s = db.series[b.seriesId];
-      props.push({ b, toName, work: s ? store.seriesMeta(s).title : '' });
+      if (s && !titles.has(s.id)) titles.set(s.id, store.seriesMeta(s).title);
+      props.push({ b, toName, work: s ? titles.get(s.id) : '' });
     }
     // Conflicts: the new name is another existing file, or two files would get the same name
     const wanted = new Map();
@@ -103,7 +107,8 @@ function preview(libraryId) {
     }
   }
   items.sort((a, b) => store.collator.compare(a.library + '\0' + a.work, b.library + '\0' + b.work) || store.collator.compare(a.fromName, b.fromName));
-  return { checked, items };
+  const ok = items.reduce((n, x) => n + (x.status === 'ok' ? 1 : 0), 0);
+  return { checked, total: items.length, ok, conflicts: items.length - ok, truncated: items.length > limit, items: items.slice(0, limit) };
 }
 
 // Folder-source JSON files that describe this book (same name next to it in path mode, or by name)
@@ -123,81 +128,180 @@ function jsonFilesFor(b, metadata) {
   return out;
 }
 
-// Renames the picked books. Only proposals that are still valid (same file, same proposed name, no
-// conflict) are applied. Returns { renamed, json, failed: [{ from, error }] }.
-// What the Processes page shows about renaming: the process exists only while a batch is being renamed
-const state = { running: null, last: null };
+/* ---------------- renaming: a queue of jobs ----------------
+ * Applying is a job: queued, then run one at a time. A job goes through its files in chunks (CHUNK files
+ * per message to the rename process, the server yielding between chunks), so even hundreds of thousands of
+ * renames don't hold up the server. The rename process (rename-worker.js) is started when a job begins and
+ * closed when the queue is empty. Only proposals still valid when their chunk runs are applied (same file,
+ * same proposed name, no conflict). */
+const CHUNK = 200;
+const MAX_QUEUED = 20;
+const KEEP_FINISHED = 10;
+const jobs = []; // queued, running and the last finished ones (newest last)
+let jobSeq = 0, pumping = false;
+const state = { worker: null, last: null };
+
+const jobView = j => ({
+  id: j.id, status: j.status, createdAt: j.createdAt, startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
+  by: j.by || null, total: j.total, done: j.done, renamed: j.renamed, json: j.json, failedCount: j.failed.length,
+  failed: j.failed.slice(0, 50), error: j.error || null, libraries: j.libraries ? [...j.libraries] : [], process: j.process || null,
+  progress: j.total ? Math.min(100, Math.floor(j.done / j.total * 100)) : (j.status === 'done' ? 100 : 0)
+});
 function info() {
-  const r = state.running;
-  return { running: r ? { pid: r.pid, mode: r.mode, startedAt: r.startedAt, done: r.done, total: r.total } : null, last: state.last };
+  const running = jobs.find(j => j.status === 'running');
+  const w = state.worker;
+  return {
+    running: running ? { jobId: running.id, pid: w ? w.pid : null, mode: w ? w.mode : null, startedAt: running.startedAt, done: running.done, total: running.total } : null,
+    queued: jobs.filter(j => j.status === 'queued').length,
+    last: state.last,
+    jobs: jobs.map(jobView)
+  };
 }
+const getJob = id => { const j = jobs.find(x => x.id === id); return j ? jobView(j) : null; };
 
-// Runs the file operations in a separate process (inline if it can't be started), closed when done
-function runOps(ops) {
-  const run = { pid: null, mode: 'process', startedAt: new Date().toISOString(), done: 0, total: ops.length };
-  state.running = run;
-  const finish = v => { state.running = null; state.last = { at: new Date().toISOString(), files: ops.length, mode: run.mode, pid: run.pid, durationMs: Date.now() - Date.parse(run.startedAt) }; return v; };
-  const inline = () => { run.mode = 'inline'; return renameWorker.run(ops, n => { run.done = n; }); };
-  if (process.env.THOTH_SCAN_IN_PROCESS === '1') return inline().then(finish, e => { finish(); throw e; });
-  return new Promise((resolve, reject) => {
-    let child;
-    try { child = fork(path.join(__dirname, 'rename-worker.js'), [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], serialization: 'advanced' }); }
-    catch (e) { console.warn(`[library] couldn't start the rename process (${e.message}); renaming inside the server`); inline().then(resolve, reject); return; }
-    run.pid = child.pid;
-    try { os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW); } catch { /* not allowed here */ }
-    let settled = false;
-    const done = (err, v) => { if (settled) return; settled = true; try { child.kill(); } catch { /* gone */ } if (err) reject(err); else resolve(v); };
-    child.on('message', m => {
-      if (m.type === 'ready') child.send({ type: 'rename', ops });
-      else if (m.type === 'progress') run.done = m.done;
-      else if (m.type === 'result') done(null, m.result);
-      else if (m.type === 'error') done(new Error(m.message));
-    });
-    child.on('error', e => done(e));
-    child.on('exit', code => done(new Error(`Rename process stopped unexpectedly (exit code ${code})`)));
-  }).then(finish, e => { finish(); throw e; });
-}
-
-async function apply(picks, { renameJson = true, metadata } = {}) {
-  const current = new Map(preview('all').items.map(x => [x.bookId, x]));
-  const failed = [];
-  let renamed = 0, json = 0;
-  const touched = new Set();
-  if (renameJson && metadata) await metadata.warmIndexes(); // the folder sources' indexes, to find JSON files
-  // Checked here (the database is here); the disk work happens in the rename process
-  const todo = [];
-  for (const pick of picks) {
-    const x = current.get(pick.bookId);
-    if (!x || x.toName !== pick.toName) { failed.push({ from: pick.from || pick.bookId, error: 'changed' }); continue; }
-    if (x.status !== 'ok') { failed.push({ from: x.from, error: x.status }); continue; }
-    const b = db.books[x.bookId];
-    const lib = db.libraries[b.libraryId];
-    const root = path.resolve(lib.root);
-    const fromAbs = path.resolve(root, b.relPath);
-    const newRel = relWithName(b.relPath, x.toName);
-    const toAbs = path.resolve(root, newRel);
-    if (!fromAbs.startsWith(root + path.sep) || !toAbs.startsWith(root + path.sep)) { failed.push({ from: x.from, error: 'outside the library folder' }); continue; }
-    // The JSON files that described it get the same new name (".json" kept)
-    const jsonOps = (renameJson && metadata ? jsonFilesFor(b, metadata) : [])
-      .map(jf => ({ from: jf, to: path.join(path.dirname(jf), path.basename(x.toName, path.extname(x.toName)) + '.json') }));
-    todo.push({ x, b, lib, newRel, op: { from: fromAbs, to: toAbs, json: jsonOps } });
-  }
-  const results = todo.length ? await runOps(todo.map(t => t.op)) : [];
-  todo.forEach((t, i) => {
-    const r = results[i] || { ok: false, error: 'not done', json: [] };
-    if (!r.ok) { failed.push({ from: t.x.from, error: r.error }); return; }
-    moveBook(t.b, t.newRel);
-    renamed++;
-    touched.add(t.lib.id);
-    for (const j of r.json) { if (j.ok) json++; else failed.push({ from: j.from, error: 'JSON: ' + j.error }); }
+// The rename process for the running job (inline if it can't be started)
+function startWorker() {
+  if (process.env.THOTH_SCAN_IN_PROCESS === '1') return { mode: 'inline', pid: null };
+  let child;
+  try { child = fork(path.join(__dirname, 'rename-worker.js'), [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], serialization: 'advanced' }); }
+  catch (e) { console.warn(`[library] couldn't start the rename process (${e.message}); renaming inside the server`); return { mode: 'inline', pid: null }; }
+  try { os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW); } catch { /* not allowed here */ }
+  const w = { mode: 'process', pid: child.pid, child, pending: new Map(), seq: 0, dead: null };
+  child.on('message', m => {
+    const p = m && w.pending.get(m.reqId);
+    if (!p) return;
+    if (m.type === 'progress') { if (p.onProgress) p.onProgress(m.done); return; }
+    w.pending.delete(m.reqId);
+    if (m.type === 'result') p.resolve(m.result); else p.reject(new Error(m.message));
   });
+  const fail = err => { w.dead = err; for (const p of w.pending.values()) p.reject(err); w.pending.clear(); };
+  child.on('error', e => fail(e));
+  child.on('exit', code => fail(new Error(`Rename process stopped unexpectedly (exit code ${code})`)));
+  return w;
+}
+function stopWorker() {
+  const w = state.worker;
+  state.worker = null;
+  if (w && w.child) { w.child.removeAllListeners('exit'); try { w.child.kill(); } catch { /* gone */ } }
+}
+function runOps(ops, onProgress) {
+  let w = state.worker;
+  if (!w || w.dead) w = state.worker = startWorker();
+  if (w.mode === 'inline') return renameWorker.run(ops, onProgress);
+  return new Promise((resolve, reject) => {
+    const reqId = ++w.seq;
+    w.pending.set(reqId, { resolve, reject, onProgress });
+    w.child.send({ type: 'rename', reqId, ops });
+  });
+}
+
+// picks: [{ bookId, toName }] or { all: true, library, exclude: [bookId] } (every valid proposal of a library)
+function enqueue(picks, { renameJson = true, metadata, by, onDone } = {}) {
+  if (jobs.filter(j => j.status === 'queued').length >= MAX_QUEUED) throw Object.assign(new Error('Too many rename jobs waiting'), { status: 429, code: 'renameQueueFull' });
+  const job = { id: 'r' + (++jobSeq), status: 'queued', createdAt: new Date().toISOString(), by, picks, renameJson, metadata, onDone,
+    total: Array.isArray(picks) ? picks.length : 0, done: 0, renamed: 0, json: 0, failed: [], libraries: new Set() };
+  jobs.push(job);
+  setImmediate(pump);
+  return jobView(job);
+}
+
+async function pump() {
+  if (pumping) return;
+  pumping = true;
+  try {
+    let job;
+    while ((job = jobs.find(j => j.status === 'queued'))) {
+      job.status = 'running';
+      job.startedAt = new Date().toISOString();
+      try { await runJob(job); job.status = 'done'; } catch (e) { job.status = 'failed'; job.error = e.message; console.error('[library] rename job failed:', e.message); }
+      job.finishedAt = new Date().toISOString();
+      const w = state.worker;
+      state.last = { at: job.finishedAt, files: job.total, renamed: job.renamed, mode: w ? w.mode : null, pid: w ? w.pid : null, durationMs: Date.parse(job.finishedAt) - Date.parse(job.startedAt) };
+      job.process = w ? { mode: w.mode, pid: w.pid } : null;
+      delete job.picks; delete job.metadata;
+      if (job.onDone) try { job.onDone(jobView(job)); } catch (e) { console.error('[library] after renaming:', e.message); }
+      // Keep only the last finished jobs
+      const finished = jobs.filter(j => j.status === 'done' || j.status === 'failed');
+      for (const old of finished.slice(0, Math.max(0, finished.length - KEEP_FINISHED))) jobs.splice(jobs.indexOf(old), 1);
+    }
+  } finally {
+    stopWorker(); // nothing left: close the rename process
+    pumping = false;
+  }
+}
+
+async function runJob(job) {
+  const { renameJson, metadata } = job;
+  if (renameJson && metadata) await metadata.warmIndexes(); // the folder sources' indexes, to find JSON files
+  // The proposals as they are now (conflicts included, to say why something isn't renamed)
+  const current = new Map(preview('all', { limit: Infinity }).items.map(x => [x.bookId, x]));
+  let picks = job.picks;
+  if (!Array.isArray(picks)) {
+    const exclude = new Set(picks.exclude || []);
+    picks = [...current.values()].filter(x => x.status === 'ok' && !exclude.has(x.bookId) && (!picks.library || picks.library === 'all' || x.libraryId === picks.library))
+      .map(x => ({ bookId: x.bookId, toName: x.toName }));
+  }
+  job.total = picks.length;
+  for (let i = 0; i < picks.length; i += CHUNK) {
+    const chunk = picks.slice(i, i + CHUNK);
+    const todo = [];
+    for (const pick of chunk) {
+      const x = current.get(pick.bookId);
+      const b = x && db.books[x.bookId];
+      // Still the same file with the same proposal?
+      if (!x || !b || x.toName !== pick.toName || b.fileName !== x.fromName) { job.failed.push({ from: (x && x.from) || pick.from || pick.bookId, error: 'changed' }); continue; }
+      if (x.status !== 'ok') { job.failed.push({ from: x.from, error: x.status }); continue; }
+      const lib = db.libraries[b.libraryId];
+      if (!lib) { job.failed.push({ from: x.from, error: 'changed' }); continue; }
+      const root = path.resolve(lib.root);
+      const fromAbs = path.resolve(root, b.relPath);
+      const newRel = relWithName(b.relPath, x.toName);
+      const toAbs = path.resolve(root, newRel);
+      if (!fromAbs.startsWith(root + path.sep) || !toAbs.startsWith(root + path.sep)) { job.failed.push({ from: x.from, error: 'outside the library folder' }); continue; }
+      // The JSON files that described it get the same new name (".json" kept)
+      const jsonOps = (renameJson && metadata ? jsonFilesFor(b, metadata) : [])
+        .map(jf => ({ from: jf, to: path.join(path.dirname(jf), path.basename(x.toName, path.extname(x.toName)) + '.json') }));
+      todo.push({ x, b, lib, newRel, op: { from: fromAbs, to: toAbs, json: jsonOps } });
+    }
+    const base = job.done;
+    const results = todo.length ? await runOps(todo.map(t => t.op), n => { job.done = base + Math.round(n / todo.length * chunk.length); }) : [];
+    const moved = new Map();
+    todo.forEach((t, k) => {
+      const r = results[k] || { ok: false, error: 'not done', json: [] };
+      if (!r.ok) { job.failed.push({ from: t.x.from, error: r.error }); return; }
+      moved.set(t.b.id, moveBook(t.b, t.newRel));
+      job.renamed++;
+      job.libraries.add(t.lib.id);
+      for (const j of r.json) { if (j.ok) job.json++; else job.failed.push({ from: j.from, error: 'JSON: ' + j.error }); }
+    });
+    // Read lists follow the renamed books (once per chunk)
+    if (moved.size) for (const rl of Object.values(db.readlists)) if (rl.bookIds.some(id => moved.has(id))) rl.bookIds = rl.bookIds.map(id => moved.get(id) || id);
+    job.done = base + chunk.length;
+    if (moved.size) { store.saveLibrary(); store.saveProgress(); }
+    // Indexes now and then (cheap enough) and let the server answer requests between chunks
+    if ((i / CHUNK) % 10 === 9) store.reindex();
+    await new Promise(r => setImmediate(r));
+  }
   store.reindex();
   store.saveLibrary();
   store.saveProgress();
-  return { renamed, json, failed, libraries: [...touched], process: state.last && { mode: state.last.mode, pid: state.last.pid } };
 }
 
-// A renamed file's book gets the id of its new path; progress and read lists follow it
+// Waits for a job to finish (tests, small batches): resolves with its final view
+function waitFor(id, timeoutMs = 600000) {
+  return new Promise((resolve, reject) => {
+    const t0 = Date.now();
+    (function check() {
+      const j = getJob(id);
+      if (!j) return reject(new Error('unknown job'));
+      if (j.status === 'done' || j.status === 'failed') return resolve(j);
+      if (Date.now() - t0 > timeoutMs) return reject(new Error('timeout'));
+      setTimeout(check, 50);
+    })();
+  });
+}
+
+// A renamed file's book gets the id of its new path; reading progress follows it. Returns the new id.
 function moveBook(b, newRel) {
   const oldId = b.id;
   const newId = store.stableId(b.libraryId, 'book', newRel);
@@ -210,7 +314,12 @@ function moveBook(b, newRel) {
     const p = store.progress[user];
     if (p[oldId]) { p[newId] = p[oldId]; delete p[oldId]; }
   }
-  for (const r of Object.values(db.readlists)) r.bookIds = r.bookIds.map(id => (id === oldId ? newId : id));
+  return newId;
 }
 
-module.exports = { preview, apply, proposedName, parse, info };
+// The examples the Rename page shows, worked out with the rules themselves (so they never go stale)
+const EXAMPLES = ['chapter-0.cbz', 'chapter-1.1.cbz', 'chapter-1x1.cbz', 'Chapter 001.cbz', 'chapter-1-chapter name.cbz',
+  'chapter-83-the-end.cbz', 'Chapter 5 - Spider-Man.cbz', 'ch_12_the_end.cbz', 'vol.3.cbz', 'ep-04.pdf', 'Saga 001.cbz'];
+function examples() { return EXAMPLES.map(f => ({ from: f, to: proposedName(f) })); }
+
+module.exports = { preview, enqueue, waitFor, getJob, proposedName, parse, info, examples };

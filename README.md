@@ -30,6 +30,15 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   and people chips on a work page open the library filtered by them. Works can also be sorted by **score**
   (best first, works without one last). Click a work's cover to see it full size. Global search covers series, books, authors,
   genres, tags, collections and read lists.
+- **Pages and covers are fast**: they're answered from a key-value cache (recent images in memory,
+  `THOTH_MEDIA_CACHE_MB`, default 128; covers also on disk in `data/cache/thumbs/`, so thousands of covers
+  aren't read from their archives again after a restart). What isn't cached is read by a separate media
+  process, started when needed and closed when idle; reading a page also reads the next three, so turning
+  pages is answered from memory.
+- **Big libraries**: tens of thousands of works stay quick. Each work's merged metadata and view are worked out
+  once and reused until something about it changes; grouping versions into works, filters and counts are reused
+  until anything changes, and full work objects are built only for the page of results you're looking at.
+  Changing filters or the order shows *Updating…* over the grid while new results load.
 - **Page cache**: pages you've opened are kept in the browser. Switching between them within a minute needs
   no request at all; after that, or after something changed, the page shows at once and refreshes in the
   background.
@@ -158,8 +167,9 @@ them in small batches, each process reading several files at once. Libraries are
 | Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
-**Processes page (administrators).** Shows the web server, the scan service, the metadata lookups and file
-renaming (a process started for each batch of renames and closed when it's done):
+**Processes page (administrators).** Shows the web server, the scan service, the metadata lookups, file
+renaming (its queue, and a process that exists only while jobs run) and **pages and covers** (the media
+service: its cache and its process):
 process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting. Scans and
 metadata batches show a **progress bar with the time left**, estimated from the speed so far (scans: finding
 files → reading new/changed files *x of y* → saving; metadata: works done of the batch, and which site each
@@ -217,8 +227,8 @@ order them with the arrows.
   you can pick several sites at once, e.g. AniList *and* Kitsu; the picks stick for future refreshes) and
   **Clear metadata**. *Update metadata* (and *Refresh all*) first re-matches the library's folder-source JSON
   files, so fixed or new JSON files are picked up right away.
-- **Links.** A work keeps the web addresses of its matches and shows one line per address on its page
-  (*Metadata from: AniList https://…*). They also come from folder-source JSON (`url`, `urls`, `link`, `links`,
+- **Links.** A work keeps the web addresses of its matches and shows one line per source on its page
+  (*Metadata from: AniList*, *Kitsu*, *example.org*; each name opens its page). They also come from folder-source JSON (`url`, `urls`, `link`, `links`,
   `source`, `sources`, `web`) and can be edited (Edit → Links, one per line; your list replaces the others,
   empty brings them back). A link to a known site (AniList, MangaDex, MangaUpdates, Kitsu, MyAnimeList, Open
   Library, Google Books, Comic Vine) is used as an exact match: that entry is read directly, without searching.
@@ -372,8 +382,15 @@ but never applied.
 
 Renaming keeps everything attached to the book: reading progress and read lists move to the new name, and with
 *Also rename matching JSON files of folder sources* (on by default) `chapter-1.json` becomes `Chapter 1.json` so
-it still matches. The files are renamed by a separate low-priority process, started for the batch and closed
-afterwards (one batch at a time). A quick scan runs afterwards to put chapters in order. Files the server may not rename
+it still matches.
+
+**Large batches.** Renaming is a background **job**: *Rename selected* answers at once and the page shows the
+job's progress (you can leave and come back). Jobs wait in a queue and run one at a time; each goes through its
+files in chunks of 200, handed to a separate low-priority process (started for the queue, closed when it's
+empty), and the server keeps answering between chunks. The list shows the first 2000 proposals (the counts
+cover all); *Select all* renames every proposal, also those not listed, except the ones you untick, so even
+hundreds of thousands of files take one click. The naming-rule examples on the page are produced by the rules
+themselves. A quick scan runs afterwards to put chapters in order. Files the server may not rename
 (read-only library folders) are reported.
 
 ### Editing a work
@@ -424,7 +441,7 @@ temporary data folder, so `data/` is never touched. See [HANDOFF.md](HANDOFF.md)
 | `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, library access |
 | `supervisor.js` | Runs the server as a child process and restarts it after updates or crashes |
 | `config.js` | Server settings (`data/config.json`), including metadata API keys |
-| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `db.js` (storage, versions), `api.js` (routes), `metadata/` (online metadata: `providers.js` per site, `index.js` queue, merging, covers, Identify) |
+| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `media.js` + `media-worker.js` (pages/covers: cache and media process), `rename.js` + `rename-worker.js` (renaming jobs), `db.js` (storage, versions, memoized views), `api.js` (routes), `metadata/` (online metadata: `providers.js` per site, `index.js` queue, merging, covers, Identify) |
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |
@@ -453,6 +470,11 @@ Every replaced or removed file is backed up to `.updates/backup-<time>/`, and th
 files changed. `data/`, `.git`, `.claude`, `.env`, `node_modules` and `.updates` are never touched. If the update changed server code, the server
 **restarts itself** right after installing (no manual step), and the open page reloads when it's back.
 
+**Any version, older ones too.** Under each check, *All versions* lists every release (or push) with what it is
+to you: *Installed* (reinstall it), *Newer* or *Older* (**downgrade**). Going back always downloads that whole
+version (GitHub's comparison can't describe a step backwards), and the same backup is made first. Files that
+only newer versions have stay in place (older code doesn't use them). Data saved by a newer version may not be
+understood by an older one, which the confirmation says.
 - **How the app knows its version.** The version isn't written in a file; the app works out which commit it's
   running, then names it after the repository's tags. *Release* is the highest `vX.Y.Z` release that commit
   contains, and *Push* is the highest `pN` tag it contains. If the code is past a tag, it shows e.g. `p3 +2 commits`.

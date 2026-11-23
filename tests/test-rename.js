@@ -68,13 +68,15 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   await call('POST', '/api/users', { username: 'bob', password: 'bobpass12' });
   const bob = (await call('POST', '/api/login', { username: 'bob', password: 'bobpass12' }, null)).cookie;
   ok((await call('GET', '/api/rename/preview', null, bob)).status === 403 && (await call('POST', '/api/rename/apply', { items: picks }, bob)).status === 403, 'only admins rename');
-  const r = (await call('POST', '/api/rename/apply', { items: picks, renameJson: true })).data;
-  ok(r.renamed === 4 && r.json === 1 && r.failed.length === 2 && r.failed.some(f => f.error === 'exists') && r.failed.some(f => f.error === 'changed'), `applied: 4 renamed, 1 JSON renamed, 2 refused (${r.failed.map(f => f.error).join(', ')})`);
+  const queued = await call('POST', '/api/rename/apply', { items: picks, renameJson: true });
+  ok(queued.status === 202 && queued.data.job && ['queued', 'running', 'done'].includes(queued.data.job.status), 'applying queues a rename job (answered at once)');
+  const r = await until(async () => { const j = (await call('GET', `/api/rename/jobs/${queued.data.job.id}`)).data.job; return j.status === 'done' && j; });
+  ok(r.renamed === 4 && r.json === 1 && r.failedCount === 2 && r.total === 6 && r.done === 6 && r.failed.some(f => f.error === 'exists') && r.failed.some(f => f.error === 'changed'), `applied: 4 renamed, 1 JSON renamed, 2 refused (${r.failed.map(f => f.error).join(', ')})`);
   const procs = (await call('GET', '/api/processes')).data;
   const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
   ok(r.process && r.process.mode === 'process' && r.process.pid && r.process.pid !== procs.server.pid, `the files were renamed by a separate process (pid ${r.process && r.process.pid})`);
   for (let i = 0; i < 50 && alive(r.process.pid); i++) await new Promise(res => setTimeout(res, 100));
-  ok(!procs.rename.running && procs.rename.last.files === 4 && !alive(r.process.pid),'that process is closed once the batch is done (shown on the Processes page)');
+  ok(!procs.rename.running && procs.rename.last.renamed === 4 && !alive(r.process.pid),'that process is closed once the batch is done (shown on the Processes page)');
   const disk = fs.readdirSync(path.join(MEDIA, 'Work A')).sort();
   ok(['Chapter 0.cbz', 'Chapter 1 - Chapter Name.cbz', 'Chapter 1.1.cbz', 'Chapter 1.cbz', 'Chapter 2.cbz', 'chapter-2x5.cbz'].every(f => disk.includes(f)) && !disk.includes('chapter-0.cbz'), `files renamed on disk (${disk.join(', ')})`);
   ok(fs.existsSync(path.join(META, 'Work A', 'Chapter 1.json')) && !fs.existsSync(path.join(META, 'Work A', 'chapter-1.json')), 'its folder-source JSON was renamed along');
@@ -90,7 +92,45 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   ok(ls.read === 0 && ls.books === 10 && ls.removed === 0 && ls.added === 0, 'the quick scan afterwards finds nothing new to read (no duplicates, nothing lost)');
   const after = (await call('GET', `/api/series/${workA.id}`)).data.books.find(b => b.fileName === 'Chapter 1.cbz');
   ok(after.title === 'The First One', 'its JSON still matches after the rename');
-  ok(!(await call('GET', `/api/rename/preview?library=${L}`)).data.items.some(x => x.status === 'ok' && x.fromName !== 'chapter-2x5.cbz'), 'checking again: only what was skipped is left');
+  const again = (await call('GET', `/api/rename/preview?library=${L}`)).data;
+  ok(!again.items.some(x => x.status === 'ok' && x.fromName !== 'chapter-2x5.cbz') && again.ok === 1 && again.conflicts === 3 && again.truncated === false, 'checking again: only what was skipped is left (with counts)');
+
+  // ---- rules shown on the page come from the rules themselves ----
+  const ex = (await call('GET', '/api/rename/rules')).data.examples;
+  ok(ex.length >= 8 && ex.every(x => x.to === rules.proposedName(x.from)) && ex.find(x => x.from === 'chapter-1x1.cbz').to === 'Chapter 1.1.cbz', 'the naming-rule examples are worked out by the current rules');
+
+  // ---- a big batch: "all" (but the excluded), queued behind another job, in chunks ----
+  const BIG = path.join(MEDIA, 'Big');
+  for (let i = 0; i < 450; i++) book(path.join(BIG, `chapter-${String(i).padStart(3, '0')}-part-${i}.cbz`));
+  await call('POST', `/api/libraries/${L}/scan`, {});
+  await until(async () => { const l = (await call('GET', '/api/libraries')).data.libraries[0]; return !l.scanning && l.lastScan.books === 460 && l; }, 60000);
+  const bigPv = (await call('GET', `/api/rename/preview?library=${L}`)).data;
+  ok(bigPv.ok === 451 && bigPv.items.length === bigPv.total, `preview counts every proposal (${bigPv.ok} to rename)`);
+  const skip = bigPv.items.find(x => x.fromName === 'chapter-007-part-7.cbz');
+  const j1 = (await call('POST', '/api/rename/apply', { all: true, library: L, exclude: [skip.bookId, again.items.find(x => x.status === 'ok').bookId] })).data.job;
+  const j2 = (await call('POST', '/api/rename/apply', { all: true, library: L, exclude: [again.items.find(x => x.status === 'ok').bookId] })).data.job; // waits for the first
+  const jobs = (await call('GET', '/api/rename/jobs')).data.jobs;
+  ok(['queued', 'done'].includes(jobs.find(j => j.id === j2.id).status) && jobs.findIndex(j => j.id === j1.id) < jobs.findIndex(j => j.id === j2.id), 'a second job waits in line behind the first');
+  const d1 = await until(async () => { const j = (await call('GET', `/api/rename/jobs/${j1.id}`)).data.job; return j.status === 'done' && j; }, 60000);
+  ok(d1.total === 449 && d1.renamed === 449, `"rename all" without the excluded files: ${d1.renamed} renamed in chunks`);
+  const d2 = await until(async () => { const j = (await call('GET', `/api/rename/jobs/${j2.id}`)).data.job; return j.status === 'done' && j; }, 60000);
+  const bigDisk = fs.readdirSync(BIG);
+  ok(d2.renamed === 1 && bigDisk.includes('Chapter 7 - Part 7.cbz') && bigDisk.includes('Chapter 449 - Part 449.cbz') && !bigDisk.some(f => /^chapter-/.test(f)), 'the next job renamed what the first left out; no padding, dashes as spaces');
+  ok(!(await call('GET', '/api/processes')).data.rename.running, 'queue empty: no rename process left');
+
+  // ---- pages and covers: media service ----
+  const anyBook = (await call('GET', `/api/series/${workA.id}`)).data.books[0];
+  const p1 = await fetch(`${BASE}/api/books/${anyBook.id}/pages/1`, { headers: { Cookie: cookie } });
+  const img = Buffer.from(await p1.arrayBuffer());
+  ok(p1.status === 200 && p1.headers.get('content-type') === 'image/png' && img.slice(1, 4).toString() === 'PNG', 'a page is served (through the media service)');
+  const p1b = await fetch(`${BASE}/api/books/${anyBook.id}/pages/1`, { headers: { Cookie: cookie } });
+  const med = (await call('GET', '/api/processes')).data.media;
+  ok(p1b.status === 200 && Buffer.from(await p1b.arrayBuffer()).equals(img) && med.stats.hits >= 1 && med.cache.entries >= 1, `asked again: answered from the cache (${med.stats.hits} hits, ${med.cache.entries} cached)`);
+  ok(med.mode === 'process' && med.pid && med.pid !== procs.server.pid, `pages are read by a separate media process (pid ${med.pid})`);
+  const th = await fetch(`${BASE}/api/series/${workA.id}/thumbnail`, { headers: { Cookie: cookie } });
+  await until(async () => fs.existsSync(path.join(DATA, 'cache', 'thumbs')) && fs.readdirSync(path.join(DATA, 'cache', 'thumbs')).length >= 1, 5000); // written just after answering
+  ok(th.status === 200 && fs.readdirSync(path.join(DATA, 'cache', 'thumbs')).length >= 1,'a work’s cover is served and kept on disk (key-value)');
+  ok((await fetch(`${BASE}/api/books/${anyBook.id}/pages/99`, { headers: { Cookie: cookie } })).status === 404, 'a missing page is a 404');
   srv.kill();
 
   // ---- matching with alternative titles (in process, a fake site) ----

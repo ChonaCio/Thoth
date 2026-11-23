@@ -90,10 +90,12 @@ const work = async t => (await call('GET', '/api/series?limit=50')).data.items.f
   ok(calls.includes('mangadex:fetch:md-1') && calls.includes('kitsu:fetch:k-10') && calls.includes('anilist:fetch:30013'), 'all of them are read, even after the main fields were filled');
   ok(x.provider.matches.length === 3 && x.provider.links.length === 3, 'every match is kept, with its address');
   delete x.overrides.links;
+  store.touch(); // (a direct change in a test: say so, as a save would)
   ok(store.seriesView(x, { role: 'admin', username: 'a' }, { admin: true }).links.length === 3, 'without edited links, the work’s links are its matches’ addresses');
 
   // Covers: the site link gives that entry's cover; another page gives the image it offers for sharing
   x.overrides.links = ['https://comicvine.gamespot.com/saga/4050-12345/', 'https://pages.example/saga'];
+  store.touch();
   const realFetch = global.fetch;
   global.fetch = async (url) => {
     if (String(url) === 'https://pages.example/saga') return new Response('<html><head><meta content="/img/saga-cover.jpg" property="og:image"></head><body>…</body></html>', { status: 200, headers: { 'content-type': 'text/html' } });

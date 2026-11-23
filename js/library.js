@@ -243,6 +243,9 @@
       MULTI.forEach(function (f) { st.inc[f] = route.query.getAll(f).filter(Boolean); st.exc[f] = route.query.getAll('x' + f).filter(Boolean); });
       st.yearFrom = route.query.get('yearFrom') || ''; st.yearTo = route.query.get('yearTo') || ''; st.author = route.query.get('author') || '';
       st.q = '';
+      // The works on screen were for other criteria: load again (the page cache would show them as they are)
+      st.stale = true;
+      st.reset = true;
     }
   }
   // { genre: [...], xgenre: [...], yearFrom, … } for the API and the address
@@ -288,6 +291,9 @@
     var st = libState(route);
     var id = libId(route);
     st.loading = true;
+    // Only the latest request counts (a slower earlier one must not overwrite it)
+    var seq = st.seq = (st.seq || 0) + 1;
+    if (!append) showGridLoading(route);
     var params = Object.assign({ library: id === 'all' ? '' : id, q: st.q, sort: st.sort, read: st.read, deleted: libDeleted(route) ? '1' : '' }, criteriaParams(st));
     var page = function (offset, limit) { return api('GET', '/api/series?' + qsMulti(Object.assign({ offset: offset, limit: limit }, params))); };
     var want = append ? PAGE_SIZE : Math.max(PAGE_SIZE, keep || 0);
@@ -302,12 +308,25 @@
       });
     }
     return more().then(function () {
+      if (seq !== st.seq) return;
       st.items = append ? st.items.concat(got) : got;
       st.total = total;
       st.error = null;
       st.stale = false;
       st._at = Date.now();
-    }, function (e) { st.error = e; }).then(function () { st.loading = false; renderLibGrid(route); });
+    }, function (e) { if (seq === st.seq) st.error = e; }).then(function () {
+      if (seq !== st.seq) return;
+      st.loading = false;
+      renderLibGrid(route);
+    });
+  }
+  // While works are loading for new criteria/order: a bar over the grid and the old works dimmed
+  function showGridLoading(route) {
+    var el = $('#lib-grid');
+    if (!el || location.hash.split('?')[0] !== route.hash.split('?')[0]) return;
+    el.classList.add('is-loading');
+    el.setAttribute('aria-busy', 'true');
+    if (!$('.grid-loading', el)) el.insertAdjacentHTML('afterbegin', '<div class="grid-loading" role="status"><span class="spinner spinner--sm"></span>' + esc(t('lib.updating')) + '</div>');
   }
   function renderLibGrid(route) {
     var el = $('#lib-grid');
@@ -323,6 +342,9 @@
         (st.items.length < st.total ? '<div class="load-more"><button class="btn btn--outline btn--pill" data-lib="more-series"' + (st.loading ? ' disabled' : '') + '>' + esc(t('lib.loadMore')) + '</button></div>' : '');
     }
     el.innerHTML = html;
+    el.classList.toggle('is-loading', Boolean(st.loading && st.items));
+    if (st.loading && st.items) el.insertAdjacentHTML('afterbegin', '<div class="grid-loading" role="status"><span class="spinner spinner--sm"></span>' + esc(t('lib.updating')) + '</div>');
+    el.setAttribute('aria-busy', st.loading ? 'true' : 'false');
     renderIcons(el);
     A().restoreScroll(); // coming back: scroll to where the user was once the works are on screen
   }
@@ -415,7 +437,13 @@
       var st = libState(route);
       // Fresh from a moment ago and nothing changed: show it as is (page cache)
       if (st.items && !st.stale && !st.error && st._at && Date.now() - st._at < FRESH_MS) { renderLibGrid(route); }
-      else fetchSeries(route, false, st.items ? st.items.length : 0);
+      else {
+        // New criteria from the address: start from the first page, not as many works as before
+        var keep = st.reset ? 0 : st.items ? st.items.length : 0;
+        st.reset = false;
+        renderLibGrid(route);
+        fetchSeries(route, false, keep);
+      }
       // What the search can offer (genres, tags, … with counts) for this library
       var id = libId(route);
       if (isFresh(cache.facets[id])) return;
@@ -572,6 +600,11 @@
         : '<span class="chip chip--person">' + inner + '</span>';
     }).join('') + '</div>';
   }
+  // "https://www.example.org/x" → "example.org"
+  function linkHost(url) {
+    var m = /^https?:\/\/(?:www\.)?([^/?#:]+)/i.exec(url || '');
+    return m ? m[1] : url;
+  }
   function metadataBlock(s) {
     var md = s.metadata, loc = s.localSources || [], urls = s.links || [];
     if (!md && !loc.length && !urls.length && !isAdmin()) return '';
@@ -580,8 +613,9 @@
     var lines = loc.map(function (l) {
       return '<li>' + icon('description') + ' <span>' + esc(l.name) + (isAdmin() && s.localFile ? ' <span class="muted">· ' + esc(s.localFile) + '</span>' : '') + '</span></li>';
     }).concat(urls.map(function (l) {
-      return '<li>' + icon('open_in_new') + ' <span>' + (l.site ? '<strong>' + esc(providerName(l.site)) + '</strong> ' : '') +
-        '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(l.url) + '</a></span></li>';
+      // Only the source's name (a known site, else the page's host), opening the address
+      return '<li>' + icon('open_in_new') + ' <a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(l.url) + '">' +
+        esc(l.site ? providerName(l.site) : linkHost(l.url)) + '</a></li>';
     }));
     var links = lines.length ? '<ul class="meta-links">' + lines.join('') + '</ul>' : '';
     var localLine = loc.length && isAdmin() && s.localCover ? '<p class="muted small">' + esc(t('msrc.withCover')) + '</p>' : '';
@@ -1008,19 +1042,52 @@
   /* ================= RENAME FILES (admins) ================= */
   // Check a library for files to rename (chapter-1.cbz → Chapter 1.cbz), review, rename the picked ones
   var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission' };
+  // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
+  // except `excluded`; mode 'some' = only the ticked ones (`selected`)
   function renameState() {
-    if (!cache.rename) cache.rename = { library: 'all', data: null, selected: {}, renameJson: true, loading: false, result: null, error: null };
+    if (!cache.rename) cache.rename = { library: 'all', data: null, mode: 'all', selected: {}, excluded: {}, renameJson: true, loading: false, result: null, error: null, job: null, rules: null };
     return cache.rename;
   }
+  function renameSelectedCount(st) {
+    if (!st.data) return 0;
+    if (st.mode === 'all') return Math.max(0, (st.data.ok != null ? st.data.ok : st.data.items.filter(function (x) { return x.status === 'ok'; }).length) - Object.keys(st.excluded).length);
+    return Object.keys(st.selected).length;
+  }
+  function isRenameSelected(st, id) { return st.mode === 'all' ? !st.excluded[id] : Boolean(st.selected[id]); }
   function runRenamePreview() {
     var st = renameState();
     st.loading = true; st.error = null;
     A().renderPage();
     return api('GET', '/api/rename/preview?' + Store.qs({ library: st.library })).then(function (r) {
       st.data = r;
-      st.selected = {};
-      r.items.forEach(function (x) { if (x.status === 'ok') st.selected[x.bookId] = true; });
+      st.mode = 'all'; st.selected = {}; st.excluded = {};
     }, function (e) { st.error = e; }).then(function () { st.loading = false; if (A().parseRoute().name === 'rename') A().renderPage(); });
+  }
+  // A queued/running rename job: its progress until it's done, then the result and a fresh check
+  var renamePollTimer = null;
+  function pollRenameJob() {
+    clearTimeout(renamePollTimer);
+    var st = renameState();
+    if (!st.job) return;
+    api('GET', '/api/rename/jobs/' + st.job.id).then(function (r) {
+      st.job = r.job;
+      var finished = r.job.status === 'done' || r.job.status === 'failed';
+      if (finished) {
+        st.result = r.job; st.job = null;
+        invalidate(); markStale(cache.series); markStale(cache.book);
+        if (A().parseRoute().name === 'rename') runRenamePreview(); else st.data = null;
+        return;
+      }
+      if (A().parseRoute().name === 'rename') { var el = $('#ren-job'); if (el) el.outerHTML = renameJobHtml(st.job); else A().renderPage(); }
+      renamePollTimer = setTimeout(pollRenameJob, 700);
+    }, function () { renamePollTimer = setTimeout(pollRenameJob, 2000); });
+  }
+  function renameJobHtml(j) {
+    if (!j) return '';
+    var p = { percent: j.status === 'queued' ? null : j.progress, done: j.done, total: j.total, etaMs: null, elapsedMs: 0, phase: j.status };
+    return '<div id="ren-job" class="card card--wide ren-job" role="status">' +
+      progressBar(p, t(j.status === 'queued' ? 'ren.jobQueued' : 'ren.jobRunning'), t('ren.jobProgress', { done: j.done, total: j.total || '…', renamed: j.renamed })) +
+      '<p class="muted small">' + esc(t('ren.jobHelp')) + '</p></div>';
   }
   var renamePage = {
     title: function () { return t('nav.rename'); },
@@ -1030,8 +1097,13 @@
       var head = '<h1 class="page-title">' + esc(t('nav.rename')) + '</h1>' +
         '<p class="page-lead">' + esc(t('ren.intro')) + '</p>' +
         '<details class="card card--wide msrc-how"><summary class="card__title">' + esc(t('ren.rulesTitle')) + '</summary>' +
-          '<pre class="msrc-pre">chapter-0.cbz              → Chapter 0.cbz\nchapter-1.1.cbz            → Chapter 1.1.cbz\nchapter-1x1.cbz            → Chapter 1x1.cbz\nchapter-1-chapter name.cbz → Chapter 1 - Chapter Name.cbz\nch_12_the_end.cbz          → Chapter 12 - The End.cbz\nvol.3.cbz                  → Volume 3.cbz</pre>' +
+          // Examples worked out by the server with the current rules ("—" = left as it is)
+          (st.rules ? '<pre class="msrc-pre">' + esc(st.rules.map(function (x) {
+            var pad = Math.max.apply(null, st.rules.map(function (y) { return y.from.length; }));
+            return x.from + new Array(pad - x.from.length + 2).join(' ') + '→ ' + (x.to || t('ren.unchanged'));
+          }).join('\n')) + '</pre>' : '') +
           '<p class="small muted">' + esc(t('ren.rulesHelp')) + '</p></details>' +
+        renameJobHtml(st.job) +
         '<div class="toolbar">' +
           '<div class="toolbar__group">' +
             '<select class="select select--compact" id="ren-library" aria-label="' + esc(t('ren.library')) + '">' +
@@ -1043,15 +1115,18 @@
         '</div>';
       if (st.error) return head + errorBanner(st.error);
       if (st.loading) return head + spinner;
-      var res = st.result ? '<div class="banner ' + (st.result.failed.length ? 'banner--error' : 'banner--ok') + '"><div>' +
+      var res = st.result ? '<div class="banner ' + (st.result.failed.length || st.result.status === 'failed' ? 'banner--error' : 'banner--ok') + '"><div>' +
           '<strong>' + esc(t('ren.done', { count: st.result.renamed })) + '</strong>' + (st.result.json ? ' ' + esc(t('ren.doneJson', { count: st.result.json })) : '') +
+          (st.result.error ? '<p>' + esc(st.result.error) + '</p>' : '') +
+          (st.result.failedCount > st.result.failed.length ? '<p class="small">' + esc(t('ren.failedMore', { count: st.result.failedCount })) + '</p>' : '') +
           (st.result.failed.length ? '<ul class="msrc-examples">' + st.result.failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> — ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
         '</div></div>' : '';
       if (!st.data) return head + res + emptyState('edit', '', t('ren.start'));
       var items = st.data.items;
-      var ok = items.filter(function (x) { return x.status === 'ok'; });
-      var nSel = ok.filter(function (x) { return st.selected[x.bookId]; }).length;
-      var summary = '<p class="muted small">' + esc(t('ren.summary', { checked: st.data.checked, count: ok.length, conflicts: items.length - ok.length })) + '</p>';
+      var okTotal = st.data.ok != null ? st.data.ok : items.filter(function (x) { return x.status === 'ok'; }).length;
+      var nSel = renameSelectedCount(st);
+      var summary = '<p class="muted small">' + esc(t('ren.summary', { checked: st.data.checked, count: okTotal, conflicts: st.data.conflicts != null ? st.data.conflicts : items.length - okTotal })) + '</p>' +
+        (st.data.truncated ? '<p class="notice notice--info small">' + esc(t('ren.truncated', { shown: items.length, total: st.data.total })) + '</p>' : '');
       if (!items.length) return head + res + summary + emptyState('check', t('ren.allGoodTitle'), t('ren.allGood'));
       // Grouped by work
       var groups = [], byWork = {};
@@ -1062,15 +1137,15 @@
       });
       return head + res + summary +
         '<div class="ren-actions">' +
-          '<label class="checkbox"><input type="checkbox" id="ren-all"' + (nSel === ok.length && ok.length ? ' checked' : '') + ' /><span>' + esc(t('ren.selectAll')) + '</span></label>' +
+          '<label class="checkbox"><input type="checkbox" id="ren-all"' + (st.mode === 'all' && okTotal ? ' checked' : '') + ' /><span>' + esc(t('ren.selectAll')) + '</span></label>' +
           '<label class="checkbox"><input type="checkbox" id="ren-json"' + (st.renameJson ? ' checked' : '') + ' /><span>' + esc(t('ren.json')) + '</span></label>' +
-          '<button class="btn btn--primary" data-lib="ren-apply"' + (nSel ? '' : ' disabled') + '>' + icon('edit') + esc(t('ren.apply', { count: nSel })) + '</button>' +
+          '<button class="btn btn--primary" data-lib="ren-apply"' + (nSel && !st.job ? '' : ' disabled') + '>' + icon('edit') + esc(t('ren.apply', { count: nSel })) + '</button>' +
         '</div>' +
         groups.map(function (g) {
           return '<section class="ren-group"><h3 class="ren-group__title"><a href="#series/' + g.seriesId + '">' + esc(g.work) + '</a> <span class="muted small">' + esc(g.library) + '</span></h3>' +
             '<ul class="ren-list">' + g.list.map(function (x) {
               var bad = x.status !== 'ok';
-              return '<li class="ren-row' + (bad ? ' is-conflict' : '') + '"><label class="checkbox"><input type="checkbox" data-ren="' + x.bookId + '"' + (bad ? ' disabled' : st.selected[x.bookId] ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
+              return '<li class="ren-row' + (bad ? ' is-conflict' : '') + '"><label class="checkbox"><input type="checkbox" data-ren="' + x.bookId + '"' + (bad ? ' disabled' : isRenameSelected(st, x.bookId) ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
                 '<span class="ren-row__names"><code class="ren-from">' + esc(x.fromName) + '</code><span class="ren-arrow" aria-hidden="true">→</span><code class="ren-to">' + esc(x.toName) + '</code></span></label>' +
                 (bad ? '<span class="badge badge--danger" title="' + esc(x.with || '') + '">' + esc(t('ren.status.' + x.status)) + '</span>' : '') + '</li>';
             }).join('') + '</ul></section>';
@@ -1084,14 +1159,26 @@
         var tg = e.target;
         if (tg.id === 'ren-json') { st.renameJson = tg.checked; return; }
         if (tg.id === 'ren-all') {
-          (st.data ? st.data.items : []).forEach(function (x) { if (x.status === 'ok') st.selected[x.bookId] = tg.checked; });
+          st.mode = tg.checked ? 'all' : 'some'; st.selected = {}; st.excluded = {};
           return A().renderPage();
         }
-        if (tg.dataset.ren) { st.selected[tg.dataset.ren] = tg.checked; A().renderPage(); }
+        if (tg.dataset.ren) {
+          var bid = tg.dataset.ren;
+          if (st.mode === 'all') { if (tg.checked) delete st.excluded[bid]; else st.excluded[bid] = true; }
+          else if (tg.checked) st.selected[bid] = true; else delete st.selected[bid];
+          A().renderPage();
+        }
       });
     },
     enter: function () {
       var st = renameState();
+      if (!st.rules) api('GET', '/api/rename/rules').then(function (r) { st.rules = r.examples; if (A().parseRoute().name === 'rename') A().renderPage(); }, function () {});
+      // A job still running (or started on another visit): follow it
+      if (!st.job) api('GET', '/api/rename/jobs').then(function (r) {
+        var live = (r.jobs || []).filter(function (j) { return j.status === 'queued' || j.status === 'running'; }).pop();
+        if (live && !st.job) { st.job = live; pollRenameJob(); }
+      }, function () {});
+      else pollRenameJob();
       if (!st.data && !st.loading) runRenamePreview();
     }
   };
@@ -1361,11 +1448,27 @@
           facts([
             rr && rr.pid ? ['proc.pid', esc(rr.pid)] : null,
             rr ? ['proc.status', esc(t('proc.renameProgress', { done: rr.done, total: rr.total }))] : null,
+            rn.queued ? ['proc.queue', esc(rn.queued)] : null,
             !rr && rn.last ? ['proc.renameLast', esc(t('proc.renameLastValue', { files: rn.last.files, when: fmtDuration(rn.last.at) }))] : null
           ]) +
           '<p class="field__help">' + esc(t('proc.renameHelp')) + ' <a href="#rename">' + esc(t('nav.rename')) + '</a></p>' +
         '</section>' : '';
-      return head + '<div class="cards">' + serverCard + scanCard + metaCard + renameCard + '</div>';
+      // Pages and covers: key-value cache in front of the media process (started when needed)
+      var mi = p.media;
+      var mediaCard = mi ? '<section class="card proc-card">' +
+          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('collections') + '</span>' +
+            '<div><h2 class="card__title">' + esc(t('proc.media')) + '</h2>' +
+            '<span class="badge ' + (mi.busy ? 'badge--primary' : 'badge--ok') + '">' + esc(t(mi.busy ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
+          (mi.mode === 'inline' ? '<p class="notice">' + esc(t('proc.media.inline')) + '</p>' : '') +
+          facts([
+            mi.pid ? ['proc.pid', esc(mi.pid)] : ['proc.processes', esc(t('proc.media.none'))],
+            ['proc.media.cache', esc(t('proc.media.cacheValue', { entries: mi.cache.entries, size: mi.cache.bytes ? fmtBytes(mi.cache.bytes) : '0 MB', max: fmtBytes(mi.cache.maxBytes) }))],
+            ['proc.media.hits', esc(t('proc.media.hitsValue', { hits: mi.stats.hits + mi.stats.diskHits, misses: mi.stats.misses, prefetched: mi.stats.prefetched }))],
+            mi.lastError ? ['proc.lastError', esc(mi.lastError)] : null
+          ]) +
+          '<p class="field__help">' + esc(t('proc.media.help')) + '</p>' +
+        '</section>' : '';
+      return head + '<div class="cards">' + serverCard + scanCard + metaCard + renameCard + mediaCard + '</div>';
     },
     enter: function (route) {
       clearTimeout(procTimer);
@@ -2046,13 +2149,18 @@
       case 'ren-check': renameState().result = null; return runRenamePreview();
       case 'ren-apply': {
         var rs = renameState();
-        var picks = rs.data.items.filter(function (x) { return x.status === 'ok' && rs.selected[x.bookId]; }).map(function (x) { return { bookId: x.bookId, toName: x.toName, from: x.from }; });
-        if (!picks.length || !confirm(t('ren.confirm', { count: picks.length }))) return;
+        var nPick = renameSelectedCount(rs);
+        if (!nPick || !confirm(t('ren.confirm', { count: nPick }))) return;
+        // Everything (but the unticked ones): the server takes its own list; otherwise the ticked ones
+        var body = rs.mode === 'all'
+          ? { all: true, library: rs.library, exclude: Object.keys(rs.excluded), renameJson: rs.renameJson }
+          : { items: rs.data.items.filter(function (x) { return x.status === 'ok' && rs.selected[x.bookId]; }).map(function (x) { return { bookId: x.bookId, toName: x.toName, from: x.from }; }), renameJson: rs.renameJson };
         btn.disabled = true;
-        return api('POST', '/api/rename/apply', { items: picks, renameJson: rs.renameJson }).then(function (r) {
-          rs.result = r;
-          invalidate(); markStale(cache.series); markStale(cache.book);
-          return runRenamePreview();
+        return api('POST', '/api/rename/apply', body).then(function (r) {
+          rs.job = r.job; rs.result = null;
+          A().toast(t('ren.queued'));
+          A().renderPage();
+          pollRenameJob();
         }, function (e) { btn.disabled = false; fail(e); });
       }
       case 'msrc-add': return folderSourceForm(null);

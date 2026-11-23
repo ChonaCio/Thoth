@@ -654,7 +654,7 @@ async function refreshSeries(seriesId, cur) {
     current.provider = Object.assign(next, { fetchedAt: changed || !old.fetchedAt ? now : old.fetchedAt, checkedAt: now });
     if (changed) current.updated = now;
     status.changed = (status.changed || 0) + (changed ? 1 : 0);
-    store.saveLibrary();
+    store.saveLibrary({ series: current }); // only this work changed (its memoized views are redone)
     status.done++;
     if (!matches.length && errors.length) status.lastError = errors[0];
     return current.provider;

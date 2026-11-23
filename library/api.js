@@ -8,7 +8,7 @@ const scanner = require('./scanner');
 const metadata = require('./metadata');
 const rename = require('./rename');
 const terms = require('./metadata/terms');
-const zip = require('./zip');
+const media = require('./media');
 
 const { db } = store;
 const STATUSES = ['ongoing', 'ended', 'hiatus', 'abandoned', 'unknown'];
@@ -38,9 +38,26 @@ function getBook(user, id) {
 const bookFile = b => path.join(db.libraries[b.libraryId].root, b.relPath);
 
 /* ---------------- libraries ---------------- */
+// Counts of every library in one pass, once per data generation
+let libStatsMemo = { gen: -1, map: new Map() };
+function libStats(id) {
+  const gen = store.generation();
+  if (libStatsMemo.gen !== gen) {
+    const map = new Map();
+    const get = k => { let x = map.get(k); if (!x) map.set(k, (x = { series: 0, books: 0, matched: 0, hidden: 0 })); return x; };
+    for (const s of Object.values(db.series)) {
+      const x = get(s.libraryId);
+      if (s.hidden) x.hidden++; else x.series++;
+      if (s.provider && (s.provider.matches || []).length) x.matched++;
+    }
+    for (const b of Object.values(db.books)) if (bookShown(b)) get(b.libraryId).books++;
+    libStatsMemo = { gen, map };
+  }
+  return libStatsMemo.map.get(id) || { series: 0, books: 0, matched: 0, hidden: 0 };
+}
 function libraryView(lib, user) {
-  const series = Object.values(db.series).filter(s => s.libraryId === lib.id && shown(s)).length;
-  const books = Object.values(db.books).filter(b => b.libraryId === lib.id && bookShown(b)).length;
+  const stats = libStats(lib.id);
+  const series = stats.series, books = stats.books;
   const v = { id: lib.id, name: lib.name, seriesCount: series, booksCount: books, scanning: scanner.scanning.has(lib.id),
     defaultSort: store.libraryDefaults(lib).sort }; // everyone: the library page opens with this order
   if (isAdmin(user)) {
@@ -48,10 +65,10 @@ function libraryView(lib, user) {
     Object.assign(v, {
       root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, oneshots: scanner.oneshotSettings(lib),
       metadata: metadata.librarySettings(lib),
-      metadataCount: Object.values(db.series).filter(s => s.libraryId === lib.id && s.provider && (s.provider.matches || []).length).length,
+      metadataCount: stats.matched,
       scanProgress: progress ? Object.assign({}, progress, { serviceStopped: progress.queued && scanner.serviceState() !== 'running', progress: scanner.progressOf(progress) }) : null,
       defaults: store.libraryDefaults(lib),
-      hiddenCount: Object.values(db.series).filter(s => s.libraryId === lib.id && s.hidden).length
+      hiddenCount: stats.hidden
     });
   }
   return v;
@@ -157,23 +174,6 @@ function editionSummary(v) {
   return { id: v.id, edition: v.edition, title: v.title, libraryId: v.libraryId, libraryName: v.libraryName,
     booksCount: v.booksCount, booksRead: v.booksRead, booksInProgress: v.booksInProgress, oneshot: v.oneshot, coverBookId: v.coverBookId };
 }
-// preferLibrary: on a library's page, the card shows the version that lives in that library
-function groupWorks(views, preferLibrary) {
-  const works = new Map();
-  for (const v of views) {
-    if (!works.has(v.workKey)) works.set(v.workKey, []);
-    works.get(v.workKey).push(v);
-  }
-  return [...works.values()].flatMap(splitByEdition).map(list => {
-    const shown = (preferLibrary && list.find(v => v.libraryId === preferLibrary)) || list[0];
-    const work = Object.assign({}, shown);
-    work.workTitle = list[0].title; // the Regular (or first) version's title names the work
-    work.editions = list.map(editionSummary);
-    work.created = list.reduce((m, v) => (v.created > m ? v.created : m), work.created);
-    work.updated = list.reduce((m, v) => (v.updated > m ? v.updated : m), work.updated);
-    return work;
-  });
-}
 // Every version of the work a series belongs to, in any library this user may see
 function editionsOf(s, user) {
   const key = store.seriesMeta(s).workKey;
@@ -224,63 +224,106 @@ async function deleteWorkFiles(targets) {
   return { deletedBooks, deletedWorks, failed };
 }
 
-// Every work the user can see, grouped across libraries (versions may live in different libraries);
-// with a library: the works that have a version in it
-// deleted: only the hidden works (administrators restoring them)
-function worksFor(user, library, { deleted = false } = {}) {
-  const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-  let items = groupWorks(Object.values(db.series)
-    .filter(s => libs.has(s.libraryId) && (deleted ? Boolean(s.hidden) : !s.hidden))
-    .map(s => store.seriesView(s, user)), library || null);
-  if (library) items = items.filter(w => w.editions.some(e => e.libraryId === library));
-  return items;
+/* ---------------- the works index (for tens of thousands of works) ----------------
+ * Grouping versions into works, and the keys filters and search use, are worked out once per data
+ * generation (store.generation(): any save or reindex) and set of visible libraries, then reused by every
+ * request. A request filters and sorts these light entries and builds full work objects (with the user's
+ * reading counts) only for the page it returns. Entries hold the memoized base views: read, never change. */
+const workIndexMemo = new Map();
+function workIndex(user, library, { deleted = false } = {}) {
+  const libs = store.accessibleLibraries(user).map(l => l.id).sort();
+  const key = libs.join(',') + '|' + (library || '') + '|' + (deleted ? 1 : 0);
+  const gen = store.generation();
+  const c = workIndexMemo.get(key);
+  if (c && c.gen === gen) return c.entries;
+  const libSet = new Set(libs);
+  const groups = new Map();
+  for (const s of Object.values(db.series)) {
+    if (!libSet.has(s.libraryId) || (deleted ? !s.hidden : s.hidden)) continue;
+    const v = store.seriesBaseView(s);
+    let g = groups.get(v.workKey);
+    if (!g) groups.set(v.workKey, (g = []));
+    g.push(v);
+  }
+  const entries = [];
+  for (const versions of groups.values()) {
+    for (const list of splitByEdition(versions.slice())) {
+      // With a library: the works that have a version in it, shown with that version
+      if (library && !list.some(v => v.libraryId === library)) continue;
+      const v = (library && list.find(v => v.libraryId === library)) || list[0];
+      let created = v.created, updated = v.updated;
+      for (const x of list) { if (x.created > created) created = x.created; if (x.updated > updated) updated = x.updated; }
+      entries.push({ v, list, workTitle: list[0].title, created, updated, _text: null, _genres: null, _tags: null, _people: null });
+    }
+  }
+  if (workIndexMemo.size > 64) workIndexMemo.clear();
+  workIndexMemo.set(key, { gen, entries, facets: new Map() });
+  return entries;
 }
+const textOf = e => e._text || (e._text = searchable([e.v.title, e.v.publisher].concat(e.v.tags, e.v.genres, e.v.altTitles, e.v.authors.map(a => a.name)).join('\n')));
+const termKey = v => terms.keyOf(terms.canonical(v));
+const genreKeys = e => e._genres || (e._genres = new Set(e.v.genres.map(termKey)));
+const tagKeys = e => e._tags || (e._tags = new Set(e.v.tags.map(termKey)));
+const peopleKeys = e => e._people || (e._people = new Set(e.v.authors.map(a => searchable(a.name))));
+// The full work object for the browser (one page of results at a time)
+function workObject(e, user) {
+  const work = store.seriesView(db.series[e.v.id], user);
+  work.workTitle = e.workTitle; // the Regular (or first) version's title names the work
+  work.editions = e.list.map(v => editionSummary(Object.assign({}, v, store.seriesCounts(db.series[v.id], user))));
+  work.created = e.created;
+  work.updated = e.updated;
+  return work;
+}
+// Every work the user can see as full objects (small lists only: collections, tests)
+function worksFor(user, library, opts) { return workIndex(user, library, opts).map(e => workObject(e, user)); }
 // Online metadata state of a work: 'matched', 'unmatched' (looked up, nothing found) or 'none' (never looked up)
 const metadataState = s => ((s.localSources && s.localSources.length) || (s.metadata && s.metadata.matched) ? 'matched' : !s.metadata ? 'none' : 'unmatched');
 const same = (a, b) => searchable(a) === searchable(b);
+const SORTERS = {
+  added: (a, b) => b.created.localeCompare(a.created),
+  updated: (a, b) => b.updated.localeCompare(a.updated),
+  // Score: best first; works without one at the end (by title)
+  rating: (a, b) => (b.v.rating != null) - (a.v.rating != null) || (b.v.rating || 0) - (a.v.rating || 0) || store.collator.compare(a.v.sortTitle, b.v.sortTitle),
+  title: (a, b) => store.collator.compare(a.v.sortTitle, b.v.sortTitle)
+};
 
 function listSeries(user, q) {
-  let items = worksFor(user, q.get('library'), { deleted: isAdmin(user) && q.get('deleted') === '1' });
+  let items = workIndex(user, q.get('library'), { deleted: isAdmin(user) && q.get('deleted') === '1' });
   const term = searchable(q.get('q'));
-  if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term)
-    || s.tags.some(t => searchable(t).includes(term)) || s.genres.some(t => searchable(t).includes(term))
-    || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)));
+  if (term) items = items.filter(e => textOf(e).includes(term));
   const read = q.get('read');
-  if (read) items = items.filter(s => readState(s) === read);
+  if (read) items = items.filter(e => readState(store.seriesCounts(db.series[e.v.id], user)) === read);
   // Advanced search: include/exclude any number of values (repeated parameters; x… = exclude).
-  //   genre, tag (lists on a work): ALL included values present, NONE of the excluded
+  //   genre, tag, person (lists on a work): ALL included values present, NONE of the excluded
   //   type, status, metadata (one value per work): ANY of the included values, none of the excluded
+  // (genres/tags by their standard name: "Science Fiction" finds "Sci-Fi"; people by name, any role)
   const all = k => q.getAll(k).map(v => String(v).trim()).filter(Boolean).slice(0, 50);
-  // (genres/tags by their standard name: "Science Fiction" finds "Sci-Fi")
-  const termKey = v => terms.keyOf(terms.canonical(v));
-  const has = (list, v) => { const k = termKey(v); return list.some(x => termKey(x) === k); };
-  const incG = all('genre'), excG = all('xgenre'), incT = all('tag'), excT = all('xtag');
-  if (incG.length || excG.length) items = items.filter(s => incG.every(g => has(s.genres, g)) && !excG.some(g => has(s.genres, g)));
-  if (incT.length || excT.length) items = items.filter(s => incT.every(x => has(s.tags, x)) && !excT.some(x => has(s.tags, x)));
-  // People (writers, artists, …) work like tags: ALL included present (any role), NONE of the excluded
-  const incP = all('person'), excP = all('xperson');
-  const hasPerson = (s, name) => s.authors.some(a => same(a.name, name));
-  if (incP.length || excP.length) items = items.filter(s => incP.every(n => hasPerson(s, n)) && !excP.some(n => hasPerson(s, n)));
-  const single = (inc, exc, valueOf) => { if (inc.length || exc.length) items = items.filter(s => (!inc.length || inc.includes(valueOf(s))) && !exc.includes(valueOf(s))); };
+  const multi = (inc, exc, keysOf, norm) => {
+    if (!inc.length && !exc.length) return;
+    const i = inc.map(norm), x = exc.map(norm);
+    items = items.filter(e => { const k = keysOf(e); return i.every(v => k.has(v)) && !x.some(v => k.has(v)); });
+  };
+  multi(all('genre'), all('xgenre'), genreKeys, termKey);
+  multi(all('tag'), all('xtag'), tagKeys, termKey);
+  multi(all('person'), all('xperson'), peopleKeys, searchable);
+  const single = (inc, exc, valueOf) => { if (inc.length || exc.length) items = items.filter(e => (!inc.length || inc.includes(valueOf(e.v))) && !exc.includes(valueOf(e.v))); };
   single(all('type'), all('xtype'), s => s.type || 'unknown');
   single(all('status'), all('xstatus'), s => s.status);
   single(all('metadata'), all('xmetadata'), metadataState);
   const yearFrom = Number(q.get('yearFrom')) || 0, yearTo = Number(q.get('yearTo')) || 0;
-  if (yearFrom || yearTo) items = items.filter(s => s.year && (!yearFrom || s.year >= yearFrom) && (!yearTo || s.year <= yearTo));
+  if (yearFrom || yearTo) items = items.filter(e => e.v.year && (!yearFrom || e.v.year >= yearFrom) && (!yearTo || e.v.year <= yearTo));
   const author = searchable(q.get('author'));
-  if (author) items = items.filter(s => s.authors.some(a => searchable(a.name).includes(author)));
-  const sort = q.get('sort') || 'title';
-  if (sort === 'added') items.sort((a, b) => b.created.localeCompare(a.created));
-  else if (sort === 'updated') items.sort((a, b) => b.updated.localeCompare(a.updated));
-  // Score: best first; works without one at the end (by title)
-  else if (sort === 'rating') items.sort((a, b) => (b.rating != null) - (a.rating != null) || (b.rating || 0) - (a.rating || 0) || store.collator.compare(a.sortTitle, b.sortTitle));
-  else items.sort((a, b) => store.collator.compare(a.sortTitle, b.sortTitle));
+  if (author) items = items.filter(e => e.v.authors.some(a => searchable(a.name).includes(author)));
+  items = items.slice().sort(SORTERS[q.get('sort')] || SORTERS.title);
   const offset = Math.max(0, Number(q.get('offset')) || 0);
   const limit = Math.min(200, Math.max(1, Number(q.get('limit')) || 60));
-  return { total: items.length, offset, items: items.slice(offset, offset + limit) };
+  return { total: items.length, offset, items: items.slice(offset, offset + limit).map(e => workObject(e, user)) };
 }
-// The values the library filters can offer, with how many works have each
+// The values the library filters can offer, with how many works have each (memoized with the index)
 function seriesFacets(user, library) {
+  const items = workIndex(user, library);
+  const memo = workIndexMemo.get(store.accessibleLibraries(user).map(l => l.id).sort().join(',') + '|' + (library || '') + '|0');
+  if (memo && memo.facets.has('all')) return memo.facets.get('all');
   const count = (list, key) => {
     const m = new Map();
     for (const v of list) {
@@ -291,57 +334,76 @@ function seriesFacets(user, library) {
     }
     return [...m.values()].sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, key === 'tags' ? 300 : 100);
   };
-  const items = worksFor(user, library);
   const tally = values => { const m = {}; for (const v of values) m[v] = (m[v] || 0) + 1; return m; };
-  return {
-    genres: count(items.flatMap(s => s.genres), 'genres'),
-    tags: count(items.flatMap(s => s.tags), 'tags'),
+  const people = new Map();
+  for (const e of items) {
+    const seen = new Set();
+    for (const a of e.v.authors || []) {
+      const k = searchable(a.name);
+      if (!k) continue;
+      if (!people.has(k)) people.set(k, { name: a.name, count: 0, roles: [] });
+      const p = people.get(k);
+      if (!seen.has(k)) { seen.add(k); p.count++; }
+      if (a.role && !p.roles.includes(a.role)) p.roles.push(a.role);
+    }
+  }
+  const out = {
+    genres: count(items.flatMap(e => e.v.genres), 'genres'),
+    tags: count(items.flatMap(e => e.v.tags), 'tags'),
     // People with their roles: [{ name, count, roles: ['writer', …] }]
-    people: (() => {
-      const m = new Map();
-      for (const s of items) {
-        const seen = new Set();
-        for (const a of s.authors || []) {
-          const k = searchable(a.name);
-          if (!k) continue;
-          if (!m.has(k)) m.set(k, { name: a.name, count: 0, roles: [] });
-          const e = m.get(k);
-          if (!seen.has(k)) { seen.add(k); e.count++; }
-          if (a.role && !e.roles.includes(a.role)) e.roles.push(a.role);
-        }
-      }
-      return [...m.values()].sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, 500);
-    })(),
-    types: tally(items.map(s => s.type || 'unknown')),
-    statuses: tally(items.map(s => s.status)),
-    metadata: tally(items.map(metadataState))
+    people: [...people.values()].sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, 500),
+    types: tally(items.map(e => e.v.type || 'unknown')),
+    statuses: tally(items.map(e => e.v.status)),
+    metadata: tally(items.map(e => metadataState(e.v)))
   };
+  if (memo) memo.facets.set('all', out);
+  return out;
 }
 
 /* ---------------- home ---------------- */
+// Recently added books per set of visible libraries (memoized like the works index)
+const recentBooksMemo = new Map();
+function recentBooks(libs) {
+  const key = [...libs].sort().join(',');
+  const gen = store.generation();
+  const c = recentBooksMemo.get(key);
+  if (c && c.gen === gen) return c.books;
+  const top = [];
+  for (const b of Object.values(db.books)) {
+    if (!libs.has(b.libraryId) || !bookShown(b)) continue;
+    top.push(b);
+    if (top.length > 200) { top.sort((a, x) => x.created.localeCompare(a.created) || store.compareBooks(a, x)); top.length = 24; }
+  }
+  top.sort((a, x) => x.created.localeCompare(a.created) || store.compareBooks(a, x));
+  const books = top.slice(0, 24);
+  if (recentBooksMemo.size > 64) recentBooksMemo.clear();
+  recentBooksMemo.set(key, { gen, books });
+  return books;
+}
 function home(user) {
   const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-  const books = Object.values(db.books).filter(b => libs.has(b.libraryId) && bookShown(b));
-  const series = Object.values(db.series).filter(s => libs.has(s.libraryId) && shown(s));
-  const keepReading = books
-    .map(b => ({ b, p: store.progressOf(user, b.id) }))
-    .filter(x => x.p && !x.p.completed)
+  // Only what this user has progress on is looked at (not every book of the server)
+  const mine = Object.entries(store.progress[store.userKey(user)] || {})
+    .map(([id, p]) => ({ b: db.books[id], p }))
+    .filter(x => x.b && libs.has(x.b.libraryId) && bookShown(x.b));
+  const keepReading = mine.filter(x => !x.p.completed)
     .sort((a, b) => b.p.updatedAt.localeCompare(a.p.updatedAt))
     .slice(0, 24).map(x => store.bookView(x.b, user));
   const onDeck = [];
-  for (const s of series) {
-    const list = store.booksOf(s.id);
+  for (const id of new Set(mine.map(x => x.b.seriesId))) {
+    const s = db.series[id];
+    if (!s) continue;
     const c = store.seriesCounts(s, user);
     if (!c.booksRead || c.booksInProgress || c.booksRead === c.booksCount) continue;
-    const next = list.find(b => !store.progressOf(user, b.id));
+    const next = store.booksOf(s.id).find(b => !store.progressOf(user, b.id));
     if (next) onDeck.push({ book: next, at: c.lastRead });
   }
   onDeck.sort((a, b) => String(b.at).localeCompare(String(a.at)));
   return {
     keepReading,
     onDeck: onDeck.slice(0, 24).map(x => store.bookView(x.book, user)),
-    recentSeries: groupWorks(series.map(s => store.seriesView(s, user))).sort((a, b) => b.created.localeCompare(a.created)).slice(0, 24),
-    recentBooks: books.sort((a, b) => b.created.localeCompare(a.created) || store.compareBooks(a, b)).slice(0, 24).map(b => store.bookView(b, user)),
+    recentSeries: workIndex(user, null).slice().sort(SORTERS.added).slice(0, 24).map(e => workObject(e, user)),
+    recentBooks: recentBooks(libs).map(b => store.bookView(b, user)),
     libraries: libs.size
   };
 }
@@ -380,16 +442,16 @@ async function sendImage(req, res, buf, type, etag) {
   res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=604800', ETag: etag });
   res.end(buf);
 }
+// Pages and covers come from the media service (key-value cache + its own process, see media.js)
 async function sendPage(req, res, book, n) {
   if (book.format !== 'cbz') throw httpError(400, 'notAnImageBook');
-  const file = bookFile(book);
-  const st = await fs.promises.stat(file).catch(() => { throw httpError(404, 'fileMissing'); });
-  const images = await scanner.imageEntries(file, st.mtimeMs);
-  const entry = images[n - 1];
-  if (!entry) throw httpError(404, 'pageNotFound');
-  const buf = await zip.readEntry(file, entry);
-  const type = scanner.IMAGE_TYPES[path.extname(entry.name).toLowerCase()] || 'application/octet-stream';
-  return sendImage(req, res, buf, type, `"${book.id}-${Math.round(st.mtimeMs)}-${n}"`);
+  if (!(n >= 1)) throw httpError(404, 'pageNotFound');
+  const img = await media.page(book, bookFile(book), n, { pageCount: book.pageCount });
+  return sendImage(req, res, img.buf, img.type, img.etag);
+}
+async function sendBookCover(req, res, book) {
+  const img = await media.bookCover(book, bookFile(book));
+  return sendImage(req, res, img.buf, img.type, img.etag);
 }
 async function sendFile(req, res, book, download) {
   const file = bookFile(book);
@@ -570,16 +632,14 @@ async function handle(ctx) {
     const s = getSeries(user, m[1]);
     if (store.coverFromMetadata(s)) {
       const cover = store.metadataCover(s);
-      const st = await fs.promises.stat(cover.file).catch(() => null);
-      const buf = st && st.size <= 16 * 1024 * 1024 ? await fs.promises.readFile(cover.file).catch(() => null) : null;
-      if (buf) {
-        const type = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(cover.file).toLowerCase()] || 'application/octet-stream';
-        return sendImage(req, res, buf, type, `"${s.id}-${cover.source}-${cover.version}"`).then(() => true);
-      }
+      const etag = `"${s.id}-${cover.source}-${cover.version}"`;
+      if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); res.end(); return true; }
+      const img = await media.imageFile(cover.file, cover.version, etag);
+      if (img) { await sendImage(req, res, img.buf, img.type, img.etag); return true; }
     }
     const cover = store.booksOf(s.id).find(b => b.format === 'cbz' && b.pageCount);
     if (!cover) throw httpError(404, 'noCover');
-    await sendPage(req, res, cover, 1);
+    await sendBookCover(req, res, cover);
     return true;
   }
 
@@ -590,15 +650,37 @@ async function handle(ctx) {
     requireAdmin();
     return send(200, rename.preview(q.get('library') || 'all'));
   }
+  // GET  /api/rename/rules → examples of the naming rules, worked out by them
+  if (p === '/api/rename/rules' && method === 'GET') {
+    requireAdmin();
+    return send(200, { examples: rename.examples() });
+  }
+  // POST /api/rename/apply { items: [{ bookId, toName }] } or { all: true, library, exclude: [bookId] }, renameJson
+  //   → 202 { job } (queued; follow it with GET /api/rename/jobs/:id). ?wait=1 answers when it's done.
   if (p === '/api/rename/apply' && method === 'POST') {
     requireAdmin();
-    const items = (Array.isArray(body.items) ? body.items : []).slice(0, 5000).filter(x => x && typeof x.bookId === 'string');
-    if (rename.info().running) throw httpError(409, 'renameBusy');
-    const result = await rename.apply(items, { renameJson: body.renameJson !== false, metadata });
-    // Book order/numbers follow file names: let a quick scan put them in order (and refresh folder sources)
-    for (const id of result.libraries) scanner.scanLibrary(id, { mode: 'quick', reason: 'rename' }).catch(() => {});
-    console.log(`[library] ${user.username} renamed ${result.renamed} file(s)${result.json ? ` and ${result.json} JSON file(s)` : ''}; ${result.failed.length} failed`);
-    return send(200, result);
+    const picks = body.all
+      ? { all: true, library: typeof body.library === 'string' ? body.library : 'all', exclude: (Array.isArray(body.exclude) ? body.exclude : []).filter(x => typeof x === 'string').slice(0, 200000) }
+      : (Array.isArray(body.items) ? body.items : []).slice(0, 200000).filter(x => x && typeof x.bookId === 'string' && typeof x.toName === 'string');
+    const by = user.username;
+    const job = rename.enqueue(picks, {
+      renameJson: body.renameJson !== false, metadata, by,
+      onDone: j => {
+        // Book order/numbers follow file names: let a quick scan put them in order (and refresh folder sources)
+        for (const id of j.libraries) scanner.scanLibrary(id, { mode: 'quick', reason: 'rename' }).catch(() => {});
+        console.log(`[library] ${by} renamed ${j.renamed} file(s)${j.json ? ` and ${j.json} JSON file(s)` : ''}; ${j.failedCount} failed`);
+      }
+    });
+    if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
+    return send(202, { job });
+  }
+  // GET /api/rename/jobs → { jobs: [...] } (queued, running, last finished); /api/rename/jobs/:id → { job }
+  if (p === '/api/rename/jobs' && method === 'GET') { requireAdmin(); return send(200, { jobs: rename.info().jobs }); }
+  if ((m = p.match(/^\/api\/rename\/jobs\/([\w-]+)$/)) && method === 'GET') {
+    requireAdmin();
+    const job = rename.getJob(m[1]);
+    if (!job) throw httpError(404, 'notFound');
+    return send(200, { job });
   }
 
   // ---- a work's cover (admins, Edit dialog) ----
@@ -773,7 +855,7 @@ async function handle(ctx) {
   if ((m = /^\/api\/books\/(\w+)\/thumbnail$/.exec(p)) && method === 'GET') {
     const b = getBook(user, m[1]);
     if (b.format !== 'cbz' || !b.pageCount) throw httpError(404, 'noCover');
-    await sendPage(req, res, b, 1);
+    await sendBookCover(req, res, b);
     return true;
   }
   if ((m = /^\/api\/books\/(\w+)\/file$/.exec(p)) && (method === 'GET' || method === 'HEAD')) {
@@ -800,16 +882,18 @@ async function handle(ctx) {
     const term = searchable(q.get('q'));
     if (!term) return send(200, { series: [], books: [], collections: [], readlists: [] });
     const libs = new Set(store.accessibleLibraries(user).map(l => l.id));
-    const series = groupWorks(Object.values(db.series).filter(s => libs.has(s.libraryId) && shown(s)).map(s => store.seriesView(s, user)))
-      .filter(s => searchable(s.title).includes(term) || s.tags.some(t => searchable(t).includes(term)) || s.genres.some(t => searchable(t).includes(term))
-        || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)))
-      .sort((a, b) => store.collator.compare(a.sortTitle, b.sortTitle)).slice(0, 30);
-    const books = Object.values(db.books).filter(b => libs.has(b.libraryId) && bookShown(b))
-      .map(b => store.bookView(b, user)).filter(b => searchable(b.title).includes(term) || searchable(b.fileName).includes(term) || b.authors.some(a => searchable(a.name).includes(term)))
-      .slice(0, 30);
+    const series = workIndex(user, null).filter(e => textOf(e).includes(term)).sort(SORTERS.title).slice(0, 30).map(e => workObject(e, user));
+    // Books: matched on their memoized metadata; views only for the first 30 found
+    const books = [];
+    for (const b of Object.values(db.books)) {
+      if (!libs.has(b.libraryId) || !bookShown(b)) continue;
+      const m = store.bookMeta(b);
+      if (searchable(m.title).includes(term) || searchable(b.fileName).includes(term) || m.authors.some(a => searchable(a.name).includes(term))) books.push(b);
+      if (books.length >= 30) break;
+    }
     const collections = visibleCollections(user).filter(c => searchable(c.name).includes(term)).slice(0, 20);
     const readlists = visibleReadlists(user).filter(r => searchable(r.name).includes(term)).slice(0, 20);
-    return send(200, { series, books, collections, readlists });
+    return send(200, { series, books: books.map(b => store.bookView(b, user)), collections, readlists });
   }
 
   // ---- collections (groups of series) ----

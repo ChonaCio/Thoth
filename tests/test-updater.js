@@ -36,6 +36,8 @@ global.fetch = async (url, opts) => {
   if (u.includes('/compare/')) {
     // From v0.2.0 (aaa…) to p10 (bbb…): the files a delta install needs
     if (u.includes(`/compare/${SHA}...${'b'.repeat(40)}`)) return json({ status: 'ahead', ahead_by: 3, files: DELTA_FILES });
+    // Going back from p10 to p2: GitHub answers "behind" with no files (the trap a delta install must avoid)
+    if (u.includes(`/compare/${'b'.repeat(40)}...${'c'.repeat(40)}`)) return json({ status: 'behind', behind_by: 5, files: [] });
     return json({ status: 'behind', behind_by: 1 }); // other tags are newer/elsewhere
   }
   if (u.startsWith('https://raw.githubusercontent.com/')) {
@@ -78,6 +80,10 @@ global.fetch = async (url, opts) => {
   assert.strictEqual(after.updateAvailable, false);
   const afterPush = await up.check('push');
   assert.deepStrictEqual(afterPush.newer.map(p => p.tag), ['p10']);
+  // Every version is offered, marked newer / installed / older (to downgrade)
+  assert.deepStrictEqual(after.versions.map(v => v.tag + ':' + v.relation), ['v0.2.0:current', 'v0.0.9:older'], 'all releases with their relation');
+  assert.deepStrictEqual(afterPush.versions.map(v => v.tag + ':' + v.relation), ['p10:newer', 'p3:current', 'p2:older'], 'all pushes with their relation');
+  console.log('  ✓ every version listed (newer, installed, older)');
   assert.strictEqual(res.mode, 'full', 'first install (running commit unknown): whole version');
   console.log('  ✓ full install when the running commit is unknown');
 
@@ -106,5 +112,13 @@ global.fetch = async (url, opts) => {
   const f = await up.install('push', 'p10', { full: true });
   assert.strictEqual(f.mode, 'full'); assert.strictEqual(RAW_FETCHES.length, 0);
   console.log('  ✓ { full: true } downloads the whole version');
+
+  // ---- downgrade: an older version (GitHub's comparison lists nothing going back) → whole version ----
+  RAW_FETCHES.length = 0;
+  const down = await up.install('push', 'p2');
+  assert.strictEqual(down.mode, 'full', 'going back never trusts an empty comparison');
+  assert.strictEqual(RAW_FETCHES.length, 0);
+  assert.strictEqual(up.runningCommit().commit, 'c'.repeat(40), 'the older version is recorded as running');
+  console.log('  ✓ downgrade to an older push installs that whole version');
   console.log('ALL TESTS PASSED');
 })().catch(e => { console.error('FAILED:', e); process.exit(1); });

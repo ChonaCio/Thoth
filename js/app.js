@@ -832,8 +832,9 @@
     if (currentRoute() === 'updates') renderPage();
   }
 
-  async function installUpdate(channel, tag) {
-    if (!window.confirm(t('upd.confirm', { tag: tag }))) return;
+  // relation: 'newer' | 'current' (reinstall) | 'older' (downgrade)
+  async function installUpdate(channel, tag, relation) {
+    if (!window.confirm(t(relation === 'older' ? 'upd.confirmDowngrade' : relation === 'current' ? 'upd.confirmReinstall' : 'upd.confirm', { tag: tag }))) return;
     var u = state.updates;
     u.installing = tag; u.done = null; u.installError = null;
     renderPage();
@@ -878,6 +879,31 @@
     if (currentRoute() === 'updates') renderPage();
   }
 
+  // Every version of the channel, to install any of them: the installed one, newer ones and older ones
+  // (downgrade). Folded away unless opened.
+  function allVersionsHtml(channel, r) {
+    var u = state.updates, list = r.versions || [];
+    if (list.length < 2 && !(list.length === 1 && list[0].relation !== 'current')) return '';
+    return '<details class="update-all"' + (u.openAll && u.openAll[channel] ? ' open' : '') + ' data-all="' + channel + '">' +
+      '<summary>' + esc(t('upd.allVersions', { count: list.length })) + '</summary>' +
+      '<p class="muted small">' + esc(t('upd.allVersionsHelp')) + '</p>' +
+      '<ul class="update-list update-list--all">' + list.map(function (item) {
+        var rel = item.relation;
+        return '<li class="update-item' + (rel === 'current' ? ' is-current' : '') + '">' +
+          '<div class="update-item__info">' +
+            '<span class="update-item__tag">' + esc(item.tag) + '</span>' +
+            (rel === 'current' ? '<span class="badge badge--ok">' + esc(t('upd.installedBadge')) + '</span>' : rel === 'older' ? '<span class="badge">' + esc(t('upd.olderBadge')) + '</span>' : '<span class="badge badge--primary">' + esc(t('upd.newerBadge')) + '</span>') +
+            (item.date ? '<span class="muted small">' + esc(fmtDate(item.date)) + '</span>' : '') +
+            '<a class="small" href="' + esc(item.url) + '" target="_blank" rel="noopener">' + esc(t('upd.view')) + '</a>' +
+          '</div>' +
+          '<button class="btn btn--text" data-action="install" data-channel="' + channel + '" data-relation="' + rel + '" data-tag="' + esc(item.tag) + '"' + (u.installing ? ' disabled' : '') + '>' +
+            '<span data-icon="' + (rel === 'older' ? 'history' : 'download') + '"></span>' +
+            esc(u.installing === item.tag ? t('upd.installing', { tag: item.tag }) : t(rel === 'older' ? 'upd.downgrade' : rel === 'current' ? 'upd.reinstall' : 'upd.install')) +
+          '</button>' +
+        '</li>';
+      }).join('') + '</ul></details>';
+  }
+
   function renderChannelCard(channel) {
     var u = state.updates, c = u[channel] || {};
     var isRel = channel === 'release';
@@ -917,6 +943,7 @@
           '</li>';
         }).join('') + '</ul>';
       }
+      html += allVersionsHtml(channel, r);
       html += '<p class="muted small">' + esc(t('upd.lastChecked', { time: fmtDate(r.checkedAt) })) + '</p>';
     }
     return html + '</section>';
@@ -1029,11 +1056,16 @@
       if (e.key === 'Escape' && !$('#account-menu').hidden) { toggleAccountMenu(false); $('#account-btn').focus(); }
     });
 
+    // Keep "All versions" open across re-renders of the Updates page
+    $('#content').addEventListener('toggle', function (e) {
+      var d = e.target;
+      if (d && d.dataset && d.dataset.all) { state.updates.openAll = state.updates.openAll || {}; state.updates.openAll[d.dataset.all] = d.open; }
+    }, true);
     $('#content').addEventListener('click', function (e) {
       var el;
       if (e.target.closest('[data-action="edit-profile"]')) return openProfile();
       if ((el = e.target.closest('[data-action="check"]'))) return checkUpdates(el.dataset.channel);
-      if ((el = e.target.closest('[data-action="install"]'))) return installUpdate(el.dataset.channel, el.dataset.tag);
+      if ((el = e.target.closest('[data-action="install"]'))) return installUpdate(el.dataset.channel, el.dataset.tag, el.dataset.relation);
       if (e.target.closest('[data-action="reload"]')) return location.reload();
       if (e.target.closest('[data-action="add-user"]')) return openUserDialog(null);
       if ((el = e.target.closest('[data-action="edit-user"]'))) return openUserDialog(findUser(el.dataset.username));

@@ -266,22 +266,25 @@ async function check(channel) {
   if (channel !== 'release' && channel !== 'push') throw httpError(400, 'badChannel', 'Unknown channel.');
   repoMemo = null; // always look at the repository fresh when someone clicks "Check"
   const current = await resolveVersion({ force: true });
-  let items, newer;
+  let items, relation;
   if (channel === 'release') {
     items = await listReleases();
-    newer = items.filter(r => compareRelease(r.tag, current.release) > 0);
+    relation = r => { const c = compareRelease(r.tag, current.release); return !current.release || c > 0 ? 'newer' : c === 0 ? 'current' : 'older'; };
   } else if (channel === 'push') {
     items = await listPushes();
-    newer = items.filter(p => current.push == null || p.number > current.push);
+    relation = p => (current.push == null || p.number > current.push ? 'newer' : p.number === current.push ? 'current' : 'older');
   } else {
     throw httpError(400, 'badChannel', 'Unknown channel.');
   }
+  const newer = items.filter(i => relation(i) === 'newer');
   return {
     channel,
     current,
     latest: items[0] || null,
     updateAvailable: newer.length > 0,
     newer: newer.slice(0, 20),
+    // Every version of the channel (newest first), to install any of them — older ones too (downgrade)
+    versions: items.slice(0, 200).map(i => Object.assign({ relation: relation(i) }, i, { notes: undefined })),
     checkedAt: new Date().toISOString()
   };
 }
@@ -406,6 +409,9 @@ async function rawFile(commit, rel) {
 async function installDelta(base, head, backup) {
   const cmp = await gh(`/repos/${REPO}/compare/${base}...${head}`, { allow404: true });
   if (!cmp || !Array.isArray(cmp.files) || cmp.files.length > MAX_DELTA_FILES) return null;
+  // The comparison lists what changed from the common ancestor to head: right only when head comes after
+  // base. Going back (downgrade) or sideways downloads the whole version instead.
+  if (cmp.status && cmp.status !== 'ahead' && cmp.status !== 'identical') return null;
   const writes = [], removes = [];
   for (const f of cmp.files) {
     if (!safeRel(f.filename)) continue;

@@ -21,6 +21,7 @@ const libraryStore = require('./library/db');
 const scanner = require('./library/scanner');
 const metadata = require('./library/metadata');
 const rename = require('./library/rename');
+const media = require('./library/media');
 
 // Deleting a user also deletes their reading progress
 auth.hooks.userDeleted.push(username => libraryStore.removeUser(username));
@@ -102,7 +103,8 @@ async function handleApi(req, res, url) {
         return sendJson(res, 415, { error: 'unsupported', message: 'Expected JSON.' });
       }
       // A cover upload (image as base64 in JSON) may be bigger than other requests
-      body = await readBody(req, /^\/api\/series\/[\w-]+\/cover$/.test(url.pathname) ? 12 * 1024 * 1024 : MAX_BODY);
+      // Bigger bodies: an uploaded cover image, a long list of files to rename
+      body = await readBody(req, /^\/api\/series\/[\w-]+\/cover$/.test(url.pathname) ? 12 * 1024 * 1024 : url.pathname === '/api/rename/apply' ? 16 * 1024 * 1024 : MAX_BODY);
       if (!body || typeof body !== 'object' || Array.isArray(body)) body = {};
     }
 
@@ -150,7 +152,8 @@ async function handleApi(req, res, url) {
         },
         scanService: scanner.serviceInfo(),
         metadata: metadata.info(),
-        rename: rename.info()
+        rename: rename.info(),
+        media: media.info()
       });
     }
     // ---- server settings (administrators) ----
