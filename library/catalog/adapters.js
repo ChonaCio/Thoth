@@ -87,6 +87,19 @@ async function withHiddenChapters(ctx, doc, url, readPage, { maxPages = 20 } = {
   return out;
 }
 
+// A chapter that can't be read for free right now: premium, locked behind coins or a pass, early access.
+// From the row's classes and markers (a lock or coin icon, data-premium/data-locked), and words next to the
+// chapter's name (not in it: "The Locked Room" is a title). → c.pr = true
+const PREMIUM_CLASS = /(^|[\s_-])(premium|locked|lock|vip|paid|coins?|fa-lock|fa-coins|chapter-lock|ch-lock|early-?access|fastpass|fast-pass|daily-pass)([\s_-]|$)/i;
+const PREMIUM_TEXT = /\b(premium|locked|coins?|vip|early access|paid|fast pass|daily pass|unlock)\b/i;
+function isPremium(el, nameText) {
+  if (!el) return false;
+  const walk = n => Boolean(n && n.tag !== '#text' && (PREMIUM_CLASS.test((n.attrs && n.attrs.class) || '') || (n.attrs && ('data-premium' in n.attrs || 'data-locked' in n.attrs || n.attrs['data-coin'] != null)) || (n.children || []).some(walk)));
+  if (walk(el.el)) return true;
+  const around = nameText ? el.text().split(nameText).join(' ') : '';
+  return PREMIUM_TEXT.test(around);
+}
+
 // Stop listing a site once a page brings nothing new (sites repeat their last page past the end)
 function freshOnly(seen, items) { const out = items.filter(x => x.sid && !seen.has(x.sid)); out.forEach(x => seen.add(x.sid)); return out; }
 
@@ -126,7 +139,7 @@ const mangadex = {
     const titles = Object.values(a.title || {});
     const alt = (a.altTitles || []).flatMap(o => Object.values(o));
     return {
-      sid: m.id, url: `https://mangadex.org/title/${m.id}`, title: a.title && (a.title.en || titles[0]) || '',
+      sid: m.id, url: `https://mangadex.org/title/${m.id}`, title: require('../titles').taggedEnglish([a.title || {}].concat(a.altTitles || [])) || (a.title && (a.title.en || titles[0])) || '',
       altTitles: list(titles.concat(alt)).filter(t => t !== (a.title && (a.title.en || titles[0]))).slice(0, 30),
       cover: cover ? `https://uploads.mangadex.org/covers/${m.id}/${cover.attributes.fileName}.256.jpg` : null,
       summary: (a.description && (a.description.en || Object.values(a.description)[0])) || '',
@@ -152,7 +165,7 @@ const mangadex = {
       const r = (await get(`${src.baseUrl}/manga/${stub.sid}/feed?${p}`, { accept: 'application/json' })).json();
       for (const c of r.data || []) {
         const a = c.attributes || {};
-        chapters.push({ id: c.id, n: a.chapter || null, t: a.title || '', u: a.externalUrl || `https://mangadex.org/chapter/${c.id}`, d: (a.publishAt || '').slice(0, 10), l: a.translatedLanguage, v: a.volume || null });
+        chapters.push({ id: c.id, n: a.chapter || null, t: a.title || '', u: a.externalUrl || `https://mangadex.org/chapter/${c.id}`, d: (a.publishAt || '').slice(0, 10), l: a.translatedLanguage, v: a.volume || null, pr: a.isUnavailable ? true : undefined });
       }
       if ((r.data || []).length < 500 || offset + 500 >= (r.total || 0)) break;
     }
@@ -206,7 +219,7 @@ const webtoons = {
         ids.add(id);
         const a = li.first('a');
         const title = (li.first('.subj span') || li.first('.subj') || { text: () => '' }).text();
-        chapters.push({ id, n: chapterNum(title) || id, t: title, u: a ? abs(a.attr('href'), stub.url) : null, d: (li.first('.date') || { text: () => '' }).text(), l: langs(src)[0] || 'en' });
+        chapters.push({ id, n: chapterNum(title) || id, t: title, u: a ? abs(a.attr('href'), stub.url) : null, d: (li.first('.date') || { text: () => '' }).text(), l: langs(src)[0] || 'en', pr: isPremium(li, title) || undefined });
         added++;
       }
       return { added, knownHit };
@@ -288,7 +301,7 @@ const madara = {
       const a = li.first('a');
       const u = a && abs(a.attr('href'), base);
       const t = a ? a.text() : '';
-      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: (li.first('.chapter-release-date') || { text: () => '' }).text(), l: langs(src)[0] || null } : null;
+      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: (li.first('.chapter-release-date') || { text: () => '' }).text(), l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
     }).filter(Boolean);
     // (a list on the page itself may go on in other pages or behind "show more")
     work.chapters = fromPage ? await withHiddenChapters(ctx, doc, res.url, (d, base) => madaraRows(d.select('li.wp-manga-chapter'), base)) : madaraRows(rows, res.url);
@@ -342,7 +355,7 @@ const mangareader = {
       const a = li.first('a');
       const u = a && abs(a.attr('href'), res.url);
       const t = (li.first('.chapternum') || a || li).text();
-      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: li.attr('data-num') || chapterNum(t), t, u, d: (li.first('.chapterdate') || { text: () => '' }).text(), l: langs(src)[0] || null } : null;
+      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: li.attr('data-num') || chapterNum(t), t, u, d: (li.first('.chapterdate') || { text: () => '' }).text(), l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
     }).filter(Boolean);
     return work;
   }
@@ -401,7 +414,7 @@ const custom = {
         if (!u || !re.test(p) || seen.has(p)) return null;
         seen.add(p);
         const t = a.text() || p.split('/').filter(Boolean).pop().replace(/[-_]+/g, ' ');
-        return { id: p.replace(/\/+$/, ''), n: chapterNum(t) || chapterNum(p.split('/').filter(Boolean).pop()), t, u, d: '', l: langs(src)[0] || null };
+        return { id: p.replace(/\/+$/, ''), n: chapterNum(t) || chapterNum(p.split('/').filter(Boolean).pop()), t, u, d: '', l: langs(src)[0] || null, pr: isPremium(a, null) || undefined };
       }).filter(Boolean));
       return work;
     }
@@ -411,7 +424,7 @@ const custom = {
       const a = lsel ? li.first(lsel) : li;
       const u = a && abs(a.attr(lat || 'href'), base);
       const t = s.chapterTitle ? pick(li, s.chapterTitle, base) : (a ? a.text() : li.text());
-      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null } : null;
+      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
     }).filter(Boolean));
     return work;
   }

@@ -932,3 +932,20 @@ body.is-reading { overflow: hidden; }
 .task-console__text--tall { max-height: 70vh; border-radius: 8px; margin-top: .75rem; }
 .task-table td, .logs-table td { vertical-align: top; }
 .logs-actions { white-space: nowrap; }
+
+/* Versions of a work: a colored tag per version (Regular has none); tabs over the chapter list */
+.edition-tag { display: inline-block; vertical-align: middle; font-size: .55em; font-weight: 600; letter-spacing: .02em; padding: .2em .6em; border-radius: 999px; color: #fff; line-height: 1.4; }
+.edition-tag--tab { font-size: .8em; }
+.edition-tag--colored { background: linear-gradient(90deg, #e8710a, #d93025 50%, #9334e6); }
+.edition-tag--raw { background: #5f6368; }
+.edition-tag--uncensored { background: #c5221f; }
+.edition-tag--animated { background: #1a73e8; }
+.version-tabs { margin-top: 1.5rem; overflow-y: hidden; }
+.version-tabs .tab { align-items: center; }
+.edition-tag--tab { line-height: 1.2; padding: .15em .55em; }
+
+/* Catalog: chapters that can't be read for free right now */
+.badge--premium { background: #fde293; color: #5f4200; display: inline-flex; align-items: center; gap: .2em; vertical-align: middle; }
+.badge--premium [data-icon] svg, .badge--premium svg { width: 12px; height: 12px; fill: currentColor; }
+.cat-chapters li.is-premium .cat-ch__t { opacity: .75; }
+.crawl-requests { margin: .2rem 0 0; }

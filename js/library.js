@@ -86,6 +86,11 @@
 
   // "3 books · 2 versions", "One-shot", or "3 books · Colored" for a single non-base version
   function editionLabel(e) { return t('edition.' + (e || 'base')); }
+  // A version's name as a colored tag (Regular plain); plain for inside a tab
+  function editionTag(e, inTab) {
+    e = e || 'base';
+    return e === 'base' ? esc(editionLabel(e)) : '<span class="edition-tag edition-tag--' + esc(e) + (inTab ? ' edition-tag--tab' : '') + '">' + esc(editionLabel(e)) + '</span>';
+  }
   // Kinds of works the metadata providers recognize
   var WORK_TYPES = ['manga', 'manhwa', 'manhua', 'webcomic', 'comic', 'novel', 'book', 'other'];
   function cardSubtitle(s) {
@@ -659,63 +664,67 @@
       if (!d) return spinner;
       if (d.error) return errorBanner(d.error);
       var s = d.series, books = d.books;
+      // w: the work's title, metadata and cover, shared by its versions (the main version's); s: this version
+      // (its chapters, reading progress, folder)
+      var w = d.work || s;
       var next = nextToRead(books);
       var allRead = s.booksCount && s.booksRead === s.booksCount;
       var meta = [
         '<a href="#library/' + s.libraryId + '">' + esc(s.libraryName) + '</a>',
         esc(count(s.booksCount, 'lib.bookCount1', 'lib.booksCount')),
-        s.type ? '<span class="badge badge--primary">' + esc(t('type.' + s.type)) + '</span>' : '',
-        s.year ? esc(s.year) : '',
-        s.status !== 'unknown' ? '<span class="badge">' + esc(t('series.status.' + s.status)) + '</span>' : '',
-        s.rating != null ? '<span title="' + esc(t('meta.rating')) + '">★ ' + esc((s.rating / 10).toFixed(1)) + '</span>' : '',
-        s.publisher ? esc(s.publisher) : '',
+        w.type ? '<span class="badge badge--primary">' + esc(t('type.' + w.type)) + '</span>' : '',
+        w.year ? esc(w.year) : '',
+        w.status !== 'unknown' ? '<span class="badge">' + esc(t('series.status.' + w.status)) + '</span>' : '',
+        w.rating != null ? '<span title="' + esc(t('meta.rating')) + '">★ ' + esc((w.rating / 10).toFixed(1)) + '</span>' : '',
+        w.publisher ? esc(w.publisher) : '',
         s.readingDirection !== 'ltr' ? esc(t('series.direction.' + s.readingDirection)) : ''
       ].filter(Boolean);
       var progressLine = s.booksRead || s.booksInProgress
         ? '<p class="muted small">' + esc(t('series.readOf', { read: s.booksRead, total: s.booksCount })) + '</p>' : '';
-      // Versions of this work (Base, Colored, Raw, Uncensored, Animated) as tabs; each tab is its own page
+      // Versions of this work (Regular, Colored, Raw, Uncensored, Animated) as tabs over the chapters: the same
+      // work, another chapter list
       var editions = d.editions || [];
       var tabs = editions.length > 1
-        ? '<nav class="tabs" aria-label="' + esc(t('series.versions')) + '">' + editions.map(function (e) {
+        ? '<nav class="tabs version-tabs" aria-label="' + esc(t('series.versions')) + '">' + editions.map(function (e) {
             var active = e.id === s.id;
             var done = e.booksCount && e.booksRead === e.booksCount;
             var otherLib = e.libraryId !== s.libraryId ? ' <span class="tab__lib">' + esc(e.libraryName) + '</span>' : '';
             return '<a class="tab' + (active ? ' is-active' : '') + '" href="#series/' + e.id + '"' + (active ? ' aria-current="page"' : '') + '>' +
-              esc(editionLabel(e.edition)) + otherLib + '<span class="tab__count">' + (done ? icon('check') : e.booksCount) + '</span></a>';
+              editionTag(e.edition, true) + otherLib + '<span class="tab__count">' + (done ? icon('check') : e.booksCount) + '</span></a>';
           }).join('') + '</nav>'
         : '';
       // A hidden (logically deleted) work: only administrators get here; offer to restore it
       var hiddenBanner = s.hidden ? '<div class="banner banner--info"><span>' + esc(t('del.hiddenBanner', { time: A().fmtDate(s.hidden.at), by: s.hidden.by || '' })) + '</span>' +
         '<button class="btn btn--primary" data-lib="series-restore" data-id="' + s.id + '">' + esc(t('del.restore')) + '</button></div>' : '';
-      return backLink('#library/' + s.libraryId, s.libraryName) + hiddenBanner + tabs +
+      return backLink('#library/' + s.libraryId, s.libraryName) + hiddenBanner +
         '<div class="detail">' +
           // The cover opens full size (click/Enter); a placeholder (no image) doesn't
-          (s.coverSource ? '<button type="button" class="detail__cover cover cover--large cover--zoom" data-lib="cover-zoom" data-src="/api/series/' + s.id + '/thumbnail?v=' + s.coverV + '" aria-label="' + esc(t('series.coverZoom')) + '" title="' + esc(t('series.coverZoom')) + '">' + seriesCoverHtml(s) + '</button>'
-            : '<div class="detail__cover cover cover--large">' + seriesCoverHtml(s) + '</div>') +
+          (w.coverSource ? '<button type="button" class="detail__cover cover cover--large cover--zoom" data-lib="cover-zoom" data-src="/api/series/' + w.id + '/thumbnail?v=' + w.coverV + '" aria-label="' + esc(t('series.coverZoom')) + '" title="' + esc(t('series.coverZoom')) + '">' + seriesCoverHtml(w) + '</button>'
+            : '<div class="detail__cover cover cover--large">' + seriesCoverHtml(w) + '</div>') +
           '<div class="detail__body">' +
-            (editions.length > 1 || s.edition !== 'base' ? '<p class="detail__eyebrow">' + esc(editionLabel(s.edition)) + '</p>' : '') +
-            '<h1 class="detail__title">' + esc(d.workTitle || s.title) + '</h1>' +
+            // The version shown: a colored tag after the title (none for Regular)
+            '<h1 class="detail__title">' + esc(w.title) + (s.edition !== 'base' ? ' ' + editionTag(s.edition) : '') + '</h1>' +
             '<div class="detail__meta">' + meta.join('<span class="dot">·</span>') + '</div>' +
-            authorsLine(s.authors, s) +
-            (s.altTitles && s.altTitles.length ? '<p class="muted small detail__alt">' + esc(s.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
+            authorsLine(w.authors, w) +
+            (w.altTitles && w.altTitles.length ? '<p class="muted small detail__alt">' + esc(w.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
             progressLine +
-            filterChips(s, 'genre', s.genres || [], 'chip--genre') +
-            filterChips(s, 'tag', s.tags, '') +
+            filterChips(w, 'genre', w.genres || [], 'chip--genre') +
+            filterChips(w, 'tag', w.tags, '') +
             '<div class="detail__actions">' +
               (next ? '<a class="btn btn--primary" href="#read/' + next.book.id + (next.fromStart ? '?page=1' : '') + '">' + icon('play') + esc(t(next.key)) + '</a>' : '') +
               '<button class="btn btn--outline" data-lib="series-toggle-read" data-id="' + s.id + '" data-done="' + (allRead ? '1' : '') + '">' + icon(allRead ? 'remove_done' : 'done_all') + esc(t(allRead ? 'series.markUnread' : 'series.markRead')) + '</button>' +
               (isAdmin() ? '<button class="btn btn--text" data-lib="series-add-collection" data-id="' + s.id + '">' + icon('collections') + esc(t('series.addToCollection')) + '</button>' +
-                '<button class="btn btn--text" data-lib="series-edit" data-id="' + s.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' +
+                '<button class="btn btn--text" data-lib="series-edit" data-id="' + w.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' +
                 (s.hidden ? '' : '<button class="btn btn--text btn--danger" data-lib="series-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('del.button')) + '</button>') : '') +
             '</div>' +
-            (s.summary ? '<p class="detail__summary">' + esc(s.summary) + '</p>' : '') +
-            metadataBlock(s) +
+            (w.summary ? '<p class="detail__summary">' + esc(w.summary) + '</p>' : '') +
+            metadataBlock(w) +
             (d.collections.length ? '<div class="detail__in"><span class="muted small">' + esc(t('series.inCollections')) + '</span>' +
               chips(d.collections.map(function (c) { return '<a href="#collection/' + c.id + '">' + esc(c.name) + '</a>'; }), 'chip--link') + '</div>' : '') +
             (isAdmin() && s.path != null ? '<p class="muted small detail__path">' + icon('folder_open') + esc(s.path || '/') + '</p>' : '') +
           '</div>' +
         '</div>' +
-        booksSection(s, books);
+        tabs + booksSection(s, books);
     },
     enter: function (route) {
       var id = route.param;
@@ -1526,6 +1535,8 @@
   }
 
   // One work: every source with its chapter list; what the library has
+  // A chapter that can't be read for free right now (premium, locked behind coins or a pass)
+  function premiumBadge(c) { return c.pr ? ' <span class="badge badge--premium" title="' + esc(t('cat.premiumHelp')) + '">' + icon('lock') + esc(t('cat.premium')) + '</span>' : ''; }
   function catWorkState(key) { cache.catWork = cache.catWork || {}; return cache.catWork[key]; }
   function catalogWork(route) {
     var key = route.query.get('key') || '';
@@ -1539,7 +1550,7 @@
         (miss ? '<p class="small">' + esc(miss.chapters.length ? t('cat.missingCount', { count: miss.chapters.length, have: miss.have }) : t('cat.missingNone', { have: miss.have })) + '</p>' : '') + '</div>' +
         '<a class="btn btn--primary" href="#series/' + w.inLibrary.seriesId + '">' + esc(t('cat.openInLibrary')) + '</a></div>' : '';
     var missingList = miss && miss.chapters.length ? '<details class="card card--wide cat-missing"><summary class="card__title">' + esc(t('cat.missingTitle', { count: miss.chapters.length })) + '</summary><ul class="cat-chapters">' +
-        miss.chapters.slice(0, 500).map(function (c) { return '<li><span class="cat-ch__n">' + esc(c.n) + '</span><span class="cat-ch__t">' + esc(c.t || '') + '</span><span class="muted small">' + esc(c.source) + '</span>' +
+        miss.chapters.slice(0, 500).map(function (c) { return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n) + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span><span class="muted small">' + esc(c.source) + '</span>' +
           (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + '</a>' : '') + '</li>'; }).join('') + '</ul></details>' : '';
     var sources = w.sources.map(function (s, i) {
       var all = d.showAll && d.showAll[s.key];
@@ -1552,9 +1563,9 @@
         (s.title && s.title !== w.title ? '<p class="small"><strong>' + esc(s.title) + '</strong></p>' : '') +
         (s.error ? '<p class="notice notice--error small">' + esc(s.error) + '</p>' : '') +
         (s.partial ? '<p class="notice notice--info small">' + esc(t('cat.partial')) + '</p>' : '') +
-        '<p class="muted small">' + esc(t('cat.chapters', { count: s.chapterList.length }) + (s.detailAt ? ' · ' + t('cat.readAt', { time: A().fmtDate(s.detailAt) }) : '')) + '</p>' +
+        '<p class="muted small">' + esc(t('cat.chapters', { count: s.chapterList.length }) + (s.premium ? ' · ' + t('cat.premiumCount', { count: s.premium }) : '') + (s.detailAt ? ' · ' + t('cat.readAt', { time: A().fmtDate(s.detailAt) }) : '')) + '</p>' +
         (rows.length ? '<ul class="cat-chapters">' + rows.map(function (c) {
-          return '<li><span class="cat-ch__n">' + esc(c.n != null ? c.n : '—') + '</span><span class="cat-ch__t">' + esc(c.t || '') + '</span><span class="muted small">' + esc([c.d, c.l].filter(Boolean).join(' · ')) + '</span>' +
+          return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n != null ? c.n : '—') + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span><span class="muted small">' + esc([c.d, c.l].filter(Boolean).join(' · ')) + '</span>' +
             (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer" aria-label="' + esc(t('cat.openOnSite')) + '">' + icon('open_in_new') + '</a>' : '') + '</li>';
         }).join('') + '</ul>' : '') +
         (!all && s.chapterList.length > 50 ? '<button class="btn btn--text btn--small" data-lib="cat-all-chapters" data-key="' + esc(s.key) + '" data-work="' + esc(key) + '">' + esc(t('cat.showAll', { count: s.chapterList.length })) + '</button>' : '') +
@@ -1679,7 +1690,12 @@
     // (the time left comes from the crawl: the speed of the works read so far)
     var bar = { percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: listing ? null : p.etaMs != null ? p.etaMs : null, elapsedMs: j.startedAt ? Date.now() - Date.parse(j.startedAt) : 0 };
     return progressBar(bar, t(j.status === 'queued' ? 'cat.crawlQueued' : listing ? 'cat.crawlListing' : 'cat.crawlReading'),
-      listing ? t('cat.crawlListed', { count: p.listed || 0 }) : t('cat.crawlProgress', { done: p.done || 0, total: p.total || 0, errors: p.errors || 0 }));
+      listing ? t('cat.crawlListed', { count: p.listed || 0 }) : t('cat.crawlProgress', { done: p.done || 0, total: p.total || 0, errors: p.errors || 0 })) + requestsLine(p.requestsNow);
+  }
+  // How a crawl is fetching right now: works at once, requests in progress and waiting, the pause per site
+  function requestsLine(r) {
+    if (!r) return '';
+    return '<p class="muted small crawl-requests">' + esc(t('cat.crawlRequests', { lanes: r.lanes || 1, active: r.active || 0, waiting: r.waiting || 0, gap: ((r.gapMs || 0) / 1000).toFixed(1).replace(/\.0$/, '') })) + '</p>';
   }
   function testReport(r) {
     if (!r) return '';
@@ -2121,7 +2137,7 @@
         ]),
         md.progress ? progressBar(md.progress, t('meta.batch'), t('progress.works', { done: md.progress.done, total: md.progress.total })) : '',
         current.length ? '<ul class="proc-list">' + current.map(function (c) {
-          var what = c.step === 'cover' ? t('meta.stepCover', { provider: providerName(c.provider || '') })
+          var what = c.step === 'covers' ? t('meta.stepCovers') : c.step === 'cover' ? t('meta.stepCover', { provider: providerName(c.provider || '') })
             : c.provider ? t('meta.stepSearching', { provider: providerName(c.provider) }) : '';
           return '<li><span class="spinner spinner--sm"></span><span><strong>' + esc(c.title) + '</strong>' + (what ? ' <span class="muted small">' + esc(what) + '</span>' : '') + '</span></li>';
         }).join('') + '</ul>' : '',
@@ -2283,7 +2299,7 @@
     if (p.detail) detail += (detail ? ' · ' : '') + p.detail;
     if (p.errors) detail += (detail ? ' · ' : '') + t('proc.task.errors', { count: p.errors });
     var phase = p.phase ? (t('proc.task.phase.' + p.phase) !== 'proc.task.phase.' + p.phase ? t('proc.task.phase.' + p.phase) : p.phase) : t('proc.task.working');
-    return progressBar(bar, phase, detail);
+    return progressBar(bar, phase, detail) + requestsLine(p.requestsNow);
   }
   function taskOutputHtml(tk, st) {
     var out = st.output[tk.id];
@@ -2330,6 +2346,15 @@
         return api('GET', '/api/tasks/' + encodeURIComponent(id) + '?lines=300').then(function (x) { st.output[id] = x.task.lines; }, function () {});
       }));
     }, function (e) { st.error = e; });
+  }
+  // Follows a background task until it ends (checked every 2 seconds), then done(task)
+  function followTask(id, done) {
+    var check = function () {
+      api('GET', '/api/tasks/' + encodeURIComponent(id) + '?lines=10').then(function (r) {
+        if (r.task.status === 'running') setTimeout(check, 2000); else done(r.task);
+      }, function () { /* gone (server restarted): nothing to follow */ });
+    };
+    setTimeout(check, 1500);
   }
   // After drawing: the shown outputs scrolled to their end (while following)
   function scrollTaskOutputs() {
@@ -3376,8 +3401,17 @@
       var btn = $('#identify-apply');
       btn.disabled = true;
       btn.innerHTML = '<span class="spinner spinner--sm"></span>';
-      api('POST', '/api/series/' + identifyFor + '/metadata/identify', { matches: picks }).then(function () {
+      api('POST', '/api/series/' + identifyFor + '/metadata/identify', { matches: picks }).then(function (r) {
         $('#identify-dialog').close();
+        if (r && r.task) {
+          // Several sites: it runs in the background as a task; the work's page is refreshed when it ends
+          A().toast(t('meta.identifyBackground'));
+          followTask(r.task, function (tk) {
+            A().toast(t(tk.status === 'done' ? 'meta.identified' : 'meta.identifyFailed'));
+            invalidate(); markStale(cache.series); refreshCurrent();
+          });
+          return;
+        }
         A().toast(t('meta.identified'));
         invalidate(); markStale(cache.series); refreshCurrent();
       }, function (err) {

@@ -465,6 +465,27 @@ async function runMergeJob(job) {
   const tDir = path.resolve(tRoot, t.relPath);
   if (!tDir.startsWith(tRoot + path.sep)) throw new Error('outside the library folder');
   const srcs = (sources || []).map(id => db.series[id]).filter(s => s && s.id !== t.id);
+  // The kept work gets the other works' titles it doesn't have (their main title and alternative titles) as
+  // alternative titles: saved apart (s.mergedTitles), so they stay when its metadata is refreshed
+  {
+    const tm = store.seriesMeta(t);
+    const have = new Set([tm.title].concat(tm.altTitles).map(store.titleKey));
+    const add = [];
+    for (const s of srcs) {
+      const sm = store.seriesMeta(s);
+      for (const title of [sm.title].concat(sm.altTitles, s.mergedTitles || [])) { const k = store.titleKey(title); if (k && !have.has(k)) { have.add(k); add.push(title); } }
+    }
+    if (add.length) { t.mergedTitles = (t.mergedTitles || []).concat(add); job.titlesAdded = add; if (job.task) job.task.log('alternative titles added:', add.join(' | ')); }
+    // English first: when the kept work's title isn't English and a merged work's is, that becomes its title
+    // (unless an administrator set the title; the old one stays among the other titles)
+    const best = require('./titles').preferEnglish([tm.title].concat(srcs.map(s => store.seriesMeta(s).title)));
+    if (best && best !== tm.title && !(t.overrides && t.overrides.title)) {
+      t.overrides = Object.assign({}, t.overrides, { title: best });
+      if (!(t.mergedTitles || []).some(x => store.titleKey(x) === store.titleKey(tm.title))) t.mergedTitles = (t.mergedTitles || []).concat(tm.title);
+      job.titleChanged = { from: tm.title, to: best };
+      if (job.task) job.task.log(`title: "${tm.title}" → "${best}" (English)`);
+    }
+  }
   // What the kept work already has (and what earlier files of this merge bring): names and chapters
   const names = new Set(store.booksOf(t.id).map(b => b.fileName.toLowerCase()));
   const have = new Set(store.booksOf(t.id).flatMap(chapterKeys));

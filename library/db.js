@@ -142,7 +142,7 @@ function libraryDefaults(lib) {
 }
 // (a function declaration: bookMeta uses it during the first reindex(), before this line runs)
 function filled(o) { return Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length))); }
-const seriesDeps = s => [s.provider, s.local, s.overrides, s.meta, s.name, s.libraryId, s.relPath, seriesVersion.get(s)];
+const seriesDeps = s => [s.provider, s.local, s.overrides, s.meta, s.name, s.libraryId, s.relPath, s.mergedTitles, seriesVersion.get(s)];
 function seriesMeta(s) {
   const deps = seriesDeps(s);
   const hit = memoGet(seriesMemo, s, deps);
@@ -191,9 +191,19 @@ function computeSeriesMeta(s) {
     year: Number.isInteger(Number(m.year)) && m.year ? Number(m.year) : fromBooks(s).year,
     rating: m.rating != null && Number.isFinite(Number(m.rating)) ? Number(m.rating) : null, // 0–100
     authors: Array.isArray(m.authors) && m.authors.length ? m.authors : fromBooks(s).authors,
-    altTitles: Array.isArray(m.altTitles) ? m.altTitles : [],
+    // (plus the titles of works merged into this one: s.mergedTitles)
+    altTitles: withMergedTitles(Array.isArray(m.altTitles) ? m.altTitles : [], s.mergedTitles, title),
     links: linksOf(s).map(l => l.url)
   };
+}
+// Other titles + the titles works merged into this one had, once each and never the main title
+const titleKey = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();
+function withMergedTitles(alt, merged, main) {
+  if (!Array.isArray(merged) || !merged.length) return alt;
+  const seen = new Set([titleKey(main)].concat(alt.map(titleKey)));
+  const out = alt.slice();
+  for (const t of merged) { const k = titleKey(t); if (k && !seen.has(k)) { seen.add(k); out.push(t); } }
+  return out;
 }
 function combinedTerms(overrides, layers) {
   const pick = f => (Array.isArray(overrides[f]) && overrides[f].length ? [overrides[f]] : layers.map(l => l[f]));
@@ -337,12 +347,38 @@ function seriesCounts(s, user) {
 }
 // A work as the browser sees it: the part that doesn't depend on the user is memoized (per admin/not),
 // the reading counts are added for each user
+// Versions of a work (Regular, Colored, Raw…) share one title and metadata: the version that owns them is the
+// work's main version (Regular first, then Colored, Raw, Uncensored, Animated; the folder nearest the library root,
+// then the oldest). Only one series of each version joins a work (like the works list groups them); hidden works
+// own their own. Worked out again after any change.
+let ownerMemo = { version: -1, map: null };
+function workOwnerId(s) {
+  if (ownerMemo.version !== version) {
+    const groups = new Map();
+    for (const x of Object.values(db.series)) {
+      if (x.hidden) continue;
+      const m = seriesMeta(x);
+      if (!groups.has(m.workKey)) groups.set(m.workKey, []);
+      groups.get(m.workKey).push({ x, m, depth: String(x.relPath || '').split(/[\\/]/).filter(Boolean).length });
+    }
+    const rank = e => { const i = EDITIONS.indexOf(e); return i === -1 ? 99 : i; };
+    const map = new Map();
+    for (const list of groups.values()) {
+      if (list.length < 2) continue;
+      list.sort((a, b) => rank(a.m.edition) - rank(b.m.edition) || a.depth - b.depth || String(a.x.created).localeCompare(String(b.x.created)) || a.x.id.localeCompare(b.x.id));
+      const taken = new Set();
+      for (const e of list) { if (taken.has(e.m.edition)) continue; taken.add(e.m.edition); map.set(e.x.id, list[0].x.id); }
+    }
+    ownerMemo = { version, map };
+  }
+  return ownerMemo.map.get(s.id) || s.id;
+}
 function seriesView(s, user, { admin = false } = {}) {
   return Object.assign({}, seriesBaseView(s, admin), seriesCounts(s, user));
 }
 // The memoized, user-independent view (shared: read it, never change it)
 function seriesBaseView(s, admin = false) {
-  const deps = [s.provider, s.local, s.overrides, s.meta, s.name, s.libraryId, s.relPath, s.customCover, s.hidden, s.updated, s.created, seriesVersion.get(s)];
+  const deps = [s.provider, s.local, s.overrides, s.meta, s.name, s.libraryId, s.relPath, s.customCover, s.hidden, s.updated, s.created, s.mergedTitles, seriesVersion.get(s)];
   const map = admin ? viewMemoAdmin : viewMemo;
   const base = memoGet(map, s, deps);
   return base !== undefined ? base : memoSet(map, s, deps, seriesBase(s, admin));
@@ -410,6 +446,7 @@ function coverFromMetadata(s) {
 }
 
 module.exports = {
+  titleKey, workOwnerId,
   DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex, touch, generation: () => version, progressVersion: () => progressVer,
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,

@@ -33,7 +33,7 @@ function madaraWork(slug) {
   const chs = w.chapters.concat(extraChapter && slug === 'blue-moon' ? [5] : []);
   // (Green Field's chapters are named the messy way: the number twice and the views inside the link)
   const name = n => (slug === 'green-field' ? `Ch. 00${n} - Ch. ${n} <i>1.2k views</i>` : `Chapter ${n}`);
-  const list = `<ul class="main version-chap">${chs.slice().reverse().map(n => `<li class="wp-manga-chapter"><a href="${SITE}/madara/manga/${slug}/chapter-${n}/">${name(n)}</a><span class="chapter-release-date"><i>Jan ${n}, 2025</i></span></li>`).join('')}</ul>`;
+  const list = `<ul class="main version-chap">${chs.slice().reverse().map(n => `<li class="wp-manga-chapter"><a href="${SITE}/madara/manga/${slug}/chapter-${n}/">${name(n)}</a><span class="chapter-release-date"><i>Jan ${n}, 2025</i></span>${slug === 'blue-moon' && n === 4 ? '<i class="fas fa-lock"></i>' : ''}</li>`).join('')}</ul>`; // (Blue Moon's chapter 4: locked)
   return `<html><head><meta property="og:title" content="${w.title}"></head><body><div class="post-title"><h1>${w.title}</h1></div>
     <div class="summary_image"><img data-src="${SITE}/img/${slug}.png"></div>
     <div class="post-content_item"><div class="summary-heading"><h5>Alternative</h5></div><div class="summary-content">${w.alt}</div></div>
@@ -153,6 +153,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const greenKey = (await call('GET', '/api/catalog?q=green')).data.items[0].key;
   const greenCh = (await call('GET', `/api/catalog/work?key=${encodeURIComponent(greenKey)}`)).data.work.sources[0].chapterList[0];
   ok(greenCh.t === 'Chapter 1' && greenCh.n === '1' && /views/.test(greenCh.raw || ''), `chapter names standardized like the renamer's ("${greenCh.raw}" → "${greenCh.t}")`);
+  const blueSrc = (await call('GET', `/api/catalog/work?key=${encodeURIComponent((await call('GET', '/api/catalog?q=blue')).data.items.find(i => i.sources[0].sourceId === madara.id).key)}`)).data.work.sources[0];
+  ok(blueSrc.chapterList.find(c => c.n === '4').pr === true && blueSrc.chapterList.filter(c => c.pr).length === 1 && blueSrc.premium === 1 && s1.lastStats.premium === 1, 'a locked (premium) chapter is marked as not available now');
   // The crawl as a task, with its own log file
   const crawlTask = await until(async () => (await call('GET', '/api/tasks')).data.recent.find(x => x.kind === 'crawl' && x.title.includes('Madara site')));
   ok(crawlTask.status === 'done' && /listed/.test(crawlTask.summary), `the crawl is listed as a task (${crawlTask.title}: ${crawlTask.summary})`);
@@ -169,6 +171,7 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   s1 = await crawled(madara.id);
   slowWorks = false;
   const gaps = workHits.slice(1).map((t, i) => t - workHits[i]);
+  ok(s1.lastStats.maxActiveRequests >= 2, `the crawl says how many requests it had in progress at once (up to ${s1.lastStats.maxActiveRequests})`);
   ok(s1.works === 3 && s1.lastStats.errors === 0 && s1.lastStats.concurrency === 3 && maxInFlight >= 2 && gaps.every(g => g >= 150),
     `several works read at once (${maxInFlight} pages in flight, ${s1.lastStats.concurrency} lanes) while requests still start one per pause (gaps ${gaps.join(', ')} ms)`);
   await call('POST', `/api/catalog/sources/${custom.id}/crawl`, { mode: 'full' });

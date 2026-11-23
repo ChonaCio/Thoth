@@ -466,7 +466,7 @@ function searchMoreCovers(s, { force = false } = {}) {
       }))
     ]);
     const added = fromLinks.concat(found);
-    if (added.length) p.coverCandidates = (p.coverCandidates || []).concat(added);
+    if (added.length) { p.coverCandidates = (p.coverCandidates || []).concat(added); downloadCandidates(s).catch(() => {}); }
     p.coverSearchAt = new Date().toISOString();
     store.saveLibrary({ series: s });
     return added.length;
@@ -550,8 +550,61 @@ async function onlineCandidateImage(s, id) {
   const c = ((s.provider && s.provider.coverCandidates) || []).find(x => x.provider === provider) ||
     (s.provider && s.provider.coverProvider === provider && s.provider.coverUrl ? { url: s.provider.coverUrl } : null);
   if (!c) return null;
-  try { return await fetchImage(c.url, { timeout: PREVIEW_MS }); } catch { return null; }
+  const saved = await savedCandidate(c.url);
+  if (saved) return saved;
+  try { const img = await fetchImage(c.url, { timeout: PREVIEW_MS }); keepCandidate(c.url, img); return img; } catch { return null; }
 }
+
+/* ---------------- every matched site's cover, kept on disk ----------------
+ * The Edit dialog's cover choices show at once: each matched site's cover is downloaded when the work is
+ * matched (and, for works matched before, by a background task), into data/covers/candidates/<sha1 of url>.
+ * The picker and choosing one read the file instead of asking the site again. */
+const CANDIDATES_DIR = path.join(COVERS_DIR, 'candidates');
+const candidateName = (url, type) => crypto.createHash('sha1').update(String(url)).digest('hex') + (IMAGE_TYPES[type] || '.jpg');
+function candidatePathFor(url) {
+  const base = crypto.createHash('sha1').update(String(url)).digest('hex');
+  for (const ext of new Set(Object.values(IMAGE_TYPES))) { const f = path.join(CANDIDATES_DIR, base + ext); if (fs.existsSync(f)) return f; }
+  return null;
+}
+const TYPE_OF_EXT = Object.fromEntries(Object.entries(IMAGE_TYPES).map(([t, e]) => [e, t]));
+async function savedCandidate(url) {
+  const f = candidatePathFor(url);
+  if (!f) return null;
+  try { return { buf: await fs.promises.readFile(f), type: TYPE_OF_EXT[path.extname(f)] || 'image/jpeg' }; } catch { return null; }
+}
+function keepCandidate(url, img) {
+  try { fs.mkdirSync(CANDIDATES_DIR, { recursive: true }); fs.writeFileSync(path.join(CANDIDATES_DIR, candidateName(url, img.type)), img.buf); } catch { /* best effort */ }
+}
+// A work's site covers not on disk yet (its candidates, and the downloaded one's address)
+function missingCandidates(s) {
+  const p = s.provider || {};
+  const urls = (p.coverCandidates || []).map(c => c.url).concat(p.coverUrl ? [p.coverUrl] : []).filter(Boolean);
+  return [...new Set(urls)].filter(u => !candidatePathFor(u));
+}
+async function downloadCandidates(s) {
+  let n = 0;
+  for (const url of missingCandidates(s)) {
+    try { keepCandidate(url, await fetchImage(url, { timeout: 20000 })); n++; } catch { /* that site didn't send it; tried again later */ }
+  }
+  return n;
+}
+// Works matched before covers were kept: downloaded in the background, one work at a time (a task)
+let candidatesTask = null;
+function downloadMissingCandidates() {
+  if (candidatesTask) return;
+  const todo = Object.values(db.series).filter(s => !s.hidden && s.provider && missingCandidates(s).length);
+  if (!todo.length) return;
+  const state = { done: 0, images: 0 };
+  const task = require('../tasks').start({ kind: 'covers', title: 'Downloading the cover choices of matched works', progress: () => ({ done: state.done, total: todo.length, percent: Math.floor(state.done / todo.length * 100) }) });
+  candidatesTask = (async () => {
+    for (const s of todo) {
+      if (db.series[s.id]) { const n = await downloadCandidates(s); state.images += n; if (n) task.log(`"${store.seriesMeta(s).title}": ${n} cover(s)`); }
+      state.done++;
+      await new Promise(r => setTimeout(r, 300)); // (gentle on the image hosts)
+    }
+  })().then(() => task.end('done', `${state.images} cover(s) of ${todo.length} work(s) downloaded`), e => task.end('failed', e.message)).finally(() => { candidatesTask = null; });
+}
+setTimeout(() => { try { downloadMissingCandidates(); } catch (e) { console.error('[metadata] cover choices:', e.message); } }, Number(process.env.THOTH_CANDIDATES_DELAY_MS) || 60000).unref();
 // Apply a choice from the Edit dialog. choice: a candidate id; upload: 'data:image/…;base64,…'
 async function chooseCover(s, { choice, upload }) {
   const o = s.overrides = s.overrides || {};
@@ -573,7 +626,7 @@ async function chooseCover(s, { choice, upload }) {
     return;
   }
   if (c.kind === 'online') {
-    const img = await fetchImage(c.url); // (reuses the preview the picker just showed)
+    const img = (await savedCandidate(c.url)) || await fetchImage(c.url); // (the copy on disk, else the site)
     delete o.cover;
     saveCustomCover(s, img.buf, IMAGE_TYPES[img.type], c.id);
     return;
@@ -697,6 +750,9 @@ async function refreshSeries(seriesId, cur) {
     if (changed) current.updated = now;
     status.changed = (status.changed || 0) + (changed ? 1 : 0);
     store.saveLibrary({ series: current }); // only this work changed (its memoized views are redone)
+    // Every matched site's cover on disk now, so the Edit dialog's choices show at once
+    step('covers');
+    await downloadCandidates(current).catch(() => {});
     status.done++;
     if (!matches.length && errors.length) status.lastError = errors[0];
     return current.provider;
@@ -744,7 +800,8 @@ function lockList(v) {
 }
 // picks: [{ provider, id }] — the matches chosen in the Identify dialog (several sites at once are fine; one
 // per site, the last one wins). They replace earlier hand-picked matches and are kept for later refreshes.
-async function identify(seriesId, picks) {
+// One site: done right away. Several (background: true): started as a task, answered at once with { task }.
+async function identify(seriesId, picks, { background = false } = {}) {
   const s = db.series[seriesId];
   if (!s) throw Object.assign(new Error('Series not found'), { status: 404, code: 'notFound' });
   const bySite = {};
@@ -755,7 +812,20 @@ async function identify(seriesId, picks) {
   const list = Object.values(bySite);
   if (!list.length) throw Object.assign(new Error('Nothing picked'), { status: 400, code: 'invalid' });
   s.provider = Object.assign({}, s.provider || {}, { locked: list });
-  return refreshSeries(seriesId);
+  if (!background) return refreshSeries(seriesId);
+  // Several sites: a task in the background (Processes → Tasks), so the app can be used meanwhile
+  const title = store.seriesMeta(s).title;
+  const cur = { seriesId, title, startedAt: new Date().toISOString(), step: 'searching', provider: null };
+  const task = require('../tasks').start({ kind: 'metadata', title: `Identify "${title}" (${list.map(x => (BY_ID[x.provider] || {}).name || x.provider).join(', ')})`,
+    progress: () => ({ phase: cur.step === 'covers' ? 'covers' : 'reading', detail: cur.provider ? (BY_ID[cur.provider] || {}).name || cur.provider : null }) });
+  for (const x of list) task.log(`${(BY_ID[x.provider] || {}).name || x.provider}: entry ${x.id}`);
+  status.current.push(cur);
+  refreshSeries(seriesId, cur).then(p => {
+    const matched = ((p && p.matches) || []).map(m => (BY_ID[m.provider] || {}).name || m.provider);
+    for (const e of (p && p.errors) || []) task.log('error:', e);
+    task.end(matched.length ? 'done' : 'failed', matched.length ? `matched on ${matched.join(', ')}` + (p.coverFile ? '; cover downloaded' : '') : 'nothing could be read from the sites picked');
+  }, e => task.end('failed', e.message)).finally(() => { status.current = status.current.filter(c => c !== cur); });
+  return { task: task.id };
 }
 
 function clear(seriesId) {
@@ -806,7 +876,8 @@ function needsUpdate(s) {
 // 'stale': the delta — works needsUpdate() picks; 'all': every work
 function enqueueLibrary(libraryId, mode = 'missing') {
   const ids = Object.values(db.series)
-    .filter(s => s.libraryId === libraryId && !s.hidden && (mode === 'all' || (mode === 'stale' ? needsUpdate(s) : !s.provider || (missingCover(s) && s.provider.coverUrl))))
+    // (a version other than the work's main one shares the main one's metadata: not looked up on its own)
+    .filter(s => s.libraryId === libraryId && !s.hidden && store.workOwnerId(s) === s.id && (mode === 'all' || (mode === 'stale' ? needsUpdate(s) : !s.provider || (missingCover(s) && s.provider.coverUrl))))
     .sort((a, b) => store.collator.compare(store.seriesMeta(a).sortTitle, store.seriesMeta(b).sortTitle))
     .map(s => s.id);
   return enqueue(ids);

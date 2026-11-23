@@ -16,6 +16,7 @@ const lister = (src, adapter) => (src.listing === 'sitemap' && src.workPattern &
 // Chapter names the same way the file renamer names files ("Chapter 44 - The End"): dates, views and the
 // number said twice dropped (the name as the site shows it kept in `raw`, the volume in `v`)
 const { chapterTitle } = require('../naming');
+const { preferEnglish } = require('../titles');
 function standardChapter(c, src) {
   // MangaDex gives the number apart from the title
   const raw = src.type === 'mangadex' && c.n ? `Chapter ${c.n} ${c.t || ''}` : c.t;
@@ -57,7 +58,10 @@ async function crawl(msg, send) {
   const { source: src, dir, mode } = msg;
   const adapter = ADAPTERS[src.type];
   if (!adapter) throw new Error(`Unknown source type ${src.type}`);
-  const fetcher = createFetcher({ gapMs: Math.max(Number(src.gapMs) || adapter.defaults.gapMs || 1000, src.type === 'mangadex' ? 200 : 500), allowLocal: msg.allowLocal });
+  const gapMs = Math.max(Number(src.gapMs) || adapter.defaults.gapMs || 1000, src.type === 'mangadex' ? 200 : 500);
+  const fetcher = createFetcher({ gapMs, allowLocal: msg.allowLocal });
+  // How it's crawling right now: works read at once, requests in progress / waiting for their turn, the pause
+  const concurrencyNow = () => ({ lanes: stats.concurrency || 1, active: fetcher.stats.active, waiting: fetcher.stats.waiting, gapMs });
   const run = current = { stop: false, fetcher };
   const incremental = mode === 'update';
   const data = store.readWorks(dir);
@@ -92,7 +96,7 @@ async function crawl(msg, send) {
         stats.listed++;
         if (src.maxWorks && stats.listed >= src.maxWorks) break;
       }
-      report({ phase: 'listing', total: stats.listed });
+      report({ phase: 'listing', total: stats.listed, requestsNow: concurrencyNow() });
       if (src.maxWorks && stats.listed >= src.maxWorks) break;
       if (Date.now() - lastFlush > 30000) flush();
     }
@@ -111,8 +115,9 @@ async function crawl(msg, send) {
     const worksProgress = () => {
       const elapsed = Date.now() - worksStartedAt, left = queue.length - done;
       const etaMs = readCount >= 3 && elapsed >= 3000 ? Math.round(elapsed / readCount * left) : null;
-      return { phase: 'works', done, total: queue.length, concurrency: lanes, etaMs, at: Date.now() };
+      return { phase: 'works', done, total: queue.length, concurrency: lanes, requestsNow: concurrencyNow(), etaMs, at: Date.now() };
     };
+    say(`reading the works: ${lanes} at once, at most one request to the site every ${gapMs} ms`);
     report(worksProgress());
     const readWork = async sid => {
       const w = works[sid];
@@ -121,6 +126,9 @@ async function crawl(msg, send) {
         const known = new Set(((old && old.chapters) || []).map(c => String(c.id)));
         const full = await adapter.fetchWork(Object.assign({}, ctx, { known }), Object.assign({}, w));
         if (full.chapters) full.chapters = full.chapters.map(c => standardChapter(c, src));
+        // The English title when the page gives several (the site's main one kept among the other titles)
+        const best = preferEnglish([full.title].concat(full.altTitles || []));
+        if (best && best !== full.title) { full.altTitles = [full.title].concat((full.altTitles || []).filter(t => t !== best)); full.title = best; }
         for (const f of FIELDS) if (filled(full[f])) w[f] = full[f];
         if (full.chapters) {
           // Updating: what the site shows now + what was stored (an incremental read stops at known chapters)
@@ -133,6 +141,10 @@ async function crawl(msg, send) {
           w.lastChapter = nums.length ? String(Math.max(...nums)) : null;
           w.lastChapterAt = list.map(c => c.d).filter(Boolean).sort().pop() || null;
           w.partial = Boolean(full.partial) || undefined;
+          // Chapters that can't be read for free right now (premium, locked)
+          const premium = list.filter(c => c.pr).length;
+          w.premiumChapters = premium || undefined;
+          stats.premium = (stats.premium || 0) + premium;
           if (full.partial) stats.partial++;
           stats.chapters += list.length;
         }
@@ -162,7 +174,9 @@ async function crawl(msg, send) {
         if (Date.now() - lastFlush > 30000) flush();
       }
     };
-    await Promise.all(Array.from({ length: lanes }, lane));
+    // (reported every second too, so the requests in progress shown are current even while works are slow)
+    const ticker = setInterval(() => report(worksProgress()), 1000);
+    try { await Promise.all(Array.from({ length: lanes }, lane)); } finally { clearInterval(ticker); }
     // 3. A complete full crawl: works the site no longer lists are dropped
     if (!incremental && listingComplete && !run.stop && !aborted) {
       for (const [sid, w] of Object.entries(works)) if (w.seenAt !== runStartedAt) { delete works[sid]; chapters.set(sid, null); stats.removed++; }
@@ -171,6 +185,7 @@ async function crawl(msg, send) {
     if (e.code !== 'stopped') aborted = e;
   }
   stats.requests = fetcher.stats.requests;
+  stats.maxActiveRequests = fetcher.stats.maxActive; // (the most requests that were in progress at once)
   flush();
   const finished = !run.stop && !aborted;
   if (aborted) say('stopped: ' + errText(aborted)); else if (run.stop) say('stop asked: what was read is saved');

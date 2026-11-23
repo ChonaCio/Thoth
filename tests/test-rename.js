@@ -41,6 +41,10 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
     'chapter-1-chapter name.cbz': 'Chapter 1 - Chapter Name.cbz', 'ch_12_the_end.cbz': 'Chapter 12 - The End.cbz', 'vol.3.cbz': 'Volume 3.cbz',
     'Chapter 1.cbz': null, 'Chapter 1 - Chapter Name.cbz': null, 'Saga 001.cbz': null, 'EP-4.pdf': 'Episode 4.pdf' };
   ok(Object.entries(expect).every(([from, to]) => rules.proposedName(from) === to), 'naming rules: every example gives the expected name (and good names are left alone)');
+  // English titles first
+  const { preferEnglish, taggedEnglish } = require(path.join(APP, 'library', 'titles.js'));
+  ok(preferEnglish(['Shingeki no Kyojin', 'Attack on Titan', '進撃の巨人']) === 'Attack on Titan' && preferEnglish(['나 혼자만 레벨업', 'Solo Leveling']) === 'Solo Leveling' && preferEnglish(['One Piece', 'ワンピース']) === 'One Piece' &&
+    taggedEnglish([{ 'ja-ro': 'Kimetsu no Yaiba' }, { en: 'Demon Slayer' }]) === 'Demon Slayer' && taggedEnglish([{ en_jp: 'Romaji' }]) === null, 'titles: the English one is preferred (tagged or by how it reads)');
   // The same rules for chapter names read on sites (external catalog)
   const { chapterTitle } = require(path.join(APP, 'library', 'naming.js'));
   const siteNames = [['Chapter 44 - 44', 'Chapter 44'], ['Chapter 44 - Ch. 44', 'Chapter 44'], ['Ch. 044 - Ch. 44  Jan 4, 2025  1.2k views', 'Chapter 44'], ['Vol.2 Ch.15 - Escape 3 days ago', 'Chapter 15 - Escape'],

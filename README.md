@@ -127,9 +127,11 @@ files are shown as individual works too. Changing it rescans the library; readin
 
 **Versions of a work.** When you keep several versions of the same work, name the folders with a suffix in
 parentheses or brackets: `One Piece`, `One Piece (Colored)`, `One Piece (Raw)`, `One Piece (Uncensored)`,
-`One Piece (Animated)`. They're combined into one work "One Piece" (one card, "2 versions"), and its page has a
-tab per version, in the order **Regular, Colored, Raw, Uncensored, Animated**; each tab lists that version's
-chapters/books, with its own progress and metadata.
+`One Piece (Animated)`. They're combined into one work "One Piece" (one card, "2 versions"). **The versions share
+the work's title, metadata and cover** (those of the main version: Regular first, then Colored, Raw, Uncensored,
+Animated); editing, *Identify* and metadata lookups apply to it. Only the chapter list changes: the page has a
+tab per version **over the chapters/books**, and a version other than Regular gets a colored tag after the title
+(*Colored*, *Raw*, *Uncensored*, *Animated*). Reading progress is each version's own.
 - Grouping uses the **folder (or one-shot file) name**, so it works even if `ComicInfo.xml` inside the
   versions names them differently. Versions may also live in **different libraries**; a user only sees the
   versions in libraries they can access.
@@ -183,7 +185,7 @@ them in small batches, each process reading several files at once. Libraries are
 **Tasks tab (Processes page).** Every long-running thing the server does — library scans, metadata lookups, file
 jobs, catalog crawls — is a **task**: the running ones with their progress bar and time left, *Show output* (the
 end of their log, live), *Stop* where it can be stopped (crawls), and the ones that ended lately with their result.
-Each task writes its own **log file** (data/logs/); the **Logs** page (sidebar) lists them by kind, shows one
+Each task writes its own **log file** (data/logs/); the **Logs** tab lists them by kind, shows one
 (live while it runs) and downloads it. Logs are deleted after *Keep task logs* days (Server settings).
 
 **Processes page (administrators).** Shows the web server, the scan service, the metadata lookups, file
@@ -244,7 +246,9 @@ order them with the arrows.
   and **Refresh all metadata** (every work again). A check that finds the same data doesn't mark the work as
   updated (so "Recently updated" only shows real changes). Every
   work page has **Refresh metadata**, **Identify** (search the sites and pick the right match, one per site;
-  you can pick several sites at once, e.g. AniList *and* Kitsu; the picks stick for future refreshes) and
+  you can pick several sites at once, e.g. AniList *and* Kitsu, which then runs **in the background as a task**
+  (Processes → Tasks) while you keep using the app, and the page updates when it's done; the picks stick for
+  future refreshes) and
   **Clear metadata**. *Update metadata* (and *Refresh all*) first re-matches the library's folder-source JSON
   files, so fixed or new JSON files are picked up right away.
 - **Links.** A work keeps the web addresses of its matches and shows one line per source on its page
@@ -254,6 +258,9 @@ order them with the arrows.
   Library, Google Books, Comic Vine) is used as an exact match: that entry is read directly, without searching.
 - **Covers from links.** The cover picker offers the cover of every linked site entry and, for any other page,
   the image it publishes for sharing (`og:image`). Pages on this machine or the local network are never fetched.
+- **Every matched site's cover is downloaded** when a work is matched (*Work 1* matched on AniList and Kitsu →
+  both covers are on the server, `data/covers/candidates/`); works matched earlier get theirs from a background
+  task after startup. The cover picker shows them from those copies, at once.
 - **The cover picker** (Edit → Cover) shows the covers it already knows at once. It searches the online sites for
   more only when that's due (once a week per work) or when asked (*Search the sites again*), for a few seconds at
   most: a site that's slow or busy with other lookups is skipped rather than waited for. Previews that a site doesn't
@@ -427,7 +434,10 @@ or delete the existing ones (rename these). Deleting can't be undone and always 
 and read-list entries of a deleted file go with it.
 
 **Merging works.** *Merge works* moves the chapters the kept work doesn't have yet into its folder, so the works
-become one (reading progress and read lists follow the files; emptied folders are removed). A chapter it already
+become one (reading progress and read lists follow the files; emptied folders are removed). The kept work gains
+the other works' titles it doesn't have (their main and alternative titles) as **alternative titles**, and when
+one of them is in English and the kept one's title isn't, the English one becomes its title (unless you set the
+title by hand). A chapter it already
 has is a **repeat** and isn't moved: same file name, or the same chapter (`chapter-2.cbz` = `Chapter 2.cbz` =
 `Chapter 2 - Title.cbz`, also by the number in the book's own metadata). Tick *Delete the other folders when done*
 to delete the other works' folders after the merge, with the repeats and anything else left in them (never the
@@ -508,7 +518,8 @@ sites added as **sources**, with its metadata and chapter list.
 - **Icons:** each source shows its site's own icon (the one its pages declare, else `/favicon.ico`).
 - **Sources tab:** add a site, *Test* its settings (what the first list page and first work give),
   *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
-  Each source can update every day or week by itself. A crawl reads several works at once (*Works at once*,
+  Each source can update every day or week by itself. While it runs, a crawl shows how it's fetching: works at
+  once, requests in progress and waiting their turn, and the pause per site. A crawl reads several works at once (*Works at once*,
   default from Server settings); requests to the site still keep the pause between them. Kinds of site:
 
 | Kind | For | Notes |
@@ -534,6 +545,11 @@ sites added as **sources**, with its metadata and chapter list.
   sources). Covers and alternative titles also come from the page's standard tags (Open Graph, schema.org) and
   rows labeled *Alternative*, *Other names*… when the theme doesn't show them.
 - The crawl's progress bar shows the **time left**, from the speed of the works read so far.
+- **Premium chapters** (behind coins, a pass, early access, or unavailable on MangaDex) are marked *Premium*: listed,
+  but not readable for free right now; the chapters your library lacks say so too (a free copy on another source
+  is preferred).
+- **English titles first:** a work's title is its English one when the site gives several (tagged by language,
+  or the one that reads as English), also for works merged across sources.
 - Covers are fetched by the server and cached (`data/cache/catalog-covers/`): browsers never contact the sites.
 - Storage: `data/catalog/<source>/` (`works.json`, chapter lists in `chapters/`, `state.json`). Removing a source
   removes them; your library is never changed by the catalog.

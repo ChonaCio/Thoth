@@ -627,7 +627,12 @@ async function handle(ctx) {
     const s = getSeries(user, m[1]);
     if (method === 'GET') {
       const editions = editionsOf(s, user);
-      return send(200, { series: store.seriesView(s, user, { admin }), editions, workTitle: editions.length ? editions[0].title : store.seriesView(s, user).title,
+      // A version other than the work's main one shows the work's title, metadata and cover (`work`); only its
+      // chapters are its own
+      const ownerId = store.workOwnerId(s);
+      const owner = ownerId !== s.id && db.series[ownerId] && store.canAccessLibrary(user, db.series[ownerId].libraryId) ? db.series[ownerId] : null;
+      const work = owner ? store.seriesView(owner, user, { admin }) : null;
+      return send(200, { series: store.seriesView(s, user, { admin }), work, editions, workTitle: work ? work.title : editions.length ? editions[0].title : store.seriesView(s, user).title,
         books: store.booksOf(s.id).map(b => store.bookView(b, user, { admin })),
         collections: Object.values(db.collections).filter(c => c.seriesIds.includes(s.id)).map(c => ({ id: c.id, name: c.name })) });
     }
@@ -661,6 +666,7 @@ async function handle(ctx) {
         // One per line (titles can contain commas)
         const list = (Array.isArray(body.altTitles) ? body.altTitles : String(body.altTitles || '').split(/\r?\n|;/)).map(t => clean(t, 200)).filter(Boolean).slice(0, 20);
         if (list.length) o.altTitles = list; else delete o.altTitles;
+        delete s.mergedTitles; // (the list as edited includes the titles merges added, or leaves them out on purpose)
       }
       if ('authors' in body) {
         // Names; a name already credited keeps its role(s), a new one is a writer
@@ -983,6 +989,8 @@ async function handle(ctx) {
       // { matches: [{ provider, id }, …] } (several sites at once), or the older { provider, id }
       const picks = Array.isArray(body.matches) ? body.matches.slice(0, 20).map(x => ({ provider: String((x && x.provider) || ''), id: clean(x && x.id, 100) }))
         : [{ provider: String(body.provider || ''), id: clean(body.id, 100) }];
+      // Several sites: a background task (the answer comes at once; the page follows the task)
+      if (picks.length > 1) return send(202, await metadata.identify(s.id, picks, { background: true }));
       await metadata.identify(s.id, picks);
       return send(200, { series: store.seriesView(db.series[s.id] || s, user, { admin }) });
     }

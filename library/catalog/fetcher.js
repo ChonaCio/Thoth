@@ -63,7 +63,8 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
   const robots = new Map(); // origin → Promise<rules>
   const robotsText = new Map(); // origin → the file itself
   const nextAt = new Map(); // host → time of the next allowed request
-  const stats = { requests: 0, bytes: 0, retries: 0 };
+  // active: requests in progress right now (sent, answer not read yet); waiting: requests waiting for their turn at a site
+  const stats = { requests: 0, bytes: 0, retries: 0, active: 0, waiting: 0, maxActive: 0 };
   let stopped = false;
 
   async function slot(host) {
@@ -79,14 +80,21 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
     for (let hop = 0; hop < 6; hop++) {
       if (!publicUrl(current, allowLocal)) throw err('notPublic', `Not a public address: ${current}`);
       const u = new URL(current);
-      await slot(u.host);
+      stats.waiting++;
+      try { await slot(u.host); } finally { stats.waiting--; }
       stats.requests++;
       if (onRequest) onRequest(current);
-      const res = await fetch(current, {
+      stats.active++; stats.maxActive = Math.max(stats.maxActive, stats.active);
+      let res;
+      try {
+        res = await fetch(current, {
         method: opts.method || 'GET', body: opts.body, redirect: 'manual', signal: AbortSignal.timeout(timeoutMs),
         headers: Object.assign({ 'User-Agent': UA, Accept: opts.accept || 'text/html,application/json;q=0.9,*/*;q=0.8', 'Accept-Language': 'en' }, opts.headers || {})
-      });
+        });
+      } catch (e) { stats.active--; throw e; }
+      res.counted = true; // (readBody or the redirect below ends it)
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) {
+        done(res); try { await res.body.cancel(); } catch {}
         current = new URL(res.headers.get('location'), current).href; // checked again at the top
         if (opts.method && opts.method !== 'GET' && res.status !== 307 && res.status !== 308) { opts = Object.assign({}, opts, { method: 'GET', body: undefined }); }
         continue;
@@ -95,7 +103,11 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
     }
     throw err('redirects', 'Too many redirects');
   }
+  function done(res) { if (res && res.counted) { res.counted = false; stats.active--; } }
   async function readBody(res) {
+    try { return await readAll(res); } finally { done(res); }
+  }
+  async function readAll(res) {
     const reader = res.body.getReader();
     const chunks = []; let size = 0;
     for (;;) {
@@ -113,7 +125,7 @@ function createFetcher({ gapMs = 1000, allowLocal = false, timeoutMs = 25000, on
       robots.set(origin, (async () => {
         try {
           const { res } = await raw(origin + '/robots.txt', { accept: 'text/plain' });
-          if (res.status >= 400) { try { await res.body.cancel(); } catch {} return []; } // none: everything allowed
+          if (res.status >= 400) { done(res); try { await res.body.cancel(); } catch {} return []; } // none: everything allowed
           const text = (await readBody(res)).toString('utf8');
           robotsText.set(origin, text);
           return parseRobots(text);

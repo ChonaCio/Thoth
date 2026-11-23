@@ -3421,4 +3421,54 @@
   add('pt', {
     "cat.mergeIntro": "A mesma obra em vários sites vira uma só entrada do catálogo (os metadados vêm da principal; os capítulos de cada site ficam). Correspondências certas são unidas sozinhas após cada rastreio; as prováveis são sugeridas aqui para comparar."
   });
+  add('en', {
+    "cat.crawlRequests": "{lanes} works at once · {active} requests in progress, {waiting} waiting their turn · at most one request to the site every {gap} s",
+    "cat.premium": "Premium",
+    "cat.premiumHelp": "Not readable for free right now on this site (premium, coins, a pass or early access)",
+    "cat.premiumCount": "{count} premium",
+    "meta.identifyBackground": "Looking it up on the sites picked in the background (Processes → Tasks). You can keep using the app.",
+    "meta.identifyFailed": "Nothing could be read from the sites picked",
+    "meta.stepCovers": "downloading the covers",
+    "proc.task.phase.covers": "Downloading covers"
+  });
+  add('es', {
+    "cat.crawlRequests": "{lanes} obras a la vez · {active} peticiones en curso, {waiting} esperando su turno · como mucho una petición al sitio cada {gap} s",
+    "cat.premium": "Premium",
+    "cat.premiumHelp": "No se puede leer gratis ahora mismo en este sitio (premium, monedas, un pase o acceso anticipado)",
+    "cat.premiumCount": "{count} premium",
+    "meta.identifyBackground": "Buscándola en los sitios elegidos en segundo plano (Procesos → Tareas). Puedes seguir usando la app.",
+    "meta.identifyFailed": "No se pudo leer nada de los sitios elegidos",
+    "meta.stepCovers": "descargando las portadas",
+    "proc.task.phase.covers": "Descargando portadas"
+  });
+  add('fr', {
+    "cat.crawlRequests": "{lanes} œuvres à la fois · {active} requêtes en cours, {waiting} en attente de leur tour · au plus une requête au site toutes les {gap} s",
+    "cat.premium": "Premium",
+    "cat.premiumHelp": "Pas lisible gratuitement pour le moment sur ce site (premium, pièces, un pass ou accès anticipé)",
+    "cat.premiumCount": "{count} premium",
+    "meta.identifyBackground": "Recherche sur les sites choisis en arrière-plan (Processus → Tâches). Vous pouvez continuer à utiliser l’app.",
+    "meta.identifyFailed": "Rien n’a pu être lu sur les sites choisis",
+    "meta.stepCovers": "téléchargement des couvertures",
+    "proc.task.phase.covers": "Téléchargement des couvertures"
+  });
+  add('de', {
+    "cat.crawlRequests": "{lanes} Werke gleichzeitig · {active} Anfragen laufen, {waiting} warten · höchstens eine Anfrage an die Seite alle {gap} s",
+    "cat.premium": "Premium",
+    "cat.premiumHelp": "Auf dieser Seite gerade nicht kostenlos lesbar (Premium, Münzen, ein Pass oder Vorabzugang)",
+    "cat.premiumCount": "{count} Premium",
+    "meta.identifyBackground": "Wird im Hintergrund auf den gewählten Seiten gesucht (Prozesse → Aufgaben). Die App bleibt nutzbar.",
+    "meta.identifyFailed": "Von den gewählten Seiten konnte nichts gelesen werden",
+    "meta.stepCovers": "lädt die Cover herunter",
+    "proc.task.phase.covers": "Lädt Cover herunter"
+  });
+  add('pt', {
+    "cat.crawlRequests": "{lanes} obras ao mesmo tempo · {active} pedidos em andamento, {waiting} esperando a vez · no máximo um pedido ao site a cada {gap} s",
+    "cat.premium": "Premium",
+    "cat.premiumHelp": "Não dá para ler de graça agora neste site (premium, moedas, um passe ou acesso antecipado)",
+    "cat.premiumCount": "{count} premium",
+    "meta.identifyBackground": "Buscando nos sites escolhidos em segundo plano (Processos → Tarefas). Você pode continuar usando o app.",
+    "meta.identifyFailed": "Nada pôde ser lido dos sites escolhidos",
+    "meta.stepCovers": "baixando as capas",
+    "proc.task.phase.covers": "Baixando capas"
+  });
 })();

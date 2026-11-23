@@ -344,8 +344,7 @@
       items.push({ href: '#metadata-sources', icon: 'dataset', key: 'nav.metadataSources' });
       items.push({ href: '#files', icon: 'folder_open', key: 'nav.files', match: ['files', 'rename'] });
       items.push({ href: '#catalog', icon: 'travel_explore', key: 'nav.catalog', match: ['catalog'] });
-      items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
-      items.push({ href: '#logs', icon: 'description', key: 'nav.logs' });
+      items.push({ href: '#processes', icon: 'memory', key: 'nav.processes', match: ['processes', 'logs'] }); // (Logs is one of its tabs)
       items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });
       items.push({ href: '#updates', icon: 'update', key: 'nav.updates' });

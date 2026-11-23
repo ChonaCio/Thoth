@@ -10,6 +10,7 @@ const { fork, spawn } = require('child_process');
 const store = require('../db');
 const cstore = require('./store');
 const tasks = require('../tasks');
+const { preferEnglish } = require('../titles');
 const { ADAPTERS, TYPES } = require('./adapters');
 const { publicUrl, UA } = require('./fetcher');
 const { normTitle, fromUrl } = require('../metadata/providers');
@@ -219,7 +220,7 @@ function crawlTask(sourceId, jobId, mode, logFile, startedAt) {
       const j = sourceJob(sourceId), p = (j && j.progress) || {};
       const listing = !p.phase || p.phase === 'listing';
       return { phase: listing ? 'listing' : 'works', done: listing ? p.listed || 0 : p.done || 0, total: listing ? null : p.total || 0,
-        percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: listing ? null : p.etaMs != null ? p.etaMs : null, errors: p.errors || 0 };
+        percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: listing ? null : p.etaMs != null ? p.etaMs : null, errors: p.errors || 0, requestsNow: p.requestsNow || null };
     } });
 }
 // Starts waiting crawls while there's room; notices finished ones (logged once)
@@ -243,7 +244,7 @@ function pumpCrawls() {
       catalogVersion++;
       const r = p.result || {};
       tasks.endById(p.jobId, p.status === 'done' ? 'done' : p.status === 'stopped' ? 'stopped' : 'failed',
-        p.error || `${r.listed || 0} listed, ${r.added || 0} new, ${r.read || 0} read, ${r.chapters || 0} chapters, ${r.errors || 0} errors`);
+        p.error || `${r.listed || 0} listed, ${r.added || 0} new, ${r.read || 0} read, ${r.chapters || 0} chapters` + (r.premium ? ` (${r.premium} premium)` : '') + `, ${r.errors || 0} errors` + (r.maxActiveRequests ? `; up to ${r.maxActiveRequests} request(s) in progress at once` : ''));
       adoptDetected(id);
       if (!first) console.log(`[catalog] crawl of "${db.catalogSources[id].name}" ${p.status}${p.error ? `: ${p.error}` : ''}`);
       // New works may be the same as others: merge the certain ones (also once at startup)
@@ -416,13 +417,15 @@ function catalogItems() {
 }
 function makeItem(primary, members, groupId) {
   const lib = members.map(libraryMatch).find(Boolean) || null;
+  // The title shown: English first (the main entry's, another source's, or one of the other titles)
+  const title = preferEnglish([primary.title].concat(members.map(m => m.title), primary.altTitles || [], ...members.map(m => m.altTitles || []))) || primary.title || '';
   const genres = terms.unify(...members.map(m => m.genres || []));
   return {
-    key: groupId ? 'g:' + groupId : primary.key, groupId, title: primary.title || '', altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== primary.title))].slice(0, 20),
+    key: groupId ? 'g:' + groupId : primary.key, groupId, title, altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== title))].slice(0, 20),
     cover: Boolean(members.find(m => m.cover)), coverKey: (members.find(m => m.key === primary.key && m.cover) || members.find(m => m.cover) || primary).key,
     summary: primary.summary || (members.find(m => m.summary) || {}).summary || '', authors: [...new Set(members.flatMap(m => m.authors || []))].slice(0, 12), genres,
     status: primary.status || 'unknown', type: primary.type || null, year: primary.year || null,
-    sources: members.map(m => ({ key: m.key, sourceId: m.sourceId, name: (db.catalogSources[m.sourceId] || {}).name || m.sourceId, url: m.url, chapters: m.chapterCount || 0, lastChapter: m.lastChapter || null, partial: Boolean(m.partial) })),
+    sources: members.map(m => ({ key: m.key, sourceId: m.sourceId, name: (db.catalogSources[m.sourceId] || {}).name || m.sourceId, url: m.url, chapters: m.chapterCount || 0, premium: m.premiumChapters || 0, lastChapter: m.lastChapter || null, partial: Boolean(m.partial) })),
     chapters: Math.max(0, ...members.map(m => m.chapterCount || 0)), lastChapter: members.map(m => m.lastChapter).filter(Boolean).sort((a, b) => parseFloat(b) - parseFloat(a))[0] || null,
     updatedAt: members.map(m => m.lastChapterAt || m.detailAt || m.addedAt || '').sort().pop() || null,
     inLibrary: lib ? { seriesId: lib.seriesId, by: lib.by, title: db.series[lib.seriesId] ? store.seriesMeta(db.series[lib.seriesId]).title : '' } : null,
@@ -473,7 +476,8 @@ function detail(key) {
   if (it.inLibrary && db.series[it.inLibrary.seriesId]) {
     const have = new Set(store.booksOf(it.inLibrary.seriesId).map(b => String(parseFloat(store.bookMeta(b).number))).filter(x => x !== 'NaN'));
     const nums = new Map();
-    for (const s of sources) for (const c of s.chapterList) { const n = parseFloat(c.n); if (Number.isFinite(n) && !have.has(String(n)) && !nums.has(String(n))) nums.set(String(n), { n: c.n, t: c.t, u: c.u, source: s.name }); }
+    // (a chapter premium on one site and free on another: the free one)
+    for (const s of sources) for (const c of s.chapterList) { const n = parseFloat(c.n); if (Number.isFinite(n) && !have.has(String(n)) && (!nums.has(String(n)) || (nums.get(String(n)).pr && !c.pr))) nums.set(String(n), { n: c.n, t: c.t, u: c.u, source: s.name, pr: Boolean(c.pr) }); }
     missing = { have: have.size, chapters: [...nums.values()].sort((a, b) => parseFloat(a.n) - parseFloat(b.n)) };
   }
   return Object.assign(publicItem(it), { sources, missing });

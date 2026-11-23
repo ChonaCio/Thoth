@@ -133,6 +133,7 @@ const anilist = {
 const MD = 'https://api.mangadex.org';
 const MD_RATINGS = '&contentRating[]=safe&contentRating[]=suggestive&contentRating[]=erotica&contentRating[]=pornographic';
 const firstValue = o => (o ? o.en || Object.values(o)[0] : undefined);
+const { taggedEnglish } = require('../titles');
 function mdType(a) {
   const tags = (a.tags || []).map(t => firstValue(t.attributes.name));
   const lang = a.originalLanguage || '';
@@ -146,7 +147,8 @@ function mdBasics(m) {
   const coverRel = (m.relationships || []).find(r => r.type === 'cover_art' && r.attributes);
   return {
     id: m.id, url: `https://mangadex.org/title/${m.id}`,
-    title: firstValue(a.title),
+    // English first: MangaDex's main title is often romanized, with the English one among the other titles
+    title: taggedEnglish([a.title || {}].concat(a.altTitles || [])) || firstValue(a.title),
     altTitles: uniq([...Object.values(a.title || {}), ...(a.altTitles || []).flatMap(o => Object.values(o))]),
     year: a.year || undefined, type: mdType(a),
     cover: coverRel ? `https://uploads.mangadex.org/covers/${m.id}/${coverRel.attributes.fileName}.512.jpg` : undefined
@@ -227,7 +229,7 @@ const kitsuType = t => ({ manga: 'manga', oneshot: 'manga', doujin: 'manga', man
 function kitsuBasics(d) {
   const a = d.attributes;
   return {
-    id: String(d.id), url: `https://kitsu.io/manga/${a.slug}`, title: a.canonicalTitle,
+    id: String(d.id), url: `https://kitsu.io/manga/${a.slug}`, title: taggedEnglish([a.titles || {}]) || a.canonicalTitle, // (English first)
     altTitles: uniq([...Object.values(a.titles || {}), ...(a.abbreviatedTitles || [])]),
     year: yearOf(a.startDate), type: kitsuType(a.subtype), cover: a.posterImage && (a.posterImage.large || a.posterImage.original)
   };

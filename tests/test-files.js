@@ -181,6 +181,27 @@ const scanned = async id => until(async () => { const l = (await call('GET', '/a
   await call('POST', '/api/files/merge-suggestions/dismiss', { key: dg.key });
   ok(!(await call('GET', '/api/files/merge-suggestions')).data.groups.some(g => g.key === dg.key), '“not the same” hides that suggestion');
 
+  // Merging keeps the other work's titles (as alternative titles), and the English title wins
+  book(path.join(A, 'Shingeki no Kyojin', 'Chapter 1.cbz')); book(path.join(B, 'Attack on Titan', 'Chapter 2.cbz'));
+  await call('POST', `/api/libraries/${LA}/scan`, {}); await call('POST', `/api/libraries/${LB}/scan`, {});
+  const snk = await until(async () => (await call('GET', '/api/files/works?q=shingeki')).data.works[0]);
+  const aot = await until(async () => (await call('GET', '/api/files/works?q=attack')).data.works[0]);
+  await call('PATCH', `/api/series/${aot.id}`, { altTitles: ['AoT', 'Shingeki no Kyojin'] });
+  j = await job((await call('POST', '/api/files/merge', { target: snk.id, sources: [aot.id] })).data.job.id);
+  const titled = (await call('GET', `/api/series/${snk.id}`)).data.series;
+  ok(j.moved === 1 && titled.title === 'Attack on Titan' && titled.altTitles.includes('Shingeki no Kyojin') && titled.altTitles.includes('AoT') && titled.altTitles.filter(x => x === 'Shingeki no Kyojin').length === 1,
+    `merging: the other work's titles become alternative titles, and the English title is kept as the title (${titled.title}; ${titled.altTitles.join(', ')})`);
+
+  // Versions share the work's title and metadata; only their chapters differ
+  book(path.join(A, 'Berserk', 'Chapter 1.cbz')); book(path.join(A, 'Berserk', 'Chapter 2.cbz')); book(path.join(A, 'Berserk (Colored)', 'Chapter 1.cbz'));
+  await call('POST', `/api/libraries/${LA}/scan`, {});
+  const colored = await until(async () => (await call('GET', '/api/files/works?q=berserk')).data.works.find(w => /Colored/.test(w.path)));
+  const regular = (await call('GET', '/api/files/works?q=berserk')).data.works.find(w => w.path === 'Berserk');
+  await call('PATCH', `/api/series/${regular.id}`, { summary: 'Shared summary', genres: ['Dark Fantasy'] });
+  const cv = (await call('GET', `/api/series/${colored.id}`)).data;
+  ok(cv.work && cv.work.id === regular.id && cv.work.summary === 'Shared summary' && cv.series.edition === 'colored' && cv.books.length === 1 && cv.editions.length === 2,
+    'a version shows the work’s shared title and metadata (the Regular version’s), with its own chapters');
+
   console.log(`\nALL ${passed} FILE MANAGEMENT CHECKS PASSED`);
   srv.kill();
   process.exit(0);

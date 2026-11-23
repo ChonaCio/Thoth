@@ -88,6 +88,21 @@ const work = async t => (await call('GET', '/api/series?limit=50')).data.items.f
   await meta.identify('w1', [{ provider: 'mangadex', id: 'md-1' }, { provider: 'kitsu', id: 'k-9' }, { provider: 'kitsu', id: 'k-10' }]);
   ok(x.provider.locked.length === 2 && x.provider.locked.find(l => l.provider === 'kitsu').id === 'k-10', 'Identify with several matches: one per site (the last pick for a site wins)');
   ok(calls.includes('mangadex:fetch:md-1') && calls.includes('kitsu:fetch:k-10') && calls.includes('anilist:fetch:30013'), 'all of them are read, even after the main fields were filled');
+  // Several sites in the background (a task), and every matched site's cover kept on disk for the Edit dialog
+  const fetchBefore = global.fetch;
+  const imgHits = [];
+  global.fetch = async (u, o) => (/img\.example/.test(String(u)) ? (imgHits.push(String(u)), new Response(png(4, 4, [1, 2, 3], 1), { headers: { 'Content-Type': 'image/png' } })) : fetchBefore(u, o));
+  const tasks = require(path.join(APP, 'library', 'tasks.js'));
+  const bg = await meta.identify('w1', [{ provider: 'mangadex', id: 'md-2' }, { provider: 'kitsu', id: 'k-11' }], { background: true });
+  ok(bg && bg.task && tasks.get(bg.task).status === 'running', 'Identify with several sites answers at once: it runs as a task');
+  const ended = await until(async () => { const tk = tasks.get(bg.task); return tk.status !== 'running' && tk; });
+  ok(ended.status === 'done' && /matched on/.test(ended.summary) && /MangaDex/.test(ended.title), `…the task ends with what matched (${ended.summary})`);
+  const candDir = path.join(process.env.THOTH_DATA_DIR, 'covers', 'candidates');
+  ok(fs.existsSync(candDir) && fs.readdirSync(candDir).length >= 3, `every matched site's cover is downloaded when matched (${fs.existsSync(candDir) ? fs.readdirSync(candDir).length : 0} on disk)`);
+  imgHits.length = 0;
+  const preview = await meta.onlineCandidateImage(x, 'online:kitsu');
+  ok(preview && preview.type === 'image/png' && !imgHits.length, 'the Edit dialog’s cover choices come from the copies on disk (the site isn’t asked again)');
+  global.fetch = fetchBefore;
   ok(x.provider.matches.length === 3 && x.provider.links.length === 3, 'every match is kept, with its address');
   delete x.overrides.links;
   store.touch(); // (a direct change in a test: say so, as a save would)
