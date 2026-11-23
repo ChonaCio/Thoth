@@ -147,7 +147,9 @@ async function handleApi(req, res, url) {
       send: (status, data) => { sendJson(res, status, data); return true; }
     });
     if (handled) return;
-    return sendJson(res, 404, { error: 'notFound' });
+    // An API route this server doesn't have: usually the page is newer than the running server
+    // (updated files, server not restarted yet). Distinct from "that item doesn't exist".
+    return sendJson(res, 404, { error: 'unknownEndpoint', message: `This server has no ${method} ${url.pathname}.` });
   } catch (e) {
     if (!e.status || e.status >= 500) console.error('[api]', e.message);
     if (res.headersSent) return res.destroy();

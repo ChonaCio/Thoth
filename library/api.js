@@ -119,27 +119,31 @@ function splitByEdition(list) {
   return [main, ...separate];
 }
 function editionSummary(v) {
-  return { id: v.id, edition: v.edition, booksCount: v.booksCount, booksRead: v.booksRead, booksInProgress: v.booksInProgress, oneshot: v.oneshot, coverBookId: v.coverBookId };
+  return { id: v.id, edition: v.edition, title: v.title, libraryId: v.libraryId, libraryName: v.libraryName,
+    booksCount: v.booksCount, booksRead: v.booksRead, booksInProgress: v.booksInProgress, oneshot: v.oneshot, coverBookId: v.coverBookId };
 }
-function groupWorks(views) {
+// preferLibrary: on a library's page, the card shows the version that lives in that library
+function groupWorks(views, preferLibrary) {
   const works = new Map();
   for (const v of views) {
     if (!works.has(v.workKey)) works.set(v.workKey, []);
     works.get(v.workKey).push(v);
   }
   return [...works.values()].flatMap(splitByEdition).map(list => {
-    const work = Object.assign({}, list[0]);
+    const shown = (preferLibrary && list.find(v => v.libraryId === preferLibrary)) || list[0];
+    const work = Object.assign({}, shown);
+    work.workTitle = list[0].title; // the Regular (or first) version's title names the work
     work.editions = list.map(editionSummary);
     work.created = list.reduce((m, v) => (v.created > m ? v.created : m), work.created);
     work.updated = list.reduce((m, v) => (v.updated > m ? v.updated : m), work.updated);
     return work;
   });
 }
-// Every version of the work a series belongs to (same library, same title)
+// Every version of the work a series belongs to, in any library this user may see
 function editionsOf(s, user) {
   const key = store.seriesMeta(s).workKey;
   const groups = splitByEdition(Object.values(db.series)
-    .filter(x => x.libraryId === s.libraryId && store.seriesMeta(x).workKey === key)
+    .filter(x => store.canAccessLibrary(user, x.libraryId) && store.seriesMeta(x).workKey === key)
     .map(x => store.seriesView(x, user)));
   return (groups.find(g => g.some(v => v.id === s.id)) || []).map(editionSummary);
 }
@@ -149,9 +153,12 @@ function listSeries(user, q) {
   const library = q.get('library');
   const term = searchable(q.get('q'));
   const read = q.get('read');
+  // Group across every library the user can see (versions may live in different libraries), then keep
+  // the works that have a version in the requested library
   let items = groupWorks(Object.values(db.series)
-    .filter(s => libs.has(s.libraryId) && (!library || s.libraryId === library))
-    .map(s => store.seriesView(s, user)));
+    .filter(s => libs.has(s.libraryId))
+    .map(s => store.seriesView(s, user)), library || null);
+  if (library) items = items.filter(w => w.editions.some(e => e.libraryId === library));
   if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term) || s.tags.some(t => searchable(t).includes(term)));
   if (read) items = items.filter(s => readState(s) === read);
   const sort = q.get('sort') || 'title';
@@ -342,7 +349,9 @@ async function handle(ctx) {
   if ((m = /^\/api\/series\/([\w-]+)$/.exec(p))) {
     const s = getSeries(user, m[1]);
     if (method === 'GET') {
-      return send(200, { series: store.seriesView(s, user, { admin }), editions: editionsOf(s, user), books: store.booksOf(s.id).map(b => store.bookView(b, user, { admin })),
+      const editions = editionsOf(s, user);
+      return send(200, { series: store.seriesView(s, user, { admin }), editions, workTitle: editions.length ? editions[0].title : store.seriesView(s, user).title,
+        books: store.booksOf(s.id).map(b => store.bookView(b, user, { admin })),
         collections: Object.values(db.collections).filter(c => c.seriesIds.includes(s.id)).map(c => ({ id: c.id, name: c.name })) });
     }
     if (method === 'PATCH') {

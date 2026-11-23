@@ -89,7 +89,7 @@
     return '<div class="media-card">' +
       '<a class="media-card__link" href="' + href + '">' +
         '<div class="cover">' + seriesCoverHtml(s) + badge + '</div>' +
-        '<div class="media-card__title" title="' + esc(s.title) + '">' + esc(s.title) + '</div>' +
+        '<div class="media-card__title" title="' + esc(s.workTitle || s.title) + '">' + esc(s.workTitle || s.title) + '</div>' +
         '<div class="media-card__sub">' + esc(cardSubtitle(s)) + '</div>' +
       '</a>' +
       (opts.remove ? '<button class="media-card__remove icon-btn icon-btn--sm" data-lib="' + opts.remove + '" data-id="' + s.id + '" data-icon="close" title="' + esc(t('coll.remove')) + '" aria-label="' + esc(t('coll.remove')) + '"></button>' : '') +
@@ -246,7 +246,7 @@
     return list.length ? '<div class="chips">' + list.map(function (x) { return '<span class="chip ' + (cls || '') + '">' + x + '</span>'; }).join('') + '</div>' : '';
   }
   var series = {
-    title: function (route) { var d = cache.series[route.param]; return d && d.series ? d.series.title : ''; },
+    title: function (route) { var d = cache.series[route.param]; return d && d.series ? d.workTitle || d.series.title : ''; },
     render: function (route) {
       var d = cache.series[route.param];
       if (!d) return spinner;
@@ -269,16 +269,17 @@
         ? '<nav class="tabs" aria-label="' + esc(t('series.versions')) + '">' + editions.map(function (e) {
             var active = e.id === s.id;
             var done = e.booksCount && e.booksRead === e.booksCount;
+            var otherLib = e.libraryId !== s.libraryId ? ' <span class="tab__lib">' + esc(e.libraryName) + '</span>' : '';
             return '<a class="tab' + (active ? ' is-active' : '') + '" href="#series/' + e.id + '"' + (active ? ' aria-current="page"' : '') + '>' +
-              esc(editionLabel(e.edition)) + '<span class="tab__count">' + (done ? icon('check') : e.booksCount) + '</span></a>';
+              esc(editionLabel(e.edition)) + otherLib + '<span class="tab__count">' + (done ? icon('check') : e.booksCount) + '</span></a>';
           }).join('') + '</nav>'
         : '';
       return backLink('#library/' + s.libraryId, s.libraryName) + tabs +
         '<div class="detail">' +
           '<div class="detail__cover cover cover--large">' + seriesCoverHtml(s) + '</div>' +
           '<div class="detail__body">' +
-            (s.edition !== 'base' ? '<p class="detail__eyebrow">' + esc(editionLabel(s.edition)) + '</p>' : '') +
-            '<h1 class="detail__title">' + esc(s.title) + '</h1>' +
+            (editions.length > 1 || s.edition !== 'base' ? '<p class="detail__eyebrow">' + esc(editionLabel(s.edition)) + '</p>' : '') +
+            '<h1 class="detail__title">' + esc(d.workTitle || s.title) + '</h1>' +
             '<div class="detail__meta">' + meta.join('<span class="dot">·</span>') + '</div>' +
             progressLine +
             chips(s.tags.map(esc)) +
@@ -670,7 +671,12 @@
         return api('GET', '/api/processes').then(function (r) {
           cache.processes = r;
           A().setRestartNeeded(r.server.restartNeeded);
-        }, function (e) { cache.processes = cache.processes || { error: e }; throw e; });
+        }, function (e) {
+          // An older server answers "not found" for this page's API: it needs a restart to load the new code
+          if (e && e.status === 404) e = { code: 'unknownEndpoint', status: 404 };
+          cache.processes = { error: e };
+          throw e;
+        });
       }).then(function () {
         // Live view: refresh every 2 seconds while the page is open
         procTimer = setTimeout(function () { if (location.hash === route.hash) processes.enter(route); }, 2000);

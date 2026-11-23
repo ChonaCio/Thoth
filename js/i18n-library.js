@@ -613,6 +613,35 @@
     'err.notSupervised': 'O servidor não roda sob systemd nem Docker, então não pode se reiniciar sozinho.'
   });
 
+  // Errors: generic "not found", and a server older than the page
+  add('en', {
+    'err.notFound': "It doesn't exist anymore. It may have been deleted.",
+    'err.unknownEndpoint': "The server is running an older version than this page, so it doesn't have this feature yet. Restart the Thoth server (for example: sudo systemctl restart thoth, or docker compose restart), then reload this page."
+  });
+  add('es', {
+    'err.notFound': 'Ya no existe. Puede que se haya eliminado.',
+    'err.unknownEndpoint': 'El servidor ejecuta una versión más antigua que esta página, así que aún no tiene esta función. Reinicia el servidor de Thoth (por ejemplo: sudo systemctl restart thoth o docker compose restart) y recarga esta página.'
+  });
+  add('fr', {
+    'err.notFound': 'Cet élément n’existe plus. Il a peut-être été supprimé.',
+    'err.unknownEndpoint': 'Le serveur exécute une version plus ancienne que cette page et n’a donc pas encore cette fonction. Redémarrez le serveur Thoth (par exemple : sudo systemctl restart thoth ou docker compose restart), puis rechargez la page.'
+  });
+  add('de', {
+    'err.notFound': 'Das gibt es nicht mehr. Es wurde möglicherweise gelöscht.',
+    'err.unknownEndpoint': 'Der Server läuft mit einer älteren Version als diese Seite und hat diese Funktion noch nicht. Starte den Thoth-Server neu (z. B. sudo systemctl restart thoth oder docker compose restart) und lade die Seite neu.'
+  });
+  add('pt', {
+    'err.notFound': 'Isso não existe mais. Pode ter sido excluído.',
+    'err.unknownEndpoint': 'O servidor está rodando uma versão mais antiga que esta página, então ainda não tem este recurso. Reinicie o servidor do Thoth (por exemplo: sudo systemctl restart thoth ou docker compose restart) e recarregue a página.'
+  });
+
+  // Version names: "Regular" for the plain version
+  add('en', { 'edition.base': 'Regular', 'edit.editionHelp': 'Detected from folder names like "One Piece (Colored)". Versions of the same work are shown together as tabs, even across libraries.' });
+  add('es', { 'edition.base': 'Normal', 'edit.editionHelp': 'Se detecta en nombres de carpeta como «One Piece (Colored)». Las versiones de la misma obra se muestran juntas en pestañas, incluso entre bibliotecas.' });
+  add('fr', { 'edition.base': 'Normale', 'edit.editionHelp': 'Détectée à partir de noms de dossier comme « One Piece (Colored) ». Les versions d’une même œuvre sont regroupées en onglets, même entre bibliothèques.' });
+  add('de', { 'edition.base': 'Standard', 'edit.editionHelp': 'Wird aus Ordnernamen wie „One Piece (Colored)" erkannt. Versionen desselben Werks werden als Tabs zusammen angezeigt, auch über Bibliotheken hinweg.' });
+  add('pt', { 'edition.base': 'Normal', 'edit.editionHelp': 'Detectada em nomes de pasta como "One Piece (Colored)". Versões da mesma obra aparecem juntas em abas, mesmo entre bibliotecas.' });
+
   // Singular forms
   add('en', { 'manage.unsupported1': "1 file skipped because its format isn't supported ({examples}).", 'manage.failed1': "1 book couldn't be opened. Its page shows an error." });
   add('es', { 'manage.unsupported1': '1 archivo omitido porque su formato no es compatible ({examples}).', 'manage.failed1': 'No se pudo abrir 1 libro. Su página muestra un error.' });

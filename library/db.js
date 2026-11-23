@@ -75,8 +75,11 @@ const newId = () => crypto.randomBytes(8).toString('hex');
 const stableId = (...parts) => crypto.createHash('sha1').update(parts.join('\0')).digest('hex').slice(0, 16);
 
 /* ---------------- versions of a work ----------------
- * "Work", "Work (Colored)", "Work [Raw]", "Work (Uncensored)", "Work (Animated)" are versions of the
- * work "Work". Each version is its own series (own folder, books and progress); the browser groups them.
+ * "One Piece", "One Piece (Colored)", "One Piece [Raw]", "One Piece (Uncensored)", "One Piece (Animated)"
+ * are versions of the work "One Piece": Regular (stored as 'base'), Colored, Raw, Uncensored, Animated.
+ * Each version is its own series (own folder, books and progress); the browser shows them as one work
+ * with a tab per version. Grouping uses the folder/file name, so it works even when ComicInfo.xml names
+ * the versions differently, and across libraries.
  */
 const EDITIONS = ['base', 'colored', 'raw', 'uncensored', 'animated'];
 const EDITION_WORDS = [
@@ -84,7 +87,7 @@ const EDITION_WORDS = [
   [/^raw$/i, 'raw'],
   [/^(uncensored|uncen)$/i, 'uncensored'],
   [/^(animated|motion)$/i, 'animated'],
-  [/^(base|original)$/i, 'base']
+  [/^(regular|normal|base|original)$/i, 'base']
 ];
 // "Work (Colored)" → { title: 'Work', edition: 'colored' }; no recognized suffix → edition null
 function splitEdition(name) {
@@ -96,15 +99,16 @@ function splitEdition(name) {
 /* ---------------- metadata (scanned values + admin overrides) ---------------- */
 function seriesMeta(s) {
   const m = Object.assign({}, s.meta || {}, s.overrides || {});
-  // Version: admin override, else a suffix on the title or on the folder/file name, else Base
+  // Version: admin override, else a suffix on the folder/file name, else on the title, else Regular
   const fromTitle = splitEdition(m.title || s.name);
   const fromName = splitEdition(s.name);
-  const edition = EDITIONS.includes(m.edition) ? m.edition : (fromTitle.edition || fromName.edition || 'base');
+  const edition = EDITIONS.includes(m.edition) ? m.edition : (fromName.edition || fromTitle.edition || 'base');
   const title = fromTitle.title || s.name;
   return {
     title,
     edition,
-    workKey: s.libraryId + '\0' + title.toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(),
+    // The work = the folder/file name without its version suffix ("One Piece (Colored)" → "one piece")
+    workKey: (fromName.title || s.name).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim(),
     sortTitle: m.sortTitle || title,
     summary: m.summary || '',
     status: m.status || 'unknown', // ongoing | ended | hiatus | abandoned | unknown

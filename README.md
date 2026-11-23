@@ -77,19 +77,24 @@ instead (e.g. `One-shots`, relative to the library folder) or turn it off, in wh
 library folder are grouped into one series named after the library. Changing it rescans the library;
 reading progress is kept.
 
-**Versions of a work.** When you keep several versions of the same work, name them with a suffix in
-parentheses or brackets: `Work`, `Work (Colored)`, `Work (Raw)`, `Work (Uncensored)`, `Work (Animated)`.
-They're grouped into one card ("2 versions"), and the work's page has a tab per version, in the order
-Base, Colored, Raw, Uncensored, Animated. Each version keeps its own books, progress and metadata.
-Recognized suffixes (any case): Colored/Coloured/Color/Full Color, Raw, Uncensored/Uncen, Animated/Motion,
-Base/Original; anything else, like `(2019)`, stays part of the title. This works for series folders and
-one-shot files alike. If a version is detected wrongly, an administrator can set it in the series' **Edit** dialog.
+**Versions of a work.** When you keep several versions of the same work, name the folders with a suffix in
+parentheses or brackets: `One Piece`, `One Piece (Colored)`, `One Piece (Raw)`, `One Piece (Uncensored)`,
+`One Piece (Animated)`. They're combined into one work "One Piece" (one card, "2 versions"), and its page has a
+tab per version, in the order **Regular, Colored, Raw, Uncensored, Animated**; each tab lists that version's
+chapters/books, with its own progress and metadata.
+- Grouping uses the **folder (or one-shot file) name**, so it works even if `ComicInfo.xml` inside the
+  versions names them differently. Versions may also live in **different libraries**; a user only sees the
+  versions in libraries they can access.
+- Recognized suffixes (any case): Regular/Normal/Original, Colored/Coloured/Color/Full Color, Raw,
+  Uncensored/Uncen, Animated/Motion. Anything else, like `(2019)`, stays part of the name.
+- Two folders with the same name *and* the same version (two Regular `One Piece` folders) are not merged; the
+  second gets its own card. If a version is detected wrongly, an administrator can set it in the series' **Edit** dialog.
 
 ```
 /srv/comics/
-  Work/                      ← Base tab
-  Work (Colored)/            ← Colored tab
-  Work [Raw]/                ← Raw tab
+  One Piece/                 ← "Regular" tab
+  One Piece (Colored)/       ← "Colored" tab
+  One Piece [Raw]/           ← "Raw" tab
 ```
 
 **Two kinds of scan.** *Scan changes* reads only new and changed files (by size and modification time)
