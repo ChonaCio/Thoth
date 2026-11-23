@@ -13,7 +13,7 @@ const path = require('path');
 const store = require('../db');
 const config = require('../../config');
 const crypto = require('crypto');
-const { PROVIDERS, BY_ID, matchScore } = require('./providers');
+const { PROVIDERS, BY_ID, matchScore, normTitle, fromUrl } = require('./providers');
 const local = require('./local');
 
 const { db } = store;
@@ -98,6 +98,11 @@ async function sourceIndex(src) {
   return index;
 }
 const relOf = (src, file) => path.relative(src.folder, file).split(path.sep).join('/');
+
+// Every folder source's index in memory (e.g. after a restart, before anything applied them)
+async function warmIndexes() {
+  for (const src of folderSources()) if (!indexCache.has(src.id)) { try { await sourceIndex(src); } catch { /* folder gone */ } }
+}
 
 async function applyLocal(libraryId, onlySeriesId) {
   const t0 = Date.now();
@@ -247,7 +252,7 @@ async function checkSource(id) {
   for (const [, e] of jsonKeys) {
     if (e.error && errors.length < 20) errors.push({ file: relOf(src, e.json), error: e.error });
   }
-  const unused = jsonKeys.filter(([k]) => !used.has(k)).map(([, e]) => path.relative(src.folder, e.json).split(path.sep).join('/'));
+  const unused = jsonKeys.filter(([k, e]) => !used.has(k) && !e.error).map(([, e]) => path.relative(src.folder, e.json).split(path.sep).join('/'));
   let folderOk = true;
   try { await fs.promises.access(src.folder, fs.constants.R_OK); } catch { folderOk = false; }
   return { id, folderOk, files: jsonKeys.length, truncated: index.truncated, jsonRead: index.parsed, jsonReused: index.reused, libraries, unused: unused.slice(0, 20), unusedCount: unused.length,
@@ -264,12 +269,35 @@ function yearHint(s) {
   for (const b of store.booksOf(s.id)) { const y = /^(\d{4})/.exec(store.bookMeta(b).releaseDate || ''); if (y) return Number(y[1]); }
   return undefined;
 }
-async function bestMatch(provider, query, year) {
-  const results = await provider.search(query, keys());
+// Every title the work is known by: its main title first, then its alternative titles (from its own edits,
+// folder sources, ComicInfo.xml or an earlier online match), without repeats
+const MAX_TITLES = 8, MAX_QUERIES = 3;
+function titlesFor(s) {
+  const main = queryFor(s);
+  const out = [main], seen = new Set([normTitle(main)]);
+  for (const t of store.seriesMeta(s).altTitles || []) {
+    const k = normTitle(t);
+    if (!k || seen.has(k)) continue;
+    seen.add(k);
+    out.push(t);
+    if (out.length >= MAX_TITLES) break;
+  }
+  return out;
+}
+// The best result of a site for a work. Each result is compared with ALL of the work's titles (the best
+// comparison counts), against the result's title and its alternative titles. The site is searched with the
+// main title first; if nothing matches well enough, with the next alternative titles (up to MAX_QUERIES
+// searches). `via` = the title whose search found it.
+async function bestMatch(provider, titles, year) {
+  if (!Array.isArray(titles)) titles = [titles];
   let best = null;
-  for (const r of results) {
-    const score = matchScore(query, r, year);
-    if (score >= MATCH_THRESHOLD && (!best || score > best.score)) best = Object.assign({ score }, r);
+  for (let i = 0; i < titles.length && i < MAX_QUERIES; i++) {
+    const results = await provider.search(titles[i], keys());
+    for (const r of results) {
+      const score = Math.max(...titles.map(t => matchScore(t, r, year)));
+      if (score >= MATCH_THRESHOLD && (!best || score > best.score)) best = Object.assign({ score, via: titles[i] }, r);
+    }
+    if (best) break;
   }
   return best;
 }
@@ -337,25 +365,87 @@ async function localCoverImages(s) {
 // The picker's second step: the enabled online sites that weren't asked during the lookup (it stops once
 // the main fields are filled) are searched now for this work's title, in parallel, a few seconds at most.
 // Found covers are remembered with the work's other candidates.
+// Only ordinary web addresses: no other protocols, nothing on this machine or the local network
+function publicUrl(url) {
+  let u;
+  try { u = new URL(url); } catch { return false; }
+  if (!/^https?:$/.test(u.protocol)) return false;
+  const h = u.hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.local') || h.endsWith('.internal') || !h.includes('.') && !h.includes(':')) return false;
+  if (/^(127\.|10\.|0\.|169\.254\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.)/.test(h)) return false;
+  if (/^(::1?|f[cd][0-9a-f]{2}:|fe80:)/.test(h)) return false;
+  return true;
+}
+// The image a web page offers for sharing (og:image / twitter:image), or null. Reads at most 512 KB of it.
+async function pageImage(url) {
+  if (!publicUrl(url)) return null;
+  const res = await fetch(url, { headers: { 'User-Agent': 'Thoth-Library-Server/1.0', Accept: 'text/html' }, signal: AbortSignal.timeout(8000), redirect: 'follow' });
+  if (!res.ok || !/html/i.test(res.headers.get('content-type') || '')) return null;
+  const reader = res.body.getReader();
+  let html = '', size = 0;
+  while (size < 512 * 1024) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.length;
+    html += Buffer.from(value).toString('utf8');
+    if (/<\/head>/i.test(html)) break;
+  }
+  try { reader.cancel(); } catch { /* done */ }
+  for (const name of ['og:image:secure_url', 'og:image:url', 'og:image', 'twitter:image', 'twitter:image:src']) {
+    const re1 = new RegExp(`<meta[^>]+(?:property|name)=["']${name.replace(/:/g, '\\:')}["'][^>]*content=["']([^"']+)["']`, 'i');
+    const re2 = new RegExp(`<meta[^>]+content=["']([^"']+)["'][^>]*(?:property|name)=["']${name.replace(/:/g, '\\:')}["']`, 'i');
+    const m = re1.exec(html) || re2.exec(html);
+    if (m) {
+      try {
+        const img = new URL(m[1].replace(/&amp;/g, '&'), res.url || url).href;
+        return publicUrl(img) ? img : null;
+      } catch { return null; }
+    }
+  }
+  return null;
+}
+// Covers from the work's links: a link to a metadata site → that entry's cover (no search needed); any other
+// page → the image it offers for sharing. Each link is tried once per picker opening, a few seconds at most.
+async function linkCovers(s, have) {
+  const found = [];
+  await Promise.all(store.seriesMeta(s).links.slice(0, 10).map(async url => {
+    const x = fromUrl(url);
+    try {
+      if (x) {
+        const provider = BY_ID[x.provider];
+        if (have.has(x.provider) || (provider.needsKey && !keys()[provider.needsKey])) return;
+        const m = await Promise.race([provider.fetch(x.id, keys()), new Promise(resolve => setTimeout(() => resolve(null), 8000))]);
+        if (m && m.cover) { found.push({ provider: x.provider, url: m.cover, page: url }); have.add(x.provider); }
+      } else {
+        const key = 'web:' + new URL(url).hostname.replace(/^www\./, '');
+        if (have.has(key)) return;
+        const img = await pageImage(url);
+        if (img) { found.push({ provider: key, url: img, page: url }); have.add(key); }
+      }
+    } catch { /* that page is unavailable; skip it */ }
+  }));
+  return found;
+}
 async function searchMoreCovers(s) {
   const p = s.provider = s.provider || {};
   const have = new Set((p.coverCandidates || []).map(c => c.provider));
-  const query = queryFor(s), year = yearHint(s);
+  // The work's links first (exact), then a search on the enabled sites still missing
+  const fromLinks = await linkCovers(s, have);
+  if (fromLinks.length) p.coverCandidates = (p.coverCandidates || []).concat(fromLinks);
+  const titles = titlesFor(s), year = yearHint(s);
   const ids = librarySettings(db.libraries[s.libraryId]).providers.filter(x => x.enabled && BY_ID[x.id] && !have.has(x.id)).map(x => x.id);
   const found = [];
   await Promise.all(ids.map(async pid => {
     const provider = BY_ID[pid];
     if (provider.needsKey && !keys()[provider.needsKey]) return;
     try {
-      const best = await Promise.race([bestMatch(provider, query, year), new Promise(resolve => setTimeout(() => resolve(null), 8000))]);
+      const best = await Promise.race([bestMatch(provider, titles, year), new Promise(resolve => setTimeout(() => resolve(null), 8000))]);
       if (best && best.cover) found.push({ provider: pid, url: best.cover });
     } catch { /* that site is unavailable; skip it */ }
   }));
-  if (found.length) {
-    p.coverCandidates = (p.coverCandidates || []).concat(found);
-    store.saveLibrary();
-  }
-  return found.length;
+  if (found.length) p.coverCandidates = (p.coverCandidates || []).concat(found);
+  if (found.length || fromLinks.length) store.saveLibrary();
+  return found.length + fromLinks.length;
 }
 async function coverCandidates(s, { search = false } = {}) {
   if (search) await searchMoreCovers(s);
@@ -368,7 +458,7 @@ async function coverCandidates(s, { search = false } = {}) {
   for (const c of p.coverCandidates || (p.coverUrl ? [{ provider: p.coverProvider, url: p.coverUrl }] : [])) {
     if (!c.url || seen.has(c.url)) continue;
     seen.add(c.url);
-    out.push({ id: 'online:' + c.provider, kind: 'online', provider: c.provider, url: c.url });
+    out.push({ id: 'online:' + c.provider, kind: 'online', provider: c.provider, url: c.url, page: c.page || null });
   }
   for (const img of await localCoverImages(s)) out.push({ id: 'local:' + img.sourceId + ':' + img.rel, kind: 'local', sourceName: img.sourceName, rel: img.rel });
   if (s.customCover) out.push({ id: 'custom', kind: 'custom', from: s.customCover.from });
@@ -464,33 +554,46 @@ async function refreshSeries(seriesId, cur) {
     step('folder');
     try { await applyLocal(s.libraryId, s.id); } catch (e) { console.error('[metadata] folder sources:', e.message); }
     const query = queryFor(s);
+    const titles = titlesFor(s); // the main title and the alternative titles
     const year = yearHint(s);
-    const locked = s.provider && s.provider.locked;
+    // Matches picked by hand (Identify; one per site, several sites possible), and the work's links that point
+    // at a site's entry (from its JSON files, edits or earlier matches): those sites need no search
+    const locked = lockList(s.provider && s.provider.locked);
+    const linked = {};
+    for (const url of store.seriesMeta(s).links) {
+      const x = fromUrl(url);
+      if (x && !linked[x.provider]) linked[x.provider] = x.id;
+    }
     const merged = {}, sources = {}, matches = [], errors = [], covers = [];
+    let coreDone = false;
     for (const { id: pid, enabled } of settings.providers) {
       const provider = BY_ID[pid];
       if (!provider) continue; // a folder source (applied above)
-      const isLocked = locked && locked.provider === pid;
-      if (!enabled && !isLocked) continue;
+      const lock = locked.find(l => l.provider === pid);
+      const linkId = linked[pid];
+      if (!enabled && !lock) continue;
+      // Once the main fields are filled, only sites matched by hand or by a link are still read (to keep them all)
+      if (coreDone && !lock && !linkId) continue;
       if (provider.needsKey && !keys()[provider.needsKey]) continue;
       step('searching', pid);
       try {
-        let id, score = 1;
-        if (isLocked) id = locked.id;
+        let id, score = 1, via = null;
+        if (lock) id = lock.id;
+        else if (linkId) { id = linkId; via = 'link'; }
         else {
-          const best = await bestMatch(provider, query, year);
+          const best = await bestMatch(provider, titles, year);
           if (!best) continue;
-          id = best.id; score = best.score;
+          id = best.id; score = best.score; via = best.via;
         }
         const m = await provider.fetch(id, keys());
         if (!m) continue;
-        matches.push({ provider: pid, id: String(m.id || id), title: m.title, url: m.url, score, locked: Boolean(isLocked) });
+        matches.push({ provider: pid, id: String(m.id || id), title: m.title, url: m.url, score, via, locked: Boolean(lock) });
         for (const f of FIELDS) if (!has(merged[f]) && has(m[f])) { merged[f] = m[f]; sources[f] = pid; }
         if (m.cover) covers.push({ url: m.cover, provider: pid });
       } catch (e) {
         errors.push(e.message);
       }
-      if (CORE.every(f => has(merged[f]))) break;
+      if (CORE.every(f => has(merged[f]))) coreDone = true;
     }
     // Cover: part of the check. Downloaded once to data/covers/ (unless the library never uses metadata
     // covers); if the first source's image can't be downloaded, the next source's is tried.
@@ -518,7 +621,7 @@ async function refreshSeries(seriesId, cur) {
     if (!current) return null;
     const now = new Date().toISOString();
     const next = {
-      query, locked: locked || null, matches, sources, errors,
+      query, locked: locked.length ? locked : null, matches, sources, errors,
       merged: Object.fromEntries(Object.entries(merged).filter(([k]) => k !== 'cover')),
       coverUrl: coverUrl || null, coverFile: coverFile || null, coverProvider: coverProvider || null,
       coverCandidates: covers, // every matched site's cover image (choices in the Edit dialog)
@@ -526,7 +629,13 @@ async function refreshSeries(seriesId, cur) {
     };
     // Delta: the work only counts as updated (sort "Recently updated", cover cache) when something changed
     const old = current.provider || {};
-    const strip = p => JSON.stringify(Object.assign({}, p, { fetchedAt: undefined, checkedAt: undefined, errors: undefined }));
+    // Only the data counts: which entries matched (not how they were found or their scores), the merged
+    // values, the cover and the links
+    const strip = p => JSON.stringify({
+      matches: (p.matches || []).map(m => m.provider + ':' + m.id).sort(),
+      merged: p.merged || null, sources: p.sources || null, coverUrl: p.coverUrl || null, coverFile: p.coverFile || null,
+      links: (p.links || []).map(l => l.url).sort(), locked: p.locked || null
+    });
     const changed = strip(old) !== strip(next) || (next.coverFile && next.coverFile !== old.coverFile);
     current.provider = Object.assign(next, { fetchedAt: changed || !old.fetchedAt ? now : old.fetchedAt, checkedAt: now });
     if (changed) current.updated = now;
@@ -553,7 +662,9 @@ async function searchForSeries(seriesId, query, onlyProvider) {
     if (!p) return;
     if (p.needsKey && !keys()[p.needsKey]) { errors.push(`${p.name}: needs an API key (Server settings)`); return; }
     try {
-      for (const r of await p.search(q, keys())) results.push(Object.assign({ provider: pid, providerName: p.name, score: matchScore(q, r, yearHint(s)) }, r));
+      // Ranked against the searched text and every title the work is known by
+      const all = [q].concat(titlesFor(s));
+      for (const r of await p.search(q, keys())) results.push(Object.assign({ provider: pid, providerName: p.name, score: Math.max(...all.map(x => matchScore(x, r, yearHint(s)))) }, r));
     } catch (e) { errors.push(e.message); }
   }));
   const order = Object.fromEntries(ids.map((id, i) => [id, i]));
@@ -571,11 +682,23 @@ async function testSearch(providerId, query) {
   return { ms: Date.now() - t0, items: results.slice(0, 8) };
 }
 
-async function identify(seriesId, providerId, id) {
+// Matches picked by hand: older data has one { provider, id }, now a list (one per site)
+function lockList(v) {
+  return [].concat(v || []).filter(x => x && BY_ID[x.provider] && x.id).map(x => ({ provider: x.provider, id: String(x.id) }));
+}
+// picks: [{ provider, id }] — the matches chosen in the Identify dialog (several sites at once are fine; one
+// per site, the last one wins). They replace earlier hand-picked matches and are kept for later refreshes.
+async function identify(seriesId, picks) {
   const s = db.series[seriesId];
   if (!s) throw Object.assign(new Error('Series not found'), { status: 404, code: 'notFound' });
-  if (!BY_ID[providerId] || !id) throw Object.assign(new Error('Unknown provider'), { status: 400, code: 'invalid' });
-  s.provider = Object.assign({}, s.provider || {}, { locked: { provider: providerId, id: String(id) } });
+  const bySite = {};
+  for (const p of [].concat(picks || [])) {
+    if (!p || !BY_ID[p.provider] || !p.id) throw Object.assign(new Error('Unknown provider'), { status: 400, code: 'invalid' });
+    bySite[p.provider] = { provider: p.provider, id: String(p.id).slice(0, 100) };
+  }
+  const list = Object.values(bySite);
+  if (!list.length) throw Object.assign(new Error('Nothing picked'), { status: 400, code: 'invalid' });
+  s.provider = Object.assign({}, s.provider || {}, { locked: list });
   return refreshSeries(seriesId);
 }
 
@@ -680,6 +803,8 @@ function forgetSeries(s) { removeCover(s); const i = queue.indexOf(s.id); if (i 
 
 module.exports = {
   TYPES, COVER_MODES, MATCH_MODES: local.MATCH_MODES, providerList, librarySettings, parseLibrarySettings,
-  applyLocal, applyLocalEverywhere, sourceView, testSearch, coverCandidates, candidateFile, chooseCover, onlineCandidateImage, IMAGE_EXTS, folderSources, createSource, updateSource, removeSource, checkSource, BY_ID,
+  applyLocal, applyLocalEverywhere, sourceView, testSearch, coverCandidates, candidateFile, chooseCover, onlineCandidateImage, IMAGE_EXTS, indexCache, warmIndexes,
+  folderSources, createSource, updateSource, removeSource, checkSource, BY_ID,
+  bestMatch, titlesFor, publicUrl, pageImage, // (exported for tests)
   refreshSeries, searchForSeries, identify, clear, enqueueLibrary, afterScan, info, coverPath, forgetSeries
 };

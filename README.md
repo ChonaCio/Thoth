@@ -188,7 +188,9 @@ order them with the arrows.
 | Comic Vine | Western comics | required (off by default) |
 
 - **How results are combined.** For each work, the enabled sources are asked in order with the work's title
-  (the folder name without its version suffix). A result counts only if its title (or an alternative title)
+  (the folder name without its version suffix). Results are compared with **all** the titles the work is known
+  by (its alternative titles from your edits, folder-source JSON, `ComicInfo.xml` or an earlier match) and the best
+  comparison counts; if the main title finds nothing, the site is searched again with up to two alternative titles. A result counts only if its title (or an alternative title)
   is a close match; the publication year from the books breaks ties. The **first** good match fills each field
   (summary, status, year, type, publisher, authors, genres, tags, rating, cover, reading direction, age rating);
   later sources only fill fields still empty. It stops once the main fields are filled. **Genres** (Action,
@@ -201,15 +203,25 @@ order them with the arrows.
   whose files changed since their last check, matched works missing a cover, and works not checked for 30 days)
   and **Refresh all metadata** (every work again). A check that finds the same data doesn't mark the work as
   updated (so "Recently updated" only shows real changes). Every
-  work page has **Refresh metadata**, **Identify** (search the sites and pick the right match; it
-  sticks for future refreshes) and **Clear metadata**.
+  work page has **Refresh metadata**, **Identify** (search the sites and pick the right match, one per site;
+  you can pick several sites at once, e.g. AniList *and* Kitsu; the picks stick for future refreshes) and
+  **Clear metadata**. *Update metadata* (and *Refresh all*) first re-matches the library's folder-source JSON
+  files, so fixed or new JSON files are picked up right away.
+- **Links.** A work keeps the web addresses of its matches and shows one line per address on its page
+  (*Metadata from: AniList https://…*). They also come from folder-source JSON (`url`, `urls`, `link`, `links`,
+  `source`, `sources`, `web`) and can be edited (Edit → Links, one per line; your list replaces the others,
+  empty brings them back). A link to a known site (AniList, MangaDex, MangaUpdates, Kitsu, MyAnimeList, Open
+  Library, Google Books, Comic Vine) is used as an exact match: that entry is read directly, without searching.
+- **Covers from links.** The cover picker offers the cover of every linked site entry and, for any other page,
+  the image it publishes for sharing (`og:image`). Pages on this machine or the local network are never fetched.
 - **Covers** are downloaded as part of every metadata check (from the first source that has one; if that
   image fails, the next source's) and stored in `data/covers/`. Per library: show them only when the files
   have no cover page (default, e.g. PDFs), always, or never (never = not downloaded). Per work (Edit → Cover):
   library setting, first page, or downloaded cover. *Update metadata* also downloads covers still missing for
   matched works. The work page says where its cover came from.
 - **Rate limits.** Lookups run inside the web server, several works at once (Server settings, default 3), with
-  a pause between requests to the same site and automatic retries when a site says "too many requests". A big
+  a pause between requests to the same site and automatic retries when a site says "too many requests" (and one
+  retry when a connection fails). A big
   library takes a while the first time; the Processes page shows progress and time left.
 - **Privacy.** Only work titles (and, for Identify, what you type) are sent to the metadata sites, with a
   generic user agent. Nothing about your users or server is sent. Turn off every source of a library to keep
@@ -247,7 +259,9 @@ A **folder source** is a folder of JSON files you keep, matched to your files by
   - books also: `number` (or `chapter`, `issue`, `volume`), `summary`, `date`/`releaseDate`;
     works also: `summary`, `status` (ongoing/completed/hiatus/cancelled), `type` (manga, manhwa, …), `year`,
     `publisher`, `rating` (0–10 or 0–100), `ageRating`, `readingDirection` (rtl/ltr/continuous),
-    `altTitles`, `sortTitle`, `cover`. Other keys are ignored.
+    `altTitles`, `sortTitle`, `cover`, `url`/`links` (web addresses, see *Links* above). Other keys are ignored.
+- **Unreadable JSON files are ignored** (they're listed in *Check matches*); with two files of the same name, a
+  broken one never hides a good one.
 - **In memory:** a source's JSON files are read once and kept in memory (parsed); later runs only re-read
   files whose size or date changed, and matching works and books against them never touches the disk.
 - **Precedence:** your edits > folder sources > `ComicInfo.xml` > online sites. Several folder sources:
@@ -321,6 +335,31 @@ docker build -t thoth .
 docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
   -v thoth-app:/app -v /srv/comics:/media:ro thoth
 ```
+
+### Renaming files
+
+**Rename files** (sidebar, administrators) checks a library, or all of them, for book files whose names don't
+follow the usual format and suggests new names:
+
+| Now | Suggested |
+| --- | --- |
+| `chapter-0.cbz` | `Chapter 0.cbz` |
+| `chapter-1.1.cbz` | `Chapter 1.1.cbz` |
+| `chapter-1x1.cbz` | `Chapter 1x1.cbz` |
+| `chapter-1-chapter name.cbz` | `Chapter 1 - Chapter Name.cbz` |
+| `ch_12_the_end.cbz` / `Ch 12.cbz` | `Chapter 12 - The End.cbz` / `Chapter 12.cbz` |
+| `vol.3.cbz`, `ep-4.pdf`, `iss_5.cbz` | `Volume 3.cbz`, `Episode 4.pdf`, `Issue 5.cbz` |
+
+Names starting with chapter/chap/ch/c, volume/vol/v, episode/ep or issue + a number (`1`, `1.1`, `1x1`),
+optionally followed by a name, get the word capitalized and spelled out and the name in title case; anything
+else is left alone. The list is grouped by work; pick what to rename (all proposals are selected at first) and
+click *Rename selected*. Proposals whose new name already exists, or that two files would share, are shown
+but never applied.
+
+Renaming keeps everything attached to the book: reading progress and read lists move to the new name, and with
+*Also rename matching JSON files of folder sources* (on by default) `chapter-1.json` becomes `Chapter 1.json` so
+it still matches. A quick scan runs afterwards to put chapters in order. Files the server may not rename
+(read-only library folders) are reported.
 
 ### Editing a work
 

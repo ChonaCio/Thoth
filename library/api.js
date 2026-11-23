@@ -6,6 +6,7 @@ const path = require('path');
 const store = require('./db');
 const scanner = require('./scanner');
 const metadata = require('./metadata');
+const rename = require('./rename');
 const zip = require('./zip');
 
 const { db } = store;
@@ -500,6 +501,11 @@ async function handle(ctx) {
         const list = (Array.isArray(body[k]) ? body[k] : String(body[k] || '').split(',')).map(t => clean(t, 40)).filter(Boolean).slice(0, 50);
         if (list.length) o[k] = list; else delete o[k];
       }
+      if ('links' in body) {
+        const list = (Array.isArray(body.links) ? body.links : String(body.links || '').split(/\r?\n/)).map(t => clean(t, 500)).filter(Boolean).slice(0, 20);
+        if (list.some(u => !/^https?:\/\/\S+$/i.test(u))) throw httpError(400, 'invalidLink');
+        if (list.length) o.links = list; else delete o.links;
+      }
       if ('year' in body) {
         const y = String(body.year == null ? '' : body.year).trim();
         if (y && !/^\d{4}$/.test(y)) throw httpError(400, 'invalid');
@@ -550,6 +556,23 @@ async function handle(ctx) {
     if (!cover) throw httpError(404, 'noCover');
     await sendPage(req, res, cover, 1);
     return true;
+  }
+
+  // ---- renaming files (admins) ----
+  // GET  /api/rename/preview?library=<id|all>  → { checked, items: [{ bookId, from, to, fromName, toName, status, … }] }
+  // POST /api/rename/apply { items: [{ bookId, toName }], renameJson }
+  if (p === '/api/rename/preview' && method === 'GET') {
+    requireAdmin();
+    return send(200, rename.preview(q.get('library') || 'all'));
+  }
+  if (p === '/api/rename/apply' && method === 'POST') {
+    requireAdmin();
+    const items = (Array.isArray(body.items) ? body.items : []).slice(0, 5000).filter(x => x && typeof x.bookId === 'string');
+    const result = await rename.apply(items, { renameJson: body.renameJson !== false, metadata });
+    // Book order/numbers follow file names: let a quick scan put them in order (and refresh folder sources)
+    for (const id of result.libraries) scanner.scanLibrary(id, { mode: 'quick', reason: 'rename' }).catch(() => {});
+    console.log(`[library] ${user.username} renamed ${result.renamed} file(s)${result.json ? ` and ${result.json} JSON file(s)` : ''}; ${result.failed.length} failed`);
+    return send(200, result);
   }
 
   // ---- a work's cover (admins, Edit dialog) ----
@@ -656,10 +679,13 @@ async function handle(ctx) {
   if ((m = /^\/api\/libraries\/([\w-]+)\/metadata$/.exec(p)) && method === 'POST') {
     requireAdmin();
     if (!db.libraries[m[1]]) throw httpError(404, 'notFound');
-    // { mode: 'missing' } works never looked up; { mode: 'all' } every work again
+    // First the folder sources (JSON files): matched again for the whole library right away (local files,
+    // unreadable ones ignored). Then the online lookups are queued:
     // 'stale' (delta: new, changed or old), 'missing' (never looked up) or 'all' (everything again)
+    let folder = null;
+    try { folder = await metadata.applyLocal(m[1]); } catch (e) { console.error('[metadata] folder sources:', e.message); }
     const queued = metadata.enqueueLibrary(m[1], ['all', 'stale'].includes(body.mode) ? body.mode : 'missing');
-    return send(202, { queued, status: metadata.info() });
+    return send(202, { queued, folder, status: metadata.info() });
   }
   if ((m = /^\/api\/series\/([\w-]+)\/metadata(\/refresh|\/search|\/identify)?$/.exec(p))) {
     requireAdmin();
@@ -674,7 +700,10 @@ async function handle(ctx) {
       return send(200, await metadata.searchForSeries(s.id, clean(q.get('q'), 200), provider || null));
     }
     if (action === '/identify' && method === 'POST') {
-      await metadata.identify(s.id, String(body.provider || ''), clean(body.id, 100));
+      // { matches: [{ provider, id }, …] } (several sites at once), or the older { provider, id }
+      const picks = Array.isArray(body.matches) ? body.matches.slice(0, 20).map(x => ({ provider: String((x && x.provider) || ''), id: clean(x && x.id, 100) }))
+        : [{ provider: String(body.provider || ''), id: clean(body.id, 100) }];
+      await metadata.identify(s.id, picks);
       return send(200, { series: store.seriesView(db.series[s.id] || s, user, { admin }) });
     }
     if (action === '' && method === 'DELETE') {

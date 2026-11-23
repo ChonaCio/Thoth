@@ -1291,6 +1291,100 @@
     'err.confirmMismatch': 'O título digitado não confere.'
   });
 
+  // Links, several matches
+  add('en', {
+    'edit.links': 'Links', 'edit.linksHelp': 'One web address per line (its pages on metadata sites or elsewhere). Links to a metadata site are used as exact matches and to find covers.',
+    'meta.select': 'Select', 'meta.selected': 'Selected', 'meta.useSelected': 'Use selected ({count})', 'meta.picked': 'Picked: {names}',
+    'meta.identifyIntro': 'Search the metadata sites and pick the right match on each site you want (one per site, several sites at once). They’re used for this work from now on.',
+    'err.invalidLink': 'Links must be web addresses (https://…), one per line.'
+  });
+  add('es', {
+    'edit.links': 'Enlaces', 'edit.linksHelp': 'Una dirección web por línea (sus páginas en sitios de metadatos u otros). Los enlaces a un sitio de metadatos se usan como coincidencias exactas y para buscar portadas.',
+    'meta.select': 'Elegir', 'meta.selected': 'Elegida', 'meta.useSelected': 'Usar las elegidas ({count})', 'meta.picked': 'Elegidas: {names}',
+    'meta.identifyIntro': 'Busca en los sitios de metadatos y elige la coincidencia correcta en cada sitio que quieras (una por sitio, varios sitios a la vez). Se usarán para esta obra a partir de ahora.',
+    'err.invalidLink': 'Los enlaces deben ser direcciones web (https://…), una por línea.'
+  });
+  add('fr', {
+    'edit.links': 'Liens', 'edit.linksHelp': 'Une adresse web par ligne (ses pages sur des sites de métadonnées ou ailleurs). Les liens vers un site de métadonnées servent de correspondance exacte et à trouver des couvertures.',
+    'meta.select': 'Choisir', 'meta.selected': 'Choisie', 'meta.useSelected': 'Utiliser la sélection ({count})', 'meta.picked': 'Choisies : {names}',
+    'meta.identifyIntro': 'Cherchez sur les sites de métadonnées et choisissez la bonne correspondance sur chaque site voulu (une par site, plusieurs sites à la fois). Elles seront utilisées pour cette œuvre.',
+    'err.invalidLink': 'Les liens doivent être des adresses web (https://…), une par ligne.'
+  });
+  add('de', {
+    'edit.links': 'Links', 'edit.linksHelp': 'Eine Webadresse pro Zeile (seine Seiten auf Metadaten-Seiten oder anderswo). Links zu einer Metadaten-Seite werden als exakte Treffer und zur Cover-Suche genutzt.',
+    'meta.select': 'Wählen', 'meta.selected': 'Gewählt', 'meta.useSelected': 'Auswahl verwenden ({count})', 'meta.picked': 'Gewählt: {names}',
+    'meta.identifyIntro': 'Durchsuche die Metadaten-Seiten und wähle auf jeder gewünschten Seite den richtigen Treffer (einer pro Seite, mehrere Seiten gleichzeitig). Sie werden ab jetzt für dieses Werk verwendet.',
+    'err.invalidLink': 'Links müssen Webadressen sein (https://…), eine pro Zeile.'
+  });
+  add('pt', {
+    'edit.links': 'Links', 'edit.linksHelp': 'Um endereço web por linha (suas páginas em sites de metadados ou outros). Links para um site de metadados são usados como correspondências exatas e para achar capas.',
+    'meta.select': 'Escolher', 'meta.selected': 'Escolhida', 'meta.useSelected': 'Usar as escolhidas ({count})', 'meta.picked': 'Escolhidas: {names}',
+    'meta.identifyIntro': 'Pesquise nos sites de metadados e escolha a correspondência certa em cada site que quiser (uma por site, vários sites de uma vez). Elas serão usadas para esta obra daqui em diante.',
+    'err.invalidLink': 'Os links devem ser endereços web (https://…), um por linha.'
+  });
+
+  // Rename files
+  add('en', {
+    'nav.rename': 'Rename files', 'ren.intro': 'Finds book files whose names don’t follow the usual format and suggests new names. Review the list and rename the ones you pick; reading progress and read lists follow the files.',
+    'ren.rulesTitle': 'Naming rules', 'ren.rulesHelp': 'Files named chapter/chap/ch/c, volume/vol/v, episode/ep or issue + a number (1, 1.1, 1x1), optionally followed by a name, get a capitalized name. Other names are left alone.',
+    'ren.library': 'Library', 'ren.check': 'Check', 'ren.start': 'Choose a library and press Check.',
+    'ren.summary': '{checked} files checked · {count} to rename · {conflicts} with conflicts',
+    'ren.allGoodTitle': 'Nothing to rename', 'ren.allGood': 'Every file already follows the naming format.',
+    'ren.selectAll': 'Select all', 'ren.json': 'Also rename matching JSON files of folder sources', 'ren.apply': 'Rename selected ({count})',
+    'ren.confirm': 'Rename {count} files on the disk?', 'ren.done': '{count} files renamed.', 'ren.doneJson': '{count} JSON files renamed too.',
+    'ren.status.exists': 'A file with that name exists', 'ren.status.conflict': 'Two files would get this name',
+    'ren.err.changed': 'changed since the check; check again', 'ren.err.readOnly': 'the library folder is read-only', 'ren.err.noPermission': 'no permission to rename it',
+    'manage.reason.rename': 'after renaming files'
+  });
+  add('es', {
+    'nav.rename': 'Renombrar archivos', 'ren.intro': 'Busca archivos de libros cuyos nombres no siguen el formato habitual y propone nombres nuevos. Revisa la lista y renombra los que elijas; el progreso de lectura y las listas de lectura siguen a los archivos.',
+    'ren.rulesTitle': 'Reglas de nombres', 'ren.rulesHelp': 'Los archivos llamados chapter/chap/ch/c, volume/vol/v, episode/ep o issue + un número (1, 1.1, 1x1), opcionalmente seguido de un nombre, reciben un nombre con mayúsculas. Los demás nombres no se tocan.',
+    'ren.library': 'Biblioteca', 'ren.check': 'Comprobar', 'ren.start': 'Elige una biblioteca y pulsa Comprobar.',
+    'ren.summary': '{checked} archivos comprobados · {count} para renombrar · {conflicts} con conflictos',
+    'ren.allGoodTitle': 'Nada que renombrar', 'ren.allGood': 'Todos los archivos siguen ya el formato.',
+    'ren.selectAll': 'Seleccionar todo', 'ren.json': 'Renombrar también los JSON correspondientes de las fuentes de carpeta', 'ren.apply': 'Renombrar seleccionados ({count})',
+    'ren.confirm': '¿Renombrar {count} archivos en el disco?', 'ren.done': '{count} archivos renombrados.', 'ren.doneJson': 'También {count} archivos JSON.',
+    'ren.status.exists': 'Ya existe un archivo con ese nombre', 'ren.status.conflict': 'Dos archivos tendrían este nombre',
+    'ren.err.changed': 'cambió desde la comprobación; comprueba de nuevo', 'ren.err.readOnly': 'la carpeta de la biblioteca es de solo lectura', 'ren.err.noPermission': 'sin permiso para renombrarlo',
+    'manage.reason.rename': 'tras renombrar archivos'
+  });
+  add('fr', {
+    'nav.rename': 'Renommer des fichiers', 'ren.intro': 'Trouve les fichiers dont le nom ne suit pas le format habituel et propose de nouveaux noms. Vérifiez la liste et renommez ceux que vous choisissez ; la progression de lecture et les listes de lecture suivent les fichiers.',
+    'ren.rulesTitle': 'Règles de nommage', 'ren.rulesHelp': 'Les fichiers nommés chapter/chap/ch/c, volume/vol/v, episode/ep ou issue + un numéro (1, 1.1, 1x1), éventuellement suivi d’un nom, reçoivent un nom avec majuscules. Les autres noms ne sont pas modifiés.',
+    'ren.library': 'Bibliothèque', 'ren.check': 'Vérifier', 'ren.start': 'Choisissez une bibliothèque et appuyez sur Vérifier.',
+    'ren.summary': '{checked} fichiers vérifiés · {count} à renommer · {conflicts} en conflit',
+    'ren.allGoodTitle': 'Rien à renommer', 'ren.allGood': 'Tous les fichiers suivent déjà le format.',
+    'ren.selectAll': 'Tout sélectionner', 'ren.json': 'Renommer aussi les JSON correspondants des sources dossier', 'ren.apply': 'Renommer la sélection ({count})',
+    'ren.confirm': 'Renommer {count} fichiers sur le disque ?', 'ren.done': '{count} fichiers renommés.', 'ren.doneJson': 'Ainsi que {count} fichiers JSON.',
+    'ren.status.exists': 'Un fichier porte déjà ce nom', 'ren.status.conflict': 'Deux fichiers auraient ce nom',
+    'ren.err.changed': 'modifié depuis la vérification ; vérifiez à nouveau', 'ren.err.readOnly': 'le dossier de la bibliothèque est en lecture seule', 'ren.err.noPermission': 'pas le droit de le renommer',
+    'manage.reason.rename': 'après un renommage'
+  });
+  add('de', {
+    'nav.rename': 'Dateien umbenennen', 'ren.intro': 'Findet Buchdateien, deren Namen nicht dem üblichen Format folgen, und schlägt neue Namen vor. Prüfe die Liste und benenne die gewählten um; Lesefortschritt und Leselisten folgen den Dateien.',
+    'ren.rulesTitle': 'Namensregeln', 'ren.rulesHelp': 'Dateien namens chapter/chap/ch/c, volume/vol/v, episode/ep oder issue + Nummer (1, 1.1, 1x1), optional gefolgt von einem Namen, bekommen einen großgeschriebenen Namen. Andere Namen bleiben unverändert.',
+    'ren.library': 'Bibliothek', 'ren.check': 'Prüfen', 'ren.start': 'Wähle eine Bibliothek und drücke Prüfen.',
+    'ren.summary': '{checked} Dateien geprüft · {count} umzubenennen · {conflicts} mit Konflikten',
+    'ren.allGoodTitle': 'Nichts umzubenennen', 'ren.allGood': 'Alle Dateien folgen bereits dem Format.',
+    'ren.selectAll': 'Alle auswählen', 'ren.json': 'Passende JSON-Dateien der Ordnerquellen mit umbenennen', 'ren.apply': 'Auswahl umbenennen ({count})',
+    'ren.confirm': '{count} Dateien auf der Festplatte umbenennen?', 'ren.done': '{count} Dateien umbenannt.', 'ren.doneJson': 'Dazu {count} JSON-Dateien.',
+    'ren.status.exists': 'Eine Datei mit diesem Namen existiert', 'ren.status.conflict': 'Zwei Dateien bekämen diesen Namen',
+    'ren.err.changed': 'seit der Prüfung geändert; erneut prüfen', 'ren.err.readOnly': 'der Bibliotheksordner ist schreibgeschützt', 'ren.err.noPermission': 'keine Berechtigung zum Umbenennen',
+    'manage.reason.rename': 'nach dem Umbenennen'
+  });
+  add('pt', {
+    'nav.rename': 'Renomear arquivos', 'ren.intro': 'Encontra arquivos cujos nomes não seguem o formato habitual e sugere nomes novos. Revise a lista e renomeie os que escolher; o progresso de leitura e as listas de leitura acompanham os arquivos.',
+    'ren.rulesTitle': 'Regras de nomes', 'ren.rulesHelp': 'Arquivos chamados chapter/chap/ch/c, volume/vol/v, episode/ep ou issue + um número (1, 1.1, 1x1), opcionalmente seguido de um nome, ganham um nome com maiúsculas. Os outros nomes não mudam.',
+    'ren.library': 'Biblioteca', 'ren.check': 'Verificar', 'ren.start': 'Escolha uma biblioteca e clique em Verificar.',
+    'ren.summary': '{checked} arquivos verificados · {count} para renomear · {conflicts} com conflitos',
+    'ren.allGoodTitle': 'Nada para renomear', 'ren.allGood': 'Todos os arquivos já seguem o formato.',
+    'ren.selectAll': 'Selecionar tudo', 'ren.json': 'Renomear também os JSON correspondentes das fontes de pasta', 'ren.apply': 'Renomear selecionados ({count})',
+    'ren.confirm': 'Renomear {count} arquivos no disco?', 'ren.done': '{count} arquivos renomeados.', 'ren.doneJson': 'Também {count} arquivos JSON.',
+    'ren.status.exists': 'Já existe um arquivo com esse nome', 'ren.status.conflict': 'Dois arquivos ficariam com este nome',
+    'ren.err.changed': 'mudou desde a verificação; verifique de novo', 'ren.err.readOnly': 'a pasta da biblioteca é somente leitura', 'ren.err.noPermission': 'sem permissão para renomeá-lo',
+    'manage.reason.rename': 'após renomear arquivos'
+  });
+
   // Edit dialog with current values, cover picker
   add('en', {
     'edit.prefilledNote': 'The fields show the work’s current values, wherever they come from. Change what you need: only changed fields are saved, the rest keep following their source. Clearing a field goes back to the automatic value.',

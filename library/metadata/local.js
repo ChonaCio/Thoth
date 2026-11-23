@@ -144,6 +144,12 @@ function ratingOf(v) {
   if (!Number.isFinite(n) || n <= 0) return undefined;
   return Math.round(n <= 5 && String(v).includes('/5') ? n * 20 : n <= 10 ? n * 10 : Math.min(100, n));
 }
+// Web addresses of the work (its pages on metadata sites): url, urls, link, links, source, sources, web
+function linksOf(o) {
+  const raw = [].concat(...['url', 'urls', 'link', 'links', 'source', 'sources', 'web'].map(k => o[k]).filter(v => v != null));
+  const out = [...new Set(raw.map(v => (v && typeof v === 'object' ? v.url || v.href : v)).map(v => text(v, 500)).filter(v => v && /^https?:\/\/\S+$/i.test(v)))].slice(0, 20);
+  return out.length ? out : undefined;
+}
 // "title" may be a string or a list: the first entry is the main title, the rest are alternative titles
 function titles(o) {
   const v = pick(o, 'title', 'titles', 'name');
@@ -171,6 +177,7 @@ function seriesRecord(data) {
     readingDirection: mapped(pick(o, 'readingdirection', 'direction', 'manga', 'readingmode'), DIRECTION),
     altTitles: alt.length ? alt : undefined,
     sortTitle: text(pick(o, 'sorttitle', 'sortname'), 200),
+    links: linksOf(o),
     coverRel: text(pick(o, 'cover', 'image', 'thumbnail', 'poster'), 500)
   };
   return Object.fromEntries(Object.entries(rec).filter(([, v]) => v !== undefined));
@@ -194,10 +201,12 @@ function bookRecord(data) {
 
 /* ---------------- matching ---------------- */
 // The index key to use for a book / work in a source, or null. `note` collects names used more than once.
+// JSON files that can't be read (invalid JSON, not an object, too large) are ignored: they never match.
+const usable = (index, k) => { const e = index.files.get(k); return Boolean(e && e.json && e.data); };
 function findKey(index, mode, pathKeys, nameKey, note) {
-  for (const k of pathKeys) if (index.files.has(k) && index.files.get(k).json) return k;
+  for (const k of pathKeys) if (usable(index, k)) return k;
   if (mode === 'name' && nameKey) {
-    const hits = index.byName.get(nameKey);
+    const hits = (index.byName.get(nameKey) || []).filter(k => usable(index, k));
     if (hits && hits.length) {
       if (hits.length > 1 && note) note.add(nameKey);
       return hits[0];

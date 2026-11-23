@@ -129,7 +129,7 @@ const byTitle = (items, t) => items.find(s => s.workTitle === t || s.title === t
   ok(found.results.length && found.results.every(r => r.provider === 'anilist') && found.results[0].score >= found.results[found.results.length - 1].score, `search one source: ${found.results.length} results, best first ("${found.results[0].title}")`);
   const pick = found.results[0];
   const idn = (await call('POST', `/api/series/${zz.id}/metadata/identify`, { provider: 'anilist', id: pick.id })).data.series;
-  ok(idn.metadata.matched && idn.metadata.locked.provider === 'anilist' && idn.type === 'manhwa' && idn.title === 'Zzqx Qwvb Nothing 4471', 'identify: uses the picked match (title unchanged), locked');
+  ok(idn.metadata.matched && idn.metadata.locked[0].provider === 'anilist' && idn.type === 'manhwa' && idn.title === 'Zzqx Qwvb Nothing 4471', 'identify: uses the picked match (title unchanged), locked');
   const ref = (await call('POST', `/api/series/${zz.id}/metadata/refresh`)).data.series;
   ok(ref.metadata.locked && ref.metadata.matched && ref.type === 'manhwa', 'refresh keeps the identified match');
   ok((await call('POST', `/api/series/${zz.id}/metadata/identify`, { provider: 'nope', id: '1' })).status === 400, 'unknown provider rejected');

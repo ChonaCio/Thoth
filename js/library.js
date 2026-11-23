@@ -568,16 +568,21 @@
     }).join(', ') + '</p>';
   }
   function metadataBlock(s) {
-    var md = s.metadata, loc = s.localSources || [];
-    if (!md && !loc.length && !isAdmin()) return '';
-    var chipsHtml = loc.map(function (l) { return icon('description') + ' ' + esc(l.name); })
-      .concat(md && md.links.length ? md.links.map(function (l) {
-        return '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(providerName(l.provider)) + ' ' + icon('open_in_new') + '</a>';
-      }) : []);
-    var links = chipsHtml.length ? chips(chipsHtml, 'chip--link') : '';
-    var localLine = loc.length && isAdmin() && s.localFile ? '<p class="muted small">' + esc(t('msrc.fromFile', { file: s.localFile })) + (s.localCover ? ' · ' + esc(t('msrc.withCover')) : '') + '</p>' : '';
+    var md = s.metadata, loc = s.localSources || [], urls = s.links || [];
+    if (!md && !loc.length && !urls.length && !isAdmin()) return '';
+    // One line per source: the folder sources (JSON files), then every link of the work (its pages on the
+    // metadata sites it was matched to, links from its JSON files, links added by hand)
+    var lines = loc.map(function (l) {
+      return '<li>' + icon('description') + ' <span>' + esc(l.name) + (isAdmin() && s.localFile ? ' <span class="muted">· ' + esc(s.localFile) + '</span>' : '') + '</span></li>';
+    }).concat(urls.map(function (l) {
+      return '<li>' + icon('open_in_new') + ' <span>' + (l.site ? '<strong>' + esc(providerName(l.site)) + '</strong> ' : '') +
+        '<a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer">' + esc(l.url) + '</a></span></li>';
+    }));
+    var links = lines.length ? '<ul class="meta-links">' + lines.join('') + '</ul>' : '';
+    var localLine = loc.length && isAdmin() && s.localCover ? '<p class="muted small">' + esc(t('msrc.withCover')) + '</p>' : '';
+    var locked = md && md.locked ? [].concat(md.locked) : [];
     var status = !md ? t('meta.never')
-      : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (md.locked ? ' · ' + t('meta.lockedTo', { provider: providerName(md.locked.provider) }) : '') +
+      : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (locked.length ? ' · ' + t('meta.lockedTo', { provider: locked.map(function (l) { return providerName(l.provider); }).join(', ') }) : '') +
           (md.cover ? ' · ' + (md.coverProvider ? t('meta.coverFrom', { provider: providerName(md.coverProvider) }) : t('meta.coverDownloaded')) + (s.coverSource === 'metadata' ? '' : ' (' + t('meta.coverNotShown') + ')') : ' · ' + t('meta.noCover'))
       : t('meta.noMatch', { time: A().fmtDate(md.fetchedAt) });
     return '<div class="detail__in detail__meta-src">' +
@@ -991,6 +996,97 @@
           if (wasScanning && !scanning) { A().refreshLibraries(); invalidate(); }
         }, function (e) { cache.manage = { error: e }; throw e; });
       });
+    }
+  };
+
+  /* ================= RENAME FILES (admins) ================= */
+  // Check a library for files to rename (chapter-1.cbz → Chapter 1.cbz), review, rename the picked ones
+  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission' };
+  function renameState() {
+    if (!cache.rename) cache.rename = { library: 'all', data: null, selected: {}, renameJson: true, loading: false, result: null, error: null };
+    return cache.rename;
+  }
+  function runRenamePreview() {
+    var st = renameState();
+    st.loading = true; st.error = null;
+    A().renderPage();
+    return api('GET', '/api/rename/preview?' + Store.qs({ library: st.library })).then(function (r) {
+      st.data = r;
+      st.selected = {};
+      r.items.forEach(function (x) { if (x.status === 'ok') st.selected[x.bookId] = true; });
+    }, function (e) { st.error = e; }).then(function () { st.loading = false; if (A().parseRoute().name === 'rename') A().renderPage(); });
+  }
+  var renamePage = {
+    title: function () { return t('nav.rename'); },
+    render: function () {
+      var st = renameState();
+      var libs = A().state.libraries || [];
+      var head = '<h1 class="page-title">' + esc(t('nav.rename')) + '</h1>' +
+        '<p class="page-lead">' + esc(t('ren.intro')) + '</p>' +
+        '<details class="card card--wide msrc-how"><summary class="card__title">' + esc(t('ren.rulesTitle')) + '</summary>' +
+          '<pre class="msrc-pre">chapter-0.cbz              → Chapter 0.cbz\nchapter-1.1.cbz            → Chapter 1.1.cbz\nchapter-1x1.cbz            → Chapter 1x1.cbz\nchapter-1-chapter name.cbz → Chapter 1 - Chapter Name.cbz\nch_12_the_end.cbz          → Chapter 12 - The End.cbz\nvol.3.cbz                  → Volume 3.cbz</pre>' +
+          '<p class="small muted">' + esc(t('ren.rulesHelp')) + '</p></details>' +
+        '<div class="toolbar">' +
+          '<div class="toolbar__group">' +
+            '<select class="select select--compact" id="ren-library" aria-label="' + esc(t('ren.library')) + '">' +
+              '<option value="all"' + (st.library === 'all' ? ' selected' : '') + '>' + esc(t('nav.allLibraries')) + '</option>' +
+              libs.map(function (l) { return '<option value="' + l.id + '"' + (st.library === l.id ? ' selected' : '') + '>' + esc(l.name) + '</option>'; }).join('') +
+            '</select>' +
+            '<button class="btn btn--primary btn--pill" data-lib="ren-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('ren.check')) + '</button>' +
+          '</div>' +
+        '</div>';
+      if (st.error) return head + errorBanner(st.error);
+      if (st.loading) return head + spinner;
+      var res = st.result ? '<div class="banner ' + (st.result.failed.length ? 'banner--error' : 'banner--ok') + '"><div>' +
+          '<strong>' + esc(t('ren.done', { count: st.result.renamed })) + '</strong>' + (st.result.json ? ' ' + esc(t('ren.doneJson', { count: st.result.json })) : '') +
+          (st.result.failed.length ? '<ul class="msrc-examples">' + st.result.failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> — ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
+        '</div></div>' : '';
+      if (!st.data) return head + res + emptyState('edit', '', t('ren.start'));
+      var items = st.data.items;
+      var ok = items.filter(function (x) { return x.status === 'ok'; });
+      var nSel = ok.filter(function (x) { return st.selected[x.bookId]; }).length;
+      var summary = '<p class="muted small">' + esc(t('ren.summary', { checked: st.data.checked, count: ok.length, conflicts: items.length - ok.length })) + '</p>';
+      if (!items.length) return head + res + summary + emptyState('check', t('ren.allGoodTitle'), t('ren.allGood'));
+      // Grouped by work
+      var groups = [], byWork = {};
+      items.forEach(function (x) {
+        var k = x.seriesId;
+        if (!byWork[k]) { byWork[k] = { work: x.work, library: x.library, seriesId: x.seriesId, list: [] }; groups.push(byWork[k]); }
+        byWork[k].list.push(x);
+      });
+      return head + res + summary +
+        '<div class="ren-actions">' +
+          '<label class="checkbox"><input type="checkbox" id="ren-all"' + (nSel === ok.length && ok.length ? ' checked' : '') + ' /><span>' + esc(t('ren.selectAll')) + '</span></label>' +
+          '<label class="checkbox"><input type="checkbox" id="ren-json"' + (st.renameJson ? ' checked' : '') + ' /><span>' + esc(t('ren.json')) + '</span></label>' +
+          '<button class="btn btn--primary" data-lib="ren-apply"' + (nSel ? '' : ' disabled') + '>' + icon('edit') + esc(t('ren.apply', { count: nSel })) + '</button>' +
+        '</div>' +
+        groups.map(function (g) {
+          return '<section class="ren-group"><h3 class="ren-group__title"><a href="#series/' + g.seriesId + '">' + esc(g.work) + '</a> <span class="muted small">' + esc(g.library) + '</span></h3>' +
+            '<ul class="ren-list">' + g.list.map(function (x) {
+              var bad = x.status !== 'ok';
+              return '<li class="ren-row' + (bad ? ' is-conflict' : '') + '"><label class="checkbox"><input type="checkbox" data-ren="' + x.bookId + '"' + (bad ? ' disabled' : st.selected[x.bookId] ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
+                '<span class="ren-row__names"><code class="ren-from">' + esc(x.fromName) + '</code><span class="ren-arrow" aria-hidden="true">→</span><code class="ren-to">' + esc(x.toName) + '</code></span></label>' +
+                (bad ? '<span class="badge badge--danger" title="' + esc(x.with || '') + '">' + esc(t('ren.status.' + x.status)) + '</span>' : '') + '</li>';
+            }).join('') + '</ul></section>';
+        }).join('');
+    },
+    mount: function (el) {
+      var st = renameState();
+      var lib = $('#ren-library', el);
+      if (lib) lib.addEventListener('change', function () { st.library = lib.value; st.data = null; st.result = null; runRenamePreview(); });
+      el.addEventListener('change', function (e) {
+        var tg = e.target;
+        if (tg.id === 'ren-json') { st.renameJson = tg.checked; return; }
+        if (tg.id === 'ren-all') {
+          (st.data ? st.data.items : []).forEach(function (x) { if (x.status === 'ok') st.selected[x.bookId] = tg.checked; });
+          return A().renderPage();
+        }
+        if (tg.dataset.ren) { st.selected[tg.dataset.ren] = tg.checked; A().renderPage(); }
+      });
+    },
+    enter: function () {
+      var st = renameState();
+      if (!st.data && !st.loading) runRenamePreview();
     }
   };
 
@@ -1525,7 +1621,7 @@
     var current = {
       title: s.title || '', sortTitle: s.sortTitle && s.sortTitle !== s.title ? s.sortTitle : '', summary: s.summary || '', publisher: s.publisher || '',
       year: s.year ? String(s.year) : '', genres: (s.genres || []).join(', '), tags: (s.tags || []).join(', '),
-      altTitles: (s.altTitles || []).join('\n'), authors: names.join(', ')
+      altTitles: (s.altTitles || []).join('\n'), authors: names.join(', '), links: (s.links || []).map(function (l) { return l.url; }).join('\n')
     };
     var withHint = function (k, help) { var h = sourceHint(s, k); return [h, help].filter(Boolean).join(' · '); };
     var autoLabel = function (shown) { return t('edit.auto') + (shown ? ' (' + shown + ')' : ''); };
@@ -1546,6 +1642,7 @@
           options: [{ value: '', label: autoLabel(!o.type && s.type ? t('type.' + s.type) : '') }].concat(WORK_TYPES.map(function (ty) { return { value: ty, label: t('type.' + ty) }; })) },
         { name: 'genres', label: t('edit.genres'), value: current.genres, help: withHint('genres', t('edit.commas')) },
         { name: 'tags', label: t('edit.tags'), value: current.tags, help: withHint('tags', t('edit.tagsHelp')) },
+        { name: 'links', label: t('edit.links'), type: 'textarea', rows: 3, value: current.links, help: withHint('links', t('edit.linksHelp')) },
         { name: 'coverChoice', label: t('edit.cover'), type: 'covers', help: t('cover.help') },
         // Reading mode: blank = the library's default (a fixed mode) or, if it has none, what was detected
         { name: 'readingDirection', label: t('edit.direction'), type: 'select', value: o.readingDirection || '', help: t('edit.directionHelp'),
@@ -1587,7 +1684,8 @@
   }
   function coverCaption(c) {
     return c.kind === 'auto' ? t('cover.auto') : c.kind === 'file' ? t('cover.firstPage')
-      : c.kind === 'downloaded' ? (c.provider ? t('cover.downloaded', { name: providerName(c.provider) }) : t('cover.downloadedPlain')) : c.kind === 'online' ? providerName(c.provider)
+      : c.kind === 'downloaded' ? (c.provider ? t('cover.downloaded', { name: providerName(c.provider) }) : t('cover.downloadedPlain'))
+      : c.kind === 'online' ? (/^web:/.test(c.provider) ? c.provider.slice(4) : providerName(c.provider))
       : c.kind === 'local' ? c.sourceName + ' · ' + c.rel : c.kind === 'custom' ? t('cover.custom') : t('cover.uploaded');
   }
   function renderCoverPicker(s, list, selected) {
@@ -1701,11 +1799,14 @@
   }
 
   /* ================= IDENTIFY DIALOG ================= */
-  var identifyFor = null;
+  var identifyFor = null, identifyPicks = {};
   function openIdentify(id) {
     var d = cache.series[id];
     if (!d || !d.series) return;
     identifyFor = id;
+    // Start from the matches picked by hand before, so another site can be added to them
+    identifyPicks = {};
+    ((d.series.metadata && d.series.metadata.locked) || []).forEach(function (l) { identifyPicks[l.provider] = { provider: l.provider, id: l.id, title: '' }; });
     var lib = (A().state.libraries || []).filter(function (l) { return l.id === d.series.libraryId; })[0];
     loadProviders().then(function (all) {
       var order = libraryProviders(lib, all).filter(function (p) { return p.kind !== 'folder'; }); // Identify searches online sites
@@ -1715,6 +1816,7 @@
       $('#identify-error').hidden = true;
       $('#identify-results').innerHTML = '';
       $('#identify-dialog').showModal();
+      updateIdentifyPicks();
       searchIdentify();
     });
   }
@@ -1734,10 +1836,27 @@
               (x.altTitles && x.altTitles.length ? '<span class="muted small identify__alt">' + esc(x.altTitles.slice(0, 3).join(' · ')) + '</span>' : '') +
               (x.url ? '<a class="small" href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + esc(t('meta.openSite')) + '</a>' : '') +
             '</div>' +
-            '<button type="button" class="btn btn--outline btn--small" data-identify="' + esc(x.provider) + '" data-mid="' + esc(x.id) + '">' + esc(t('meta.useThis')) + '</button>' +
+            '<button type="button" class="btn btn--outline btn--small identify__pick" data-identify="' + esc(x.provider) + '" data-mid="' + esc(x.id) + '" data-title="' + esc(x.title) + '" aria-pressed="false">' + esc(t('meta.select')) + '</button>' +
           '</li>';
         }).join('') + '</ul>' : '<p class="muted">' + esc(t('meta.noResults')) + '</p>');
+      updateIdentifyPicks();
     }, function (e) { box.innerHTML = ''; $('#identify-error').textContent = A().errMsg(e); $('#identify-error').hidden = false; });
+  }
+
+  // Show which results are picked (one per site) and how many will be applied
+  function updateIdentifyPicks() {
+    $$('#identify-results [data-identify]').forEach(function (b) {
+      var on = identifyPicks[b.dataset.identify] && identifyPicks[b.dataset.identify].id === b.dataset.mid;
+      b.classList.toggle('is-selected', Boolean(on));
+      b.setAttribute('aria-pressed', on ? 'true' : 'false');
+      b.textContent = t(on ? 'meta.selected' : 'meta.select');
+      b.closest('.identify__item').classList.toggle('is-selected', Boolean(on));
+    });
+    var n = Object.keys(identifyPicks).length;
+    var btn = $('#identify-apply');
+    btn.disabled = !n;
+    btn.textContent = t('meta.useSelected', { count: n });
+    $('#identify-picked').textContent = n ? t('meta.picked', { names: Object.keys(identifyPicks).map(providerName).join(', ') }) : '';
   }
 
   // One-shot settings of a library; a server that doesn't send them uses the default (on, library folder)
@@ -1877,6 +1996,18 @@
           else localStorage.setItem('thoth.order.' + id, nextOrder);
         } catch (e) { /* no storage: just this view */ }
         return A().renderPage();
+      }
+      case 'ren-check': renameState().result = null; return runRenamePreview();
+      case 'ren-apply': {
+        var rs = renameState();
+        var picks = rs.data.items.filter(function (x) { return x.status === 'ok' && rs.selected[x.bookId]; }).map(function (x) { return { bookId: x.bookId, toName: x.toName, from: x.from }; });
+        if (!picks.length || !confirm(t('ren.confirm', { count: picks.length }))) return;
+        btn.disabled = true;
+        return api('POST', '/api/rename/apply', { items: picks, renameJson: rs.renameJson }).then(function (r) {
+          rs.result = r;
+          invalidate(); markStale(cache.series); markStale(cache.book);
+          return runRenamePreview();
+        }, function (e) { btn.disabled = false; fail(e); });
       }
       case 'msrc-add': return folderSourceForm(null);
       case 'msrc-edit': return folderSourceForm(cache.msrc.folder.filter(function (s) { return s.id === id; })[0]);
@@ -2025,18 +2156,27 @@
 
     $('#identify-form').addEventListener('submit', function (e) { e.preventDefault(); searchIdentify(); });
     $('#identify-close').addEventListener('click', function () { $('#identify-dialog').close(); });
+    // Picking matches: one per site, several sites at once; "Use selected" applies them together
     $('#identify-results').addEventListener('click', function (e) {
       var b = e.target.closest('[data-identify]');
       if (!b) return;
-      $$('#identify-results [data-identify]').forEach(function (x) { x.disabled = true; });
-      b.innerHTML = '<span class="spinner spinner--sm"></span>';
-      api('POST', '/api/series/' + identifyFor + '/metadata/identify', { provider: b.dataset.identify, id: b.dataset.mid }).then(function () {
+      var site = b.dataset.identify, id = b.dataset.mid;
+      if (identifyPicks[site] && identifyPicks[site].id === id) delete identifyPicks[site];
+      else identifyPicks[site] = { provider: site, id: id, title: b.dataset.title || '' };
+      updateIdentifyPicks();
+    });
+    $('#identify-apply').addEventListener('click', function () {
+      var picks = Object.keys(identifyPicks).map(function (k) { return { provider: identifyPicks[k].provider, id: identifyPicks[k].id }; });
+      if (!picks.length) return;
+      var btn = $('#identify-apply');
+      btn.disabled = true;
+      btn.innerHTML = '<span class="spinner spinner--sm"></span>';
+      api('POST', '/api/series/' + identifyFor + '/metadata/identify', { matches: picks }).then(function () {
         $('#identify-dialog').close();
         A().toast(t('meta.identified'));
         invalidate(); markStale(cache.series); refreshCurrent();
       }, function (err) {
-        $$('#identify-results [data-identify]').forEach(function (x) { x.disabled = false; });
-        b.textContent = t('meta.useThis');
+        updateIdentifyPicks();
         $('#identify-error').textContent = A().errMsg(err); $('#identify-error').hidden = false;
       });
     });
@@ -2071,6 +2211,7 @@
     collections: collections, collection: collection, readlists: readlists, readlist: readlist,
     'manage-libraries': manage,
     'metadata-sources': metadataSources,
+    rename: renamePage,
     processes: processes,
     'server-settings': serverSettings,
     read: { render: function () { return ''; }, title: function () { return t('reader.title'); } },

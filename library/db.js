@@ -158,13 +158,33 @@ function seriesMeta(s) {
     year: Number.isInteger(Number(m.year)) && m.year ? Number(m.year) : fromBooks(s).year,
     rating: m.rating != null && Number.isFinite(Number(m.rating)) ? Number(m.rating) : null, // 0–100
     authors: Array.isArray(m.authors) && m.authors.length ? m.authors : fromBooks(s).authors,
-    altTitles: Array.isArray(m.altTitles) ? m.altTitles : []
+    altTitles: Array.isArray(m.altTitles) ? m.altTitles : [],
+    links: linksOf(s).map(l => l.url)
   };
+}
+// A work's links (its pages on metadata sites and elsewhere): [{ url, from: 'edit'|'folder'|'online', site }]
+// An administrator's list replaces the rest; otherwise the folder sources' JSON links, then the addresses of
+// the online matches, without repeats. `site` = the metadata site the address belongs to (or null).
+const { fromUrl } = require('./metadata/providers');
+function linksOf(s) {
+  const o = s.overrides || {};
+  const out = [], seen = new Set();
+  const add = (url, from) => {
+    const k = String(url || '').replace(/\/+$/, '').toLowerCase();
+    if (!k || seen.has(k)) return;
+    seen.add(k);
+    const x = fromUrl(url);
+    out.push({ url, from, site: x ? x.provider : null });
+  };
+  if (Array.isArray(o.links) && o.links.length) { o.links.forEach(u => add(u, 'edit')); return out; }
+  ((s.local && s.local.merged && s.local.merged.links) || []).forEach(u => add(u, 'folder'));
+  ((s.provider && s.provider.links) || []).forEach(l => add(l.url, 'online'));
+  return out;
 }
 // Where each shown value of a work comes from (for the Edit dialog): { field: { kind, name? } } with kind
 // 'edit' (an administrator's), 'folder' (a folder source, name), 'files' (ComicInfo.xml), 'online' (a site
 // id in name) or 'books' (taken from its books). Same precedence as seriesMeta.
-const EDIT_FIELDS = ['title', 'sortTitle', 'summary', 'status', 'publisher', 'type', 'year', 'genres', 'tags', 'altTitles', 'authors', 'readingDirection'];
+const EDIT_FIELDS = ['title', 'sortTitle', 'summary', 'status', 'publisher', 'type', 'year', 'genres', 'tags', 'altTitles', 'authors', 'readingDirection', 'links'];
 function fieldSources(s) {
   const has = v => v != null && v !== '' && !(Array.isArray(v) && !v.length);
   const o = s.overrides || {}, l = (s.local && s.local.merged) || {}, f = s.meta || {}, p = (s.provider && s.provider.merged) || {};
@@ -174,6 +194,7 @@ function fieldSources(s) {
     else if (has(l[k])) out[k] = { kind: 'folder', name: ((db.metadataSources[(s.local.fields || {})[k]] || {}).name) || '' };
     else if (has(f[k])) out[k] = { kind: 'files' };
     else if (has(p[k]) && k !== 'title') out[k] = { kind: 'online', name: ((s.provider.sources || {})[k]) || '' };
+    else if (k === 'links' && s.provider && (s.provider.links || []).length) out[k] = { kind: 'online', name: s.provider.links[0].provider };
     else if ((k === 'year' || k === 'authors') && has(fromBooks(s)[k])) out[k] = { kind: 'books' };
   }
   return out;
@@ -284,6 +305,7 @@ function seriesView(s, user, { admin = false } = {}) {
     depth: String(s.relPath || '').split(/[\\/]/).filter(Boolean).length, // folder depth in the library (tie-breaker when grouping versions)
     readingDirection: m.readingDirection, tags: m.tags, ageRating: m.ageRating,
     type: m.type, year: m.year, rating: m.rating, authors: m.authors, altTitles: m.altTitles, genres: m.genres,
+    links: linksOf(s), // [{ url, from, site }]
     bookLayout: m.bookLayout, bookOrder: m.bookOrder, detectedDirection: m.detectedDirection, coverChoice: m.coverChoice,
     libraryDirection: libraryDefaults(db.libraries[s.libraryId]).readingDirection,
     created: s.created, updated: s.updated,
@@ -294,7 +316,9 @@ function seriesView(s, user, { admin = false } = {}) {
     // Online metadata: where it came from (the cover image itself is served by /api/series/:id/thumbnail)
     metadata: s.provider ? {
       fetchedAt: s.provider.fetchedAt, checkedAt: s.provider.checkedAt || s.provider.fetchedAt, links: s.provider.links || [], sources: s.provider.sources || {},
-      matched: (s.provider.matches || []).length > 0, locked: s.provider.locked || null,
+      matched: (s.provider.matches || []).length > 0,
+      // Matches chosen by hand (Identify), one per site: [{ provider, id }]
+      locked: s.provider.locked ? [].concat(s.provider.locked) : null,
       cover: Boolean(s.provider.coverFile), coverProvider: s.provider.coverFile ? s.provider.coverProvider || null : null, errors: admin ? s.provider.errors || [] : undefined
     } : null,
     // Folder sources that gave this work data ({ id, name } each), and whether one gave its cover

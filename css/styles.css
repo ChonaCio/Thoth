@@ -484,6 +484,35 @@ a.chip--filter { text-decoration: none; }
 a.chip--filter:hover { background: var(--hover); color: var(--text); }
 .chip--genre { background: var(--primary-soft); color: var(--on-primary-soft); }
 
+/* ---- Identify: several picks ---- */
+.identify__item.is-selected { background: var(--primary-soft); }
+.identify__pick.is-selected { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.identify__picked { margin-right: auto; align-self: center; }
+
+/* ---- Work page: "Metadata from" lines ---- */
+.meta-links { list-style: none; margin: 6px 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.meta-links li { display: flex; align-items: flex-start; gap: 6px; min-width: 0; }
+.meta-links li > span { min-width: 0; overflow-wrap: anywhere; }
+.meta-links [data-icon] svg { width: 14px; height: 14px; margin-top: 2px; fill: var(--text-muted); }
+.meta-links a { color: var(--primary); }
+
+/* ---- Rename files page ---- */
+.ren-actions { display: flex; flex-wrap: wrap; gap: 16px; align-items: center; margin: 8px 0 16px; }
+.ren-actions .btn { margin-left: auto; }
+.ren-group { border: 1px solid var(--border); border-radius: var(--radius); margin-bottom: 12px; overflow: hidden; }
+.ren-group__title { margin: 0; padding: 10px 14px; font-size: 15px; font-weight: 500; background: var(--bg-alt); }
+.ren-group__title a { color: var(--text); }
+.ren-list { list-style: none; margin: 0; padding: 0; }
+.ren-row { display: flex; align-items: center; gap: 8px; padding: 8px 14px; }
+.ren-row + .ren-row { border-top: 1px solid var(--border); }
+.ren-row .checkbox { flex: 1; min-width: 0; align-items: center; }
+.ren-row__names { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
+.ren-row code { font-size: 13px; overflow-wrap: anywhere; }
+.ren-from { color: var(--text-muted); text-decoration: line-through; text-decoration-color: var(--border); }
+.ren-to { color: var(--ok); font-weight: 500; }
+.ren-arrow { color: var(--text-muted); }
+.ren-row.is-conflict .ren-to { color: var(--danger); }
+
 /* ---- Cover picker (work Edit dialog) ---- */
 .cover-picker { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); max-height: 330px; overflow-y: auto; padding: 2px; }
 .cover-pick { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 2px solid transparent; border-radius: 10px; background: none; color: var(--text); cursor: pointer; font: inherit; text-align: center; min-width: 0; }

@@ -30,6 +30,12 @@ async function request(provider, url, { method = 'GET', body, headers = {}, gap 
       signal: AbortSignal.timeout(timeout)
     });
   } catch (e) {
+    // A connection that couldn't be made (dropped, refused, DNS hiccup) is tried once more after a pause;
+    // a site that took too long to answer isn't (that would double a long wait)
+    if (!retried && e.name !== 'TimeoutError') {
+      await new Promise(r => setTimeout(r, 1500));
+      return request(provider, url, { method, body, headers, gap, timeout, retried: true });
+    }
     throw providerError(provider, e.name === 'TimeoutError' ? 'no answer (timeout)' : `unreachable (${e.cause && e.cause.code || e.message})`);
   }
   if (res.status === 429 && !retried) {
@@ -220,6 +226,11 @@ const kitsu = {
     return ((r && r.data) || []).map(kitsuBasics);
   },
   async fetch(id) {
+    if (!/^\d+$/.test(String(id))) {           // a slug from a link
+      const s = await request('kitsu', `${KITSU}/manga?filter[slug]=${encodeURIComponent(id)}&page[limit]=1`, { gap: 300, headers: { Accept: 'application/vnd.api+json' } });
+      if (!s || !s.data || !s.data[0]) return null;
+      id = s.data[0].id;
+    }
     const r = await request('kitsu', `${KITSU}/manga/${encodeURIComponent(id)}?include=categories,staff.person`, { gap: 300, headers: { Accept: 'application/vnd.api+json' } });
     if (!r || !r.data) return null;
     const a = r.data.attributes;
@@ -407,4 +418,27 @@ function matchScore(query, result, yearHint) {
   return Math.max(0, Math.round(best * 1000) / 1000);
 }
 
-module.exports = { PROVIDERS, BY_ID, matchScore, normTitle, cleanText, request };
+// A page address on a metadata site → { provider, id } of the entry it shows, or null. Lets a work's links (from
+// JSON files, edits, earlier matches) be used as exact matches and to find covers.
+const URL_IDS = [
+  ['anilist', /^https?:\/\/(?:www\.)?anilist\.co\/manga\/(\d+)/i],
+  ['mangadex', /^https?:\/\/(?:www\.)?mangadex\.org\/title\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i],
+  // New MangaUpdates addresses carry the id in base 36 (…/series/pb8uwds/one-piece); old ones ?id=123
+  ['mangaupdates', /^https?:\/\/(?:www\.)?mangaupdates\.com\/series\/([0-9a-z]+)(?:\/|$)/i, id => String(parseInt(id, 36))],
+  ['mangaupdates', /^https?:\/\/(?:www\.)?mangaupdates\.com\/series\.html\?id=(\d+)/i],
+  // Kitsu's own addresses use the slug (…/manga/one-piece); fetch() resolves it to the id
+  ['kitsu', /^https?:\/\/(?:www\.)?kitsu\.(?:io|app)\/manga\/([\w-]+)(?:[/?#]|$)/i],
+  ['myanimelist', /^https?:\/\/(?:www\.)?myanimelist\.net\/manga\/(\d+)/i],
+  ['openlibrary', /^https?:\/\/(?:www\.)?openlibrary\.org\/works\/(OL\d+W)/i],
+  ['googlebooks', /^https?:\/\/books\.google\.[a-z.]+\/books(?:\/edition\/[^/]*\/|\?(?:.*&)?id=)([\w-]{8,})/i],
+  ['comicvine', /^https?:\/\/comicvine\.gamespot\.com\/[^/]+\/4050-(\d+)/i]
+];
+function fromUrl(url) {
+  for (const [provider, re, map] of URL_IDS) {
+    const m = re.exec(String(url || '').trim());
+    if (m) return { provider, id: map ? map(m[1]) : m[1] };
+  }
+  return null;
+}
+
+module.exports = { PROVIDERS, BY_ID, matchScore, normTitle, cleanText, request, fromUrl };

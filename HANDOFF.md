@@ -4,7 +4,7 @@ Read this before changing anything. **Keep it up to date**: whenever a change la
 sections it touches (what exists, conventions, known gaps, recent changes). User-facing documentation
 lives in [README.md](README.md); this file is for whoever develops Thoth next.
 
-_Last updated: 2026-11-23 (full-width responsive tiles, Edit dialog with current values, cover picker)_
+_Last updated: 2026-11-23 (metadata links, several Identify matches, covers from links)_
 
 ## What Thoth is
 
@@ -38,6 +38,7 @@ from GitHub (`ChonaCio/Thoth`).
 | `library/scanner.js` | Scan modes (`quick`/`changes`/`full`, `MODES`; automatic scans are quick), saved scan index (`data/scan-index/<lib>.json`: `loadIndex`/`saveIndex`/`forgetIndex`), scan queue (one library at a time; a waiting scan is upgraded to the strongest mode asked), pool of low-priority worker processes, applying results, one-shots, progress (`progressOf`), `READ_VERSION` (bump to force re-reading files once). |
 | `library/scan-core.js`, `scan-worker.js`, `zip.js` | File work in the workers: listing (`listFiles` builds the scan index; with `quick` it reuses unchanged folders' entries), ZIP central directory, `ComicInfo.xml`, PDF page counts. Must not touch the DB. |
 | `library/api.js` | Library REST routes: libraries, series (works grouped by version), facets/filters, books, pages, progress, collections, read lists, metadata actions. |
+| `library/rename.js` | Batch renaming: rules (`proposedName`/`parse`), `preview` (proposals + conflicts), `apply` (rename on disk, `moveBook` moves the book id with its progress and read-list entries, renames matching folder-source JSON). |
 | `library/metadata/providers.js` | One object per site: `search(q)`, `fetch(id)` → normalized record. Per-site rate limit, retries on 429, timeouts. |
 | `library/metadata/index.js` | Source registry (online `PROVIDERS` + folder sources from `db.metadataSources`, `byId`), per-library order (folder sources forced first: `localFirst`), online merge (first match fills each field), cover download, Identify (locked match, online only), queue with concurrency + batch progress, folder sources: `applyLocal`, CRUD, `checkSource`. |
 | `library/metadata/local.js` | Folder sources: indexing a folder (`buildIndex`), JSON parsing with mtime cache, key matching (`path` / `name` modes), JSON → work/book records (`seriesRecord`, `bookRecord`), covers next to the JSON. No DB access. |
@@ -52,7 +53,8 @@ from GitHub (`ChonaCio/Thoth`).
 ## Data model (data/library.json)
 
 - `libraries[id]`: `{ id, name, root, created, oneshots: { folder }, defaults: { sort: 'title'|'added'|'updated', bookLayout: 'tiles'|'list', readingDirection: null|'ltr'|'rtl'|'vertical' }, metadata: { providers: [{ id, enabled }], autoFetch, cover: 'missing'|'always'|'never' }, lastScan, scanError }`
-- `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt (last change), checkedAt (last check) }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion }) }`
+- `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches (each with `via`: 'locked'|'link'|title), links, locked ([{ provider, id }], one per site; old single objects are read by `lockList`), coverFile, coverUrl, coverProvider, errors, fetchedAt (last change), checkedAt (last check) }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion, links }) }`
+- A work's links (`db.linksOf`): `overrides.links` (edited, replaces the rest) else folder-JSON links + `provider.links`, as `[{ url, from: 'edit'|'folder'|'online', site }]`; `providers.fromUrl(url)` → `{ provider, id }` turns a site link into an exact match (refresh) and a cover (`metadata.linkCovers`; other pages → `og:image` via `pageImage`, guarded by `publicUrl`).
 - `books[id]`: `{ id, seriesId, libraryId, relPath, fileName, format, pageCount, size, fileModified, meta, local ({ merged, sourceId, file }), overrides, index, readVersion }`
 - Works can be hidden: `series.hidden = { at, by }` (logical delete). `api.js` filters hidden works/books out of every list for everyone (`shown`/`bookShown`); admins open them and list them with `?deleted=1`. Physical delete: `deleteWorkFiles` (unlink inside the library folder only, empty folder removed, failures reported).
 - `series.customCover = { file, from ('upload' | 'online:<site>' | 'local:<source>:<path>'), at }`: the cover picked in the Edit dialog (`data/covers/custom-<id>-<t>.<ext>`); removed with the work.
@@ -117,6 +119,7 @@ through `/api/setup`, and use the browser.
   Books answers 429 without a key (that's why it's off by default). `tests/test-providers-live.js` is a report:
   it exits 0 even when some sites fail. `tests/test-metadata.js` depends on the live sites too: an occasional
   failure where The Hobbit isn't matched means Open Library was slow; rerun before suspecting the code.
+- Renaming: a book id is a hash of its path, so `rename.apply` must go through `moveBook` (progress keys and read lists use book ids). Collections use work ids, which don't change.
 - Very generic titles (e.g. "Short Story") can match an unrelated entry whose title or alt title is the same;
   admins fix it with Identify or Clear. Open Library subjects are free-form; `providers.js` filters the noise.
 - No thumbnails cache/resizing at all (covers are full first pages, cached by the browser).
@@ -126,6 +129,10 @@ through `/api/setup`, and use the browser.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+
+- **2026-11-23** — Links: matches' addresses, folder-JSON `url`/`links`, editable (Edit → Links); shown one per line on the work page; site links are exact matches in `refreshSeries` (lock → link → title search per site; it no longer stops once the main fields are filled when a site is locked/linked). Identify accepts several picks (`{ matches: [...] }`, one per site). Cover picker adds covers from links (site entry's cover, else the page's `og:image`; local/private addresses never fetched). *Update metadata* runs `applyLocal` first. Unreadable JSON is skipped in matching (`usable()` in `local.js`). Kitsu slug links resolved by `fetch`. `request()` retries once on connection failures (not timeouts). "Same data" checks compare data only (`strip()`), so a different `via` doesn't count as a change. New suite `tests/test-links.js`.
+
+- **2026-11-23** — Rename files page (`#rename`, `GET /api/rename/preview`, `POST /api/rename/apply`) with `library/rename.js`; renamed books keep progress/read lists, matching JSON renamed, quick scan afterwards (reason `rename`). Metadata matching uses every title of a work (`titlesFor`: main + alternative titles; `bestMatch` scores against all and re-searches with up to 2 alternative titles; matches record `via`); Identify ranks with them too. New suite `tests/test-rename.js` (includes an in-process fake site).
 
 - **2026-11-23** — Full-width tiles sized from the content width (same everywhere); work Edit dialog prefilled with current values + per-field source (`seriesView.fieldSources`, admins), saves only changed fields, new editable year/altTitles/authors; cover picker (`GET /api/series/:id/covers[?search=1]`, `/cover-candidate`, `POST /cover` with choice or base64 upload; `series.customCover` wins in `metadataCover`; `provider.coverCandidates` keeps every matched site's cover; site previews proxied + cached in memory). Oversized request bodies now get a 413 answer instead of a cut connection. New suite `tests/test-covers.js`.
 
