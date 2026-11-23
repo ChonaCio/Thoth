@@ -340,13 +340,20 @@ async function refreshSeries(seriesId, cur) {
     if (!covers.length && !haveFile) coverFile = coverUrl = coverProvider = null;
     const current = db.series[seriesId]; // may have been removed by a scan meanwhile
     if (!current) return null;
-    current.provider = {
-      fetchedAt: new Date().toISOString(), query, locked: locked || null, matches, sources, errors,
+    const now = new Date().toISOString();
+    const next = {
+      query, locked: locked || null, matches, sources, errors,
       merged: Object.fromEntries(Object.entries(merged).filter(([k]) => k !== 'cover')),
       coverUrl: coverUrl || null, coverFile: coverFile || null, coverProvider: coverProvider || null,
       links: matches.map(x => ({ provider: x.provider, url: x.url })).filter(x => x.url)
     };
-    current.updated = new Date().toISOString();
+    // Delta: the work only counts as updated (sort "Recently updated", cover cache) when something changed
+    const old = current.provider || {};
+    const strip = p => JSON.stringify(Object.assign({}, p, { fetchedAt: undefined, checkedAt: undefined, errors: undefined }));
+    const changed = strip(old) !== strip(next) || (next.coverFile && next.coverFile !== old.coverFile);
+    current.provider = Object.assign(next, { fetchedAt: changed || !old.fetchedAt ? now : old.fetchedAt, checkedAt: now });
+    if (changed) current.updated = now;
+    status.changed = (status.changed || 0) + (changed ? 1 : 0);
     store.saveLibrary();
     status.done++;
     if (!matches.length && errors.length) status.lastError = errors[0];
@@ -424,10 +431,22 @@ function missingCover(s) {
   if (!p || !(p.matches || []).length || librarySettings(db.libraries[s.libraryId]).cover === 'never') return false;
   return !p.coverFile || !fs.existsSync(path.join(COVERS_DIR, p.coverFile));
 }
-// mode 'missing': works never looked up, and matched works still missing their cover; 'all': every work
+// Works whose metadata is worth checking again (delta update): never looked up, a matched work missing its
+// cover, looked up more than STALE_DAYS ago, or whose files changed since the last check
+const STALE_DAYS = 30;
+function needsUpdate(s) {
+  const p = s.provider;
+  if (!p) return true;
+  if (missingCover(s) && p.coverUrl) return true;
+  const checked = p.checkedAt || p.fetchedAt || '';
+  if (!checked || Date.now() - Date.parse(checked) > STALE_DAYS * 86400000) return true;
+  return Boolean(s.updated && s.updated > checked);
+}
+// mode 'missing': works never looked up, and matched works still missing their cover;
+// 'stale': the delta — works needsUpdate() picks; 'all': every work
 function enqueueLibrary(libraryId, mode = 'missing') {
   const ids = Object.values(db.series)
-    .filter(s => s.libraryId === libraryId && (mode === 'all' || !s.provider || (missingCover(s) && s.provider.coverUrl)))
+    .filter(s => s.libraryId === libraryId && (mode === 'all' || (mode === 'stale' ? needsUpdate(s) : !s.provider || (missingCover(s) && s.provider.coverUrl))))
     .sort((a, b) => store.collator.compare(store.seriesMeta(a).sortTitle, store.seriesMeta(b).sortTitle))
     .map(s => s.id);
   return enqueue(ids);
@@ -475,7 +494,7 @@ function batchProgress() {
 }
 function info() {
   return {
-    queue: queue.length, current: status.current, done: status.done, covers: status.covers, lastError: status.lastError,
+    queue: queue.length, current: status.current, done: status.done, changed: status.changed || 0, covers: status.covers, lastError: status.lastError,
     concurrency: concurrency(), progress: batchProgress()
   };
 }

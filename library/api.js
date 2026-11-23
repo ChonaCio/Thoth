@@ -35,7 +35,8 @@ const bookFile = b => path.join(db.libraries[b.libraryId].root, b.relPath);
 function libraryView(lib, user) {
   const series = Object.values(db.series).filter(s => s.libraryId === lib.id).length;
   const books = Object.values(db.books).filter(b => b.libraryId === lib.id).length;
-  const v = { id: lib.id, name: lib.name, seriesCount: series, booksCount: books, scanning: scanner.scanning.has(lib.id) };
+  const v = { id: lib.id, name: lib.name, seriesCount: series, booksCount: books, scanning: scanner.scanning.has(lib.id),
+    defaultSort: store.libraryDefaults(lib).sort }; // everyone: the library page opens with this order
   if (isAdmin(user)) {
     const progress = scanner.scanning.get(lib.id);
     Object.assign(v, {
@@ -66,6 +67,10 @@ function parseDefaults(body, current) {
   if ('bookLayout' in body) {
     if (!store.BOOK_LAYOUTS.includes(body.bookLayout)) throw httpError(400, 'invalid');
     d.bookLayout = body.bookLayout;
+  }
+  if ('sort' in body) {
+    if (!store.SORTS.includes(body.sort)) throw httpError(400, 'invalid');
+    d.sort = body.sort;
   }
   if ('readingDirection' in body) {
     if (body.readingDirection && !store.DIRECTIONS.includes(body.readingDirection)) throw httpError(400, 'invalid');
@@ -346,7 +351,7 @@ async function handle(ctx) {
       metadata: metadata.parseLibrarySettings(body.metadata || {}), defaults: parseDefaults(body.defaults) };
     db.libraries[lib.id] = lib;
     store.saveLibrary();
-    scanner.scanLibrary(lib.id).catch(() => {});
+    scanner.scanLibrary(lib.id, { mode: 'full', reason: 'new' }).catch(() => {}); // first scan: read everything
     return send(201, { library: libraryView(lib, user) });
   }
   if ((m = /^\/api\/libraries\/([\w-]+)$/.exec(p)) && (method === 'PATCH' || method === 'DELETE')) {
@@ -359,6 +364,7 @@ async function handle(ctx) {
       for (const c of Object.values(db.collections)) c.seriesIds = c.seriesIds.filter(id => db.series[id]);
       for (const r of Object.values(db.readlists)) r.bookIds = r.bookIds.filter(id => db.books[id]);
       delete db.libraries[lib.id];
+      scanner.forgetIndex(lib.id);
       store.reindex();
       store.saveLibrary();
       return send(200, { ok: true });
@@ -369,13 +375,13 @@ async function handle(ctx) {
       const root = await validateRoot(body.root);
       if (root !== lib.root) {
         if (Object.values(db.libraries).some(l => l.id !== lib.id && l.root === root)) throw httpError(409, 'folderInUse');
-        lib.root = root; rescan = true;
+        lib.root = root; rescan = 'full'; scanner.forgetIndex(lib.id); // another folder: start over
       }
     }
     const oneshots = parseOneshots(body, scanner.oneshotSettings(lib));
     if (oneshots) {
       const cur = scanner.oneshotSettings(lib);
-      if (oneshots.folder !== cur.folder) rescan = true;
+      if (oneshots.folder !== cur.folder) rescan = rescan || 'changes';
       lib.oneshots = oneshots;
     }
     if (body.metadata && typeof body.metadata === 'object') {
@@ -384,14 +390,14 @@ async function handle(ctx) {
     }
     if (body.defaults && typeof body.defaults === 'object') lib.defaults = parseDefaults(body.defaults, lib.defaults);
     store.saveLibrary();
-    if (rescan) scanner.scanLibrary(lib.id).catch(() => {});
+    if (rescan) scanner.scanLibrary(lib.id, { mode: rescan, reason: 'settings' }).catch(() => {});
     return send(200, { library: libraryView(lib, user) });
   }
   if ((m = /^\/api\/libraries\/([\w-]+)\/scan$/.exec(p)) && method === 'POST') {
     requireAdmin();
     if (!db.libraries[m[1]]) throw httpError(404, 'notFound');
-    // { full: true } re-reads every file; otherwise only new and changed files are read
-    scanner.scanLibrary(m[1], { full: body.full === true }).catch(() => {});
+    // { full: true } re-reads every file; otherwise every file's size/date is checked and only new and changed files are read
+    scanner.scanLibrary(m[1], { mode: body.full === true ? 'full' : scanner.MODES.includes(body.mode) ? body.mode : 'changes', reason: 'manual' }).catch(() => {});
     return send(202, { library: libraryView(db.libraries[m[1]], user), serviceRunning: scanner.serviceState() === 'running' });
   }
   if (p === '/api/library-settings') {
@@ -511,7 +517,8 @@ async function handle(ctx) {
     requireAdmin();
     if (!db.libraries[m[1]]) throw httpError(404, 'notFound');
     // { mode: 'missing' } works never looked up; { mode: 'all' } every work again
-    const queued = metadata.enqueueLibrary(m[1], body.mode === 'all' ? 'all' : 'missing');
+    // 'stale' (delta: new, changed or old), 'missing' (never looked up) or 'all' (everything again)
+    const queued = metadata.enqueueLibrary(m[1], ['all', 'stale'].includes(body.mode) ? body.mode : 'missing');
     return send(202, { queued, status: metadata.info() });
   }
   if ((m = /^\/api\/series\/([\w-]+)\/metadata(\/refresh|\/search|\/identify)?$/.exec(p))) {

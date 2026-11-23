@@ -102,12 +102,14 @@ function splitEdition(name) {
 // taken from providers (the library's names group versions and stay recognizable).
 const BOOK_LAYOUTS = ['tiles', 'list'];
 const DIRECTIONS = ['ltr', 'rtl', 'vertical'];
+const SORTS = ['title', 'added', 'updated'];
 // A library's defaults for its works: { bookLayout: 'tiles'|'list', readingDirection: null (automatic)|'ltr'|'rtl'|'vertical' }
 function libraryDefaults(lib) {
   const d = (lib && lib.defaults) || {};
   return {
     bookLayout: BOOK_LAYOUTS.includes(d.bookLayout) ? d.bookLayout : 'tiles',
-    readingDirection: DIRECTIONS.includes(d.readingDirection) ? d.readingDirection : null
+    readingDirection: DIRECTIONS.includes(d.readingDirection) ? d.readingDirection : null,
+    sort: SORTS.includes(d.sort) ? d.sort : 'title' // how the library page orders works by default
   };
 }
 // (a function declaration: bookMeta uses it during the first reindex(), before this line runs)
@@ -250,7 +252,7 @@ function seriesView(s, user, { admin = false } = {}) {
     coverSource: online ? 'metadata' : cover && cover.format === 'cbz' && cover.pageCount ? 'file' : null,
     // Online metadata: where it came from (the cover image itself is served by /api/series/:id/thumbnail)
     metadata: s.provider ? {
-      fetchedAt: s.provider.fetchedAt, links: s.provider.links || [], sources: s.provider.sources || {},
+      fetchedAt: s.provider.fetchedAt, checkedAt: s.provider.checkedAt || s.provider.fetchedAt, links: s.provider.links || [], sources: s.provider.sources || {},
       matched: (s.provider.matches || []).length > 0, locked: s.provider.locked || null,
       cover: Boolean(s.provider.coverFile), coverProvider: s.provider.coverFile ? s.provider.coverProvider || null : null, errors: admin ? s.provider.errors || [] : undefined
     } : null,
@@ -288,5 +290,5 @@ module.exports = {
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
-  bookView, seriesView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS
+  bookView, seriesView, seriesCounts, coverFromMetadata, metadataCover, libraryDefaults, BOOK_LAYOUTS, DIRECTIONS, SORTS
 };

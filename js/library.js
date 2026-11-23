@@ -197,7 +197,9 @@
   function libState(route) {
     var key = libKey(route);
     if (!cache.libs[key]) {
-      cache.libs[key] = { items: null, total: 0, q: '', sort: route.query.get('sort') || 'title', read: route.query.get('read') || '', error: null, loading: false };
+      // Order: from the address (e.g. "See all" on Home), else the library's default order
+      var libDef = (A().state.libraries || []).filter(function (x) { return x.id === key; })[0];
+      cache.libs[key] = { items: null, total: 0, q: '', sort: route.query.get('sort') || (libDef && libDef.defaultSort) || 'title', read: route.query.get('read') || '', error: null, loading: false };
       FILTERS.forEach(function (f) { cache.libs[key][f] = ''; });
     }
     return cache.libs[key];
@@ -220,7 +222,7 @@
     var qs = Store.qs(q);
     var hash = route.hash.split('?')[0] + (qs ? '?' + qs : '');
     st.lastHash = hash;
-    history.replaceState(null, '', hash);
+    history.replaceState(history.state, '', hash); // keep the entry's key (scroll position)
   }
   function activeFilters(st) { return FILTERS.filter(function (f) { return st[f]; }).length; }
   function libraryName(id) {
@@ -228,17 +230,31 @@
     var l = A().state.libraries.filter(function (x) { return x.id === id; })[0];
     return l ? l.name : '';
   }
-  function fetchSeries(route, append) {
+  // append: the next page ("Load more"). keep: reload as many works as were loaded before (coming back to
+  // the page), in pages of up to 200, while the old list stays on screen.
+  function fetchSeries(route, append, keep) {
     var st = libState(route);
     var key = libKey(route);
     st.loading = true;
-    var params = { library: key === 'all' ? '' : key, q: st.q, sort: st.sort, read: st.read, offset: append ? st.items.length : 0, limit: PAGE_SIZE };
+    var params = { library: key === 'all' ? '' : key, q: st.q, sort: st.sort, read: st.read };
     FILTERS.forEach(function (f) { params[f] = st[f]; });
-    var qs = Store.qs(params);
-    return api('GET', '/api/series?' + qs).then(function (r) {
-      st.items = append ? st.items.concat(r.items) : r.items;
-      st.total = r.total;
+    var page = function (offset, limit) { return api('GET', '/api/series?' + Store.qs(Object.assign({ offset: offset, limit: limit }, params))); };
+    var want = append ? PAGE_SIZE : Math.max(PAGE_SIZE, keep || 0);
+    var start = append ? st.items.length : 0;
+    var got = [];
+    var total = 0;
+    function more() {
+      return page(start + got.length, Math.min(200, want - got.length)).then(function (r) {
+        got = got.concat(r.items);
+        total = r.total;
+        if (got.length < want && got.length + start < total && r.items.length) return more();
+      });
+    }
+    return more().then(function () {
+      st.items = append ? st.items.concat(got) : got;
+      st.total = total;
       st.error = null;
+      st.stale = false;
     }, function (e) { st.error = e; }).then(function () { st.loading = false; renderLibGrid(route); });
   }
   function renderLibGrid(route) {
@@ -256,6 +272,7 @@
     }
     el.innerHTML = html;
     renderIcons(el);
+    A().restoreScroll(); // coming back: scroll to where the user was once the works are on screen
   }
   var filterTimer;
   var library = {
@@ -310,7 +327,9 @@
       });
     },
     enter: function (route) {
-      fetchSeries(route);
+      // Coming back: the works loaded before stay on screen and are reloaded (as many as were loaded)
+      var st = libState(route);
+      fetchSeries(route, false, st.items ? st.items.length : 0);
       // What the filters can offer (genres, tags, … with counts) for this library
       var key = libKey(route);
       api('GET', '/api/series/facets?' + Store.qs({ library: key === 'all' ? '' : key })).then(function (r) {
@@ -720,10 +739,16 @@
   // A running library scan: finding files (count so far) → reading new/changed files (x of y) → saving
   function scanProgressBar(prog, full) {
     var p = prog || { phase: 'listing' };
-    var label = (full ? t('manage.modeFull') + ': ' : '') + t('progress.phase.' + (p.phase || 'listing'));
+    var label = (full ? scanModeLabel(typeof full === 'object' ? full : { full: true }) + ': ' : '') + t('progress.phase.' + (p.phase || 'listing'));
     var detail = p.phase === 'reading' ? t('progress.files', { done: p.done, total: p.total })
       : p.phase === 'listing' ? t('progress.found', { count: p.filesSeen || 0 }) : '';
     return progressBar(p, label, detail);
+  }
+
+  // "Quick scan" / "Scan changes" / "Full scan" for a scan report, running scan or queue entry
+  function scanModeLabel(x) {
+    var m = x.scanMode || (x.full ? 'full' : 'changes');
+    return t(m === 'quick' ? 'manage.modeQuick' : m === 'full' ? 'manage.modeFull' : 'manage.modeChanges');
   }
 
   /* ================= MANAGE LIBRARIES (admins) ================= */
@@ -733,14 +758,15 @@
       var p = l.scanProgress || {};
       if (p.serviceStopped) return '<p class="notice">' + esc(t('manage.queuedStopped')) + ' <a href="#processes">' + esc(t('nav.processes')) + '</a></p>';
       if (p.queued) return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc(t('manage.queued')) + '</p>';
-      if (p.progress) return scanProgressBar(p.progress, p.full);
+      if (p.progress) return scanProgressBar(p.progress, p);
       return '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc((p.full ? t('manage.modeFull') + ': ' : '') + t('manage.scanningNow', { seen: p.filesSeen || 0, analyzed: p.analyzed || 0 })) + '</p>';
     }
     if (l.scanError) return '<p class="notice notice--error">' + esc(A().errMsg({ code: l.scanError, message: l.scanError })) + '</p>';
     var s = l.lastScan;
     if (!s) return '<p class="muted small">' + esc(t('manage.neverScanned')) + '</p>';
-    var html = '<p class="muted small">' + esc(t('manage.lastScan', { time: A().fmtDate(s.at) })) + ' (' + esc(t(s.full ? 'manage.modeFull' : 'manage.modeChanges')) + ') · ' +
-      esc(t('manage.scanSummary', { series: s.series, books: s.books, added: s.added, updated: s.updated, removed: s.removed })) + '</p>';
+    var html = '<p class="muted small">' + esc(t('manage.lastScan', { time: A().fmtDate(s.at) })) + ' (' + esc(scanModeLabel(s) + (s.reason ? ', ' + t('manage.reason.' + s.reason) : '')) + ') · ' +
+      esc(t('manage.scanSummary', { series: s.series, books: s.books, added: s.added, updated: s.updated, removed: s.removed })) +
+      (s.scanMode === 'quick' && s.folders ? ' · ' + esc(t('manage.foldersSkipped', { skipped: s.foldersSkipped || 0, total: s.folders })) : '') + '</p>';
     if (s.unsupported) html += '<p class="notice">' + esc(t(s.unsupported === 1 ? 'manage.unsupported1' : 'manage.unsupported', { count: s.unsupported, examples: (s.unsupportedExamples || []).slice(0, 2).join(', ') })) + '</p>';
     if (s.failedBooks) html += '<p class="notice notice--error">' + esc(t(s.failedBooks === 1 ? 'manage.failed1' : 'manage.failed', { count: s.failedBooks })) + '</p>';
     if (s.errors && s.errors.length) html += '<p class="notice notice--error">' + esc(t('manage.scanErrors')) + ': ' + esc(s.errors.slice(0, 3).join('; ')) + '</p>';
@@ -780,7 +806,7 @@
             '<div class="lib-card__actions">' +
               '<button class="btn btn--outline btn--pill" data-lib="scan-library" data-id="' + l.id + '"' + (l.scanning ? ' disabled' : '') + ' title="' + esc(t('manage.scanChangesHelp')) + '">' + icon('sync') + esc(t(l.scanning ? 'lib.scanning' : 'manage.scanChanges')) + '</button>' +
               '<button class="btn btn--text" data-lib="scan-library" data-full="1" data-id="' + l.id + '"' + (l.scanning ? ' disabled' : '') + ' title="' + esc(t('manage.scanFullHelp')) + '">' + icon('update') + esc(t('manage.scanFull')) + '</button>' +
-              '<button class="btn btn--text" data-lib="library-metadata" data-id="' + l.id + '" title="' + esc(t('meta.fetchMissingHelp')) + '">' + icon('download') + esc(t('meta.fetchMissing')) + '</button>' +
+              '<button class="btn btn--text" data-lib="library-metadata" data-mode="stale" data-id="' + l.id + '" title="' + esc(t('meta.updateHelp')) + '">' + icon('download') + esc(t('meta.update')) + '</button>' +
               '<button class="btn btn--text" data-lib="library-metadata" data-mode="all" data-id="' + l.id + '" title="' + esc(t('meta.refreshAllHelp')) + '">' + icon('sync') + esc(t('meta.refreshAll')) + '</button>' +
               '<button class="btn btn--text" data-lib="library-edit" data-id="' + l.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' +
               '<button class="btn btn--text btn--danger" data-lib="library-delete" data-id="' + l.id + '">' + icon('delete') + esc(t('manage.delete')) + '</button>' +
@@ -811,7 +837,7 @@
           var scanning = r[0].libraries.some(function (l) { return l.scanning; });
           // Keep the page live while a scan runs; refresh the sidebar counts when it ends
           if (scanning) pollTimer = setTimeout(function () { if (location.hash === route.hash) manage.enter(route); }, 1500);
-          if (wasScanning && !scanning) { A().refreshLibraries(); cache.home = null; cache.libs = {}; }
+          if (wasScanning && !scanning) { A().refreshLibraries(); invalidate(); }
         }, function (e) { cache.manage = { error: e }; throw e; });
       });
     }
@@ -864,8 +890,8 @@
       if (!d) return head + spinner;
       if (d.error) return head + errorBanner(d.error);
       var checks = cache.msrcCheck || {}, searches = cache.msrcSearch || {};
-      var folders = d.folder.length ? '<div class="lib-list">' + d.folder.map(function (s) {
-        return '<section class="card lib-card">' +
+      var folders = d.folder.length ? '<div class="lib-list msrc-grid">' + d.folder.map(function (s) {
+        return '<section class="card lib-card msrc-card">' +
           '<div class="lib-card__head"><span class="lib-card__icon">' + icon('description') + '</span>' +
             '<div class="lib-card__text"><h3 class="card__title">' + esc(s.name) + '</h3>' +
             '<p class="muted small lib-card__path">' + icon('folder_open') + '<span>' + esc(s.folder) + '</span></p></div></div>' +
@@ -887,11 +913,11 @@
         '<p class="small">' + esc(t('msrc.howJson')) + '</p>' +
         '<pre class="msrc-pre">{\n  "title": "Romance Dawn",          ← books\n  "number": "1", "date": "1997-07-22",\n  "summary": "…", "genres": ["Adventure"], "tags": ["Pirates"],\n  "status": "ongoing", "type": "manga", "year": 1997, "rating": 9.1,\n  "writer": "Eiichiro Oda", "readingDirection": "rtl", "cover": "op.jpg"\n}</pre>' +
         '<p class="small muted">' + esc(t('msrc.howOrder')) + '</p></details>';
-      var online = '<div class="cards">' + d.online.map(function (p) {
+      var online = '<div class="lib-list msrc-grid">' + d.online.map(function (p) {
         var key = p.needsKey ? (p.keySet ? '<span class="badge badge--ok">' + esc(t('cfg.keySet')) + '</span>' : '<span class="badge badge--danger">' + esc(t('meta.needsKey')) + '</span>')
           : p.optionalKey ? (p.keySet ? '<span class="badge badge--ok">' + esc(t('cfg.keySet')) + '</span>' : '<span class="badge">' + esc(t('msrc.keyOptional')) + '</span>') : '';
-        return '<section class="card proc-card">' +
-          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('open_in_new') + '</span><div>' +
+        return '<section class="card lib-card msrc-card">' +
+          '<div class="lib-card__head"><span class="lib-card__icon">' + icon('open_in_new') + '</span><div>' +
             '<h3 class="card__title"><a href="' + esc(p.homepage) + '" target="_blank" rel="noopener noreferrer">' + esc(p.name) + '</a></h3>' + key + '</div></div>' +
           '<p class="small">' + esc(p.types.map(function (ty) { return t('type.' + ty); }).join(', ')) + '</p>' +
           usedByLine(p.usedBy) +
@@ -1031,15 +1057,15 @@
             : '') +
           '<h3 class="proc-sub">' + esc(t('proc.current')) + '</h3>' +
           (cur && cur.progress
-            ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur.full)
+            ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur)
             : cur
             ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(cur.name) + '</strong> · ' +
-                esc(t(cur.full ? 'manage.modeFull' : 'manage.modeChanges')) + ' · ' +
+                esc(scanModeLabel(cur)) + ' · ' +
                 esc(cur.toAnalyze ? t('proc.progress', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0, total: cur.toAnalyze }) : t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
             : '<p class="muted small">' + esc(t('proc.idle')) + '</p>') +
           '<h3 class="proc-sub">' + esc(t('proc.queue')) + '</h3>' +
           (sc.queue.length
-            ? '<ol class="proc-queue">' + sc.queue.map(function (q) { return '<li>' + esc(q.name) + ' <span class="muted small">(' + esc(t(q.full ? 'manage.modeFull' : 'manage.modeChanges')) + ')</span></li>'; }).join('') + '</ol>'
+            ? '<ol class="proc-queue">' + sc.queue.map(function (q) { return '<li>' + esc(q.name) + ' <span class="muted small">(' + esc(scanModeLabel(q)) + ')</span></li>'; }).join('') + '</ol>'
             : '<p class="muted small">' + esc(t('proc.queueEmpty')) + '</p>') +
           '<div class="lib-card__actions">' +
             '<button class="btn btn--primary btn--pill" data-lib="proc-scan" data-op="start"' + (sc.state === 'running' || sc.state === 'starting' ? ' disabled' : '') + '>' + icon('play') + esc(t('proc.start')) + '</button>' +
@@ -1273,7 +1299,9 @@
 
   /* ================= ACTIONS ================= */
   function invalidate() {
-    cache.home = null; cache.libs = {}; cache.search = {}; cache.collections = null; cache.readlists = null;
+    cache.home = null; cache.search = {}; cache.collections = null; cache.readlists = null;
+    // Library pages keep their search, sort, filters and loaded works (for going back); they reload on entry
+    Object.keys(cache.libs).forEach(function (k) { cache.libs[k].stale = true; });
   }
   function refreshCurrent() {
     var route = A().parseRoute();
@@ -1462,6 +1490,8 @@
     var d = (lib && lib.defaults) || {};
     var dir = function (v) { return { value: v, label: t('series.direction.' + v) }; };
     var defaultFields = [
+      { name: 'defSort', label: t('manage.defaultSort'), type: 'select', value: d.sort || 'title', help: t('manage.defaultSortHelp'),
+        options: [{ value: 'title', label: t('lib.sortTitle') }, { value: 'added', label: t('lib.sortAdded') }, { value: 'updated', label: t('lib.sortUpdated') }] },
       { name: 'defLayout', label: t('layout.libraryLabel'), type: 'select', value: d.bookLayout || 'tiles', help: t('layout.help'),
         options: [{ value: 'tiles', label: t('layout.tiles') }, { value: 'list', label: t('layout.list') }] },
       { name: 'defDirection', label: t('manage.defaultDirection'), type: 'select', value: d.readingDirection || '', help: t('manage.defaultDirectionHelp'),
@@ -1479,12 +1509,13 @@
           placeholder: t('manage.oneshotsNone'), help: t('manage.oneshotsHelpExtra') }
       ].concat(defaultFields, metaFields),
       onSubmit: function (v) {
-        var body = { name: v.name, root: v.root, oneshotsFolder: v.oneshotsFolder, defaults: { bookLayout: v.defLayout, readingDirection: v.defDirection } };
+        var body = { name: v.name, root: v.root, oneshotsFolder: v.oneshotsFolder, defaults: { sort: v.defSort, bookLayout: v.defLayout, readingDirection: v.defDirection } };
         if (v.metaProviders) body.metadata = { providers: v.metaProviders, autoFetch: v.metaAutoFetch, cover: v.metaCover };
         var req = lib ? api('PATCH', '/api/libraries/' + lib.id, body) : api('POST', '/api/libraries', body);
         return req.then(function () {
           A().toast(t(lib ? 'manage.saved' : 'manage.created'));
           invalidate(); cache.series = {};
+          cache.libs = {}; // the library's default order may have changed
           A().refreshLibraries();
           refreshCurrent();
         });
@@ -1559,7 +1590,7 @@
       }
       case 'library-metadata':
         btn.disabled = true;
-        return api('POST', '/api/libraries/' + id + '/metadata', { mode: btn.dataset.mode === 'all' ? 'all' : 'missing' }).then(function (r) {
+        return api('POST', '/api/libraries/' + id + '/metadata', { mode: btn.dataset.mode || 'stale' }).then(function (r) {
           A().toast(r.queued ? t('meta.queued', { count: r.queued }) : t('meta.nothingToDo'));
           btn.disabled = false;
         }, function (e) { btn.disabled = false; fail(e); });

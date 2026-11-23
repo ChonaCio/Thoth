@@ -4,7 +4,7 @@ Read this before changing anything. **Keep it up to date**: whenever a change la
 sections it touches (what exists, conventions, known gaps, recent changes). User-facing documentation
 lives in [README.md](README.md); this file is for whoever develops Thoth next.
 
-_Last updated: 2026-11-23 (folder metadata sources)_
+_Last updated: 2026-11-23 (quick scans, delta updates, default order, back navigation)_
 
 ## What Thoth is
 
@@ -33,16 +33,16 @@ from GitHub (`ChonaCio/Thoth`).
 | `supervisor.js` | Forks `server.js` as a child; exit code **75** = restart me (updates, *Restart server*); crash → restart (gives up after 5 in 60 s); forwards SIGINT/SIGTERM as an IPC `shutdown` message. |
 | `auth.js` | First-user setup, scrypt passwords, sessions (HttpOnly cookie), roles, library access, sign-in throttling. |
 | `config.js` | Server settings in `data/config.json` (`scanWorkers`, `scanConcurrency`, `metadataConcurrency`, API keys). `describe()` hides secrets; `onChange()` listeners. |
-| `updater.js` | Release (`vX.Y.Z`) / push (`pN`) checks, tarball install with backups, version detection (git, `.build-info.json`, `.update-state.json`), `isServerCode()` decides whether a restart is needed. |
+| `updater.js` | Release (`vX.Y.Z`) / push (`pN`) checks, install: delta (`installDelta`: GitHub compare + raw files, removals/renames) with tarball fallback, backups, version detection (git, `.build-info.json`, `.update-state.json`), `isServerCode()` decides whether a restart is needed. |
 | `library/db.js` | In-memory DB persisted to `data/library.json` + `progress.json` (throttled 300 ms saves, flushed on exit). `seriesMeta()` = effective metadata (precedence below), `seriesView()`/`bookView()` = what the browser gets, versions (`EDITIONS`, `splitEdition`), `libraryDefaults()`, `coverFromMetadata()`. |
-| `library/scanner.js` | Scan queue (one library at a time), pool of low-priority worker processes, applying results, one-shots, progress (`progressOf`), `READ_VERSION` (bump to force re-reading files once). |
-| `library/scan-core.js`, `scan-worker.js`, `zip.js` | File work in the workers: listing, ZIP central directory, `ComicInfo.xml`, PDF page counts. Must not touch the DB. |
+| `library/scanner.js` | Scan modes (`quick`/`changes`/`full`, `MODES`; automatic scans are quick), saved scan index (`data/scan-index/<lib>.json`: `loadIndex`/`saveIndex`/`forgetIndex`), scan queue (one library at a time; a waiting scan is upgraded to the strongest mode asked), pool of low-priority worker processes, applying results, one-shots, progress (`progressOf`), `READ_VERSION` (bump to force re-reading files once). |
+| `library/scan-core.js`, `scan-worker.js`, `zip.js` | File work in the workers: listing (`listFiles` builds the scan index; with `quick` it reuses unchanged folders' entries), ZIP central directory, `ComicInfo.xml`, PDF page counts. Must not touch the DB. |
 | `library/api.js` | Library REST routes: libraries, series (works grouped by version), facets/filters, books, pages, progress, collections, read lists, metadata actions. |
 | `library/metadata/providers.js` | One object per site: `search(q)`, `fetch(id)` → normalized record. Per-site rate limit, retries on 429, timeouts. |
 | `library/metadata/index.js` | Source registry (online `PROVIDERS` + folder sources from `db.metadataSources`, `byId`), per-library order (folder sources forced first: `localFirst`), online merge (first match fills each field), cover download, Identify (locked match, online only), queue with concurrency + batch progress, folder sources: `applyLocal`, CRUD, `checkSource`. |
 | `library/metadata/local.js` | Folder sources: indexing a folder (`buildIndex`), JSON parsing with mtime cache, key matching (`path` / `name` modes), JSON → work/book records (`seriesRecord`, `bookRecord`), covers next to the JSON. No DB access. |
 | `index.html`, `css/styles.css` | App shell, dialogs (form, identify, profile, users), theme tokens (light/dark). |
-| `js/app.js` | Router (`#name/param?query`), sidebar, account menu, users, updates (incl. waiting for the auto-restart). |
+| `js/app.js` | Router (`#name/param?query`), per-history-entry scroll memory (`history.state.k`, `markHistoryEntry`/`restoreScroll`: new entries start at the top, Back/Forward restore once content is tall enough), sidebar, account menu, users, updates (incl. waiting for the auto-restart). |
 | `js/library.js` | All library pages (home, library grid + filters, work page, book, search, collections, read lists, manage libraries, metadata sources, processes, server settings), the generic form dialog, Identify dialog, progress bars. ES5 style (`var`, `function`), no modules. |
 | `js/reader.js` | Reader (ltr / rtl / continuous, fits, PDF via pdf.js from cdnjs). |
 | `js/i18n.js`, `js/i18n-library.js` | Strings; `add(lang, {...})` merges blocks. |
@@ -51,10 +51,11 @@ from GitHub (`ChonaCio/Thoth`).
 
 ## Data model (data/library.json)
 
-- `libraries[id]`: `{ id, name, root, created, oneshots: { folder }, defaults: { bookLayout: 'tiles'|'list', readingDirection: null|'ltr'|'rtl'|'vertical' }, metadata: { providers: [{ id, enabled }], autoFetch, cover: 'missing'|'always'|'never' }, lastScan, scanError }`
-- `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion }) }`
+- `libraries[id]`: `{ id, name, root, created, oneshots: { folder }, defaults: { sort: 'title'|'added'|'updated', bookLayout: 'tiles'|'list', readingDirection: null|'ltr'|'rtl'|'vertical' }, metadata: { providers: [{ id, enabled }], autoFetch, cover: 'missing'|'always'|'never' }, lastScan, scanError }`
+- `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt (last change), checkedAt (last check) }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion }) }`
 - `books[id]`: `{ id, seriesId, libraryId, relPath, fileName, format, pageCount, size, fileModified, meta, local ({ merged, sourceId, file }), overrides, index, readVersion }`
 - `metadataSources[id]` (folder sources): `{ id: 'folder-…', name, folder (absolute), match: 'path'|'name', created, updated }`. `s.local`/`b.local` are recomputed from the JSON files by `applyLocal` (after every scan, Refresh, source/library changes), so they can always be thrown away.
+- `data/scan-index/<library>.json` (not in library.json): `{ version: 1, root, dirs: { relDir: { mtimeMs, files: [[name, size, modified]], dirs, unsupported } } }` from the last scan; safe to delete (the next scan is then a "changes" scan).
 - IDs are stable hashes of library + path, so rescans and one-shot setting changes keep progress.
 
 **Precedence of a work's values** (`seriesMeta`): admin overrides > folder sources > `ComicInfo.xml` >
@@ -89,6 +90,10 @@ through `/api/setup`, and use the browser.
   object (parse/validate in `api.js`); per work in `series.overrides`.
 - The client tolerates an older server (missing fields → defaults), because after an update the page can talk
   to the old process for a moment.
+- Library pages keep their state (search, sort, filters, loaded works) in `cache.libs`; `invalidate()` marks it
+  `stale` instead of dropping it, and `enter()` reloads as many works as were loaded, so Back keeps the place.
+- Work tiles: one size everywhere (`--tile-w` in `styles.css`; titles reserve two lines). Card grids for
+  libraries/sources share `.lib-list`; metadata sources use `.msrc-grid` (equal heights).
 - Anything long-running reports progress the same way: `{ percent | null, etaMs | null, elapsedMs, … }`, shown
   with `progressBar()` in `js/library.js`.
 - Changing what's read from files: bump `READ_VERSION` in `scanner.js` so existing books are read again once.
@@ -96,8 +101,11 @@ through `/api/setup`, and use the browser.
 ## Known gaps / ideas
 
 - An update that changes `supervisor.js` itself only applies after a full service restart.
-- On Windows, killing the supervisor abruptly (Task Manager, `kill`) leaves the server child to finish saving
-  on its own; starting a new server before it exits can lose the last changes (Linux SIGTERM path is clean).
+- On Windows, Node puts child processes in a job object that kills them when the parent dies: killing the
+  supervisor abruptly (Task Manager, `kill`) kills the server child too, losing changes from the last ~300 ms
+  (saves are batched). Linux/Docker SIGTERM and Ctrl+C are graceful. Tests that restart the server wait 1 s first.
+- Quick scans rely on folder modification times. A file rewritten in place may not change its folder's date on
+  every file system (NTFS does, ext4 doesn't); *Scan changes* always catches it.
 - One-shot page tiles load full-size pages (lazy, no resized thumbnails). PDF one-shots show the book card.
 - Works matched before genres existed keep genres mixed into tags until *Refresh metadata* / *Refresh all*.
 - Some MangaDex cover images may not show in the Identify dialog (hotlink restrictions); downloads work.
@@ -114,6 +122,13 @@ through `/api/setup`, and use the browser.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+
+- **2026-11-23** — Saved scan index + quick scans (startup/schedule look only into changed folders; first scan
+  and new folders are full; *Scan changes* checks every file); delta update installs (only changed files
+  downloaded, removals applied; `install(..., { full: true })` forces the tarball); metadata delta (*Update
+  metadata* = new/changed/coverless/30-day-old works; unchanged results don't bump `updated`/`fetchedAt`,`checkedAt`
+  added); default order per library (`defaults.sort`, `defaultSort` for all users); same-size tiles; Back
+  restores scroll and loaded works. New suite `tests/test-scans.js`; delta install checks in `test-updater.js`.
 
 - **2026-11-23** — Metadata sources page (`#metadata-sources`): online sites with key status, libraries using
   them and a test search (`GET /api/metadata/sources/:id/search`); folder sources (JSON files matched by name,

@@ -1166,4 +1166,46 @@
     'msrc.folderSourceNote': 'Fonte de pasta · {folder}', 'msrc.foldersFirst': 'Fontes de pasta sempre vêm antes dos sites online',
     'msrc.fromFile': 'De {file}', 'msrc.withCover': 'com a imagem de capa', 'msrc.bookSource': 'Metadados de'
   });
+
+  // Quick scans, delta updates, default order
+  add('en', {
+    'manage.modeQuick': 'quick scan', 'manage.foldersSkipped': '{skipped} of {total} folders unchanged',
+    'manage.reason.startup': 'at startup', 'manage.reason.schedule': 'scheduled', 'manage.reason.manual': 'requested', 'manage.reason.settings': 'after a settings change',
+    'manage.reason.new': 'first scan', 'manage.reason.trigger': 'file change',
+    'manage.defaultSort': 'Default order', 'manage.defaultSortHelp': 'How the library page orders works when it opens. Readers can still change it.',
+    'meta.update': 'Update metadata', 'meta.updateHelp': 'Look up only what needs it: new works, works whose files changed, missing covers and works not checked for 30 days',
+    'upd.modeDelta': 'Only the changes were downloaded: {files} files updated, {removed} removed.', 'upd.modeFull': 'The whole version was downloaded; {files} files were different.'
+  });
+  add('es', {
+    'manage.modeQuick': 'escaneo rápido', 'manage.foldersSkipped': '{skipped} de {total} carpetas sin cambios',
+    'manage.reason.startup': 'al iniciar', 'manage.reason.schedule': 'programado', 'manage.reason.manual': 'solicitado', 'manage.reason.settings': 'tras cambiar ajustes',
+    'manage.reason.new': 'primer escaneo', 'manage.reason.trigger': 'cambio de archivos',
+    'manage.defaultSort': 'Orden predeterminado', 'manage.defaultSortHelp': 'Cómo ordena las obras la página de la biblioteca al abrirse. Los lectores pueden cambiarlo.',
+    'meta.update': 'Actualizar metadatos', 'meta.updateHelp': 'Buscar solo lo necesario: obras nuevas, obras cuyos archivos cambiaron, portadas que faltan y obras sin revisar en 30 días',
+    'upd.modeDelta': 'Solo se descargaron los cambios: {files} archivos actualizados, {removed} eliminados.', 'upd.modeFull': 'Se descargó la versión completa; {files} archivos eran distintos.'
+  });
+  add('fr', {
+    'manage.modeQuick': 'analyse rapide', 'manage.foldersSkipped': '{skipped} dossiers sur {total} inchangés',
+    'manage.reason.startup': 'au démarrage', 'manage.reason.schedule': 'planifiée', 'manage.reason.manual': 'demandée', 'manage.reason.settings': 'après un changement de réglages',
+    'manage.reason.new': 'première analyse', 'manage.reason.trigger': 'changement de fichiers',
+    'manage.defaultSort': 'Ordre par défaut', 'manage.defaultSortHelp': 'Comment la page de la bibliothèque trie les œuvres à l’ouverture. Les lecteurs peuvent le changer.',
+    'meta.update': 'Mettre à jour les métadonnées', 'meta.updateHelp': 'Ne rechercher que le nécessaire : nouvelles œuvres, œuvres dont les fichiers ont changé, couvertures manquantes et œuvres non vérifiées depuis 30 jours',
+    'upd.modeDelta': 'Seuls les changements ont été téléchargés : {files} fichiers mis à jour, {removed} supprimés.', 'upd.modeFull': 'La version complète a été téléchargée ; {files} fichiers étaient différents.'
+  });
+  add('de', {
+    'manage.modeQuick': 'Schnellscan', 'manage.foldersSkipped': '{skipped} von {total} Ordnern unverändert',
+    'manage.reason.startup': 'beim Start', 'manage.reason.schedule': 'geplant', 'manage.reason.manual': 'angefordert', 'manage.reason.settings': 'nach geänderten Einstellungen',
+    'manage.reason.new': 'erster Scan', 'manage.reason.trigger': 'Dateiänderung',
+    'manage.defaultSort': 'Standard-Sortierung', 'manage.defaultSortHelp': 'Wie die Bibliotheksseite Werke beim Öffnen sortiert. Leser können es ändern.',
+    'meta.update': 'Metadaten aktualisieren', 'meta.updateHelp': 'Nur Nötiges suchen: neue Werke, Werke mit geänderten Dateien, fehlende Cover und Werke, die seit 30 Tagen nicht geprüft wurden',
+    'upd.modeDelta': 'Nur die Änderungen wurden geladen: {files} Dateien aktualisiert, {removed} entfernt.', 'upd.modeFull': 'Die ganze Version wurde geladen; {files} Dateien waren anders.'
+  });
+  add('pt', {
+    'manage.modeQuick': 'varredura rápida', 'manage.foldersSkipped': '{skipped} de {total} pastas sem alterações',
+    'manage.reason.startup': 'ao iniciar', 'manage.reason.schedule': 'agendada', 'manage.reason.manual': 'solicitada', 'manage.reason.settings': 'após mudar configurações',
+    'manage.reason.new': 'primeira varredura', 'manage.reason.trigger': 'mudança de arquivos',
+    'manage.defaultSort': 'Ordem padrão', 'manage.defaultSortHelp': 'Como a página da biblioteca ordena as obras ao abrir. Os leitores podem mudar.',
+    'meta.update': 'Atualizar metadados', 'meta.updateHelp': 'Buscar só o necessário: obras novas, obras com arquivos alterados, capas faltando e obras não verificadas há 30 dias',
+    'upd.modeDelta': 'Só as mudanças foram baixadas: {files} arquivos atualizados, {removed} removidos.', 'upd.modeFull': 'A versão inteira foi baixada; {files} arquivos eram diferentes.'
+  });
 })();

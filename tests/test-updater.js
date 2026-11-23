@@ -7,6 +7,17 @@ const app = path.resolve(process.argv[2]);
 // Real tarball of main, fake release/tag listings
 const realFetch = global.fetch;
 const SHA = 'a'.repeat(40);
+// The fake delta between v0.2.0 and p10
+const DELTA_FILES = [
+  { filename: 'js/app.js', status: 'modified' },
+  { filename: 'library/new-thing.js', status: 'added' },
+  { filename: 'old-file.txt', status: 'removed' },
+  { filename: 'docs/renamed.md', status: 'renamed', previous_filename: 'docs/before.md' },
+  { filename: 'data/users.json', status: 'modified' },   // protected: never touched
+  { filename: '../outside.js', status: 'added' }          // unsafe path: ignored
+];
+const RAW = { 'js/app.js': '/* app from p10 */', 'library/new-thing.js': 'module.exports = 1;', 'docs/renamed.md': '# renamed' };
+const RAW_FETCHES = [];
 global.fetch = async (url, opts) => {
   const u = String(url);
   const json = body => new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } });
@@ -22,7 +33,16 @@ global.fetch = async (url, opts) => {
     { name: 'p2', commit: { sha: 'c'.repeat(40) } }, { name: 'px', commit: { sha: 'd'.repeat(40) } }
   ] : []);
   if (u.includes('/commits/')) return json({ sha: SHA });
-  if (u.includes('/compare/')) return json({ status: 'behind', behind_by: 1 }); // other tags are newer/elsewhere
+  if (u.includes('/compare/')) {
+    // From v0.2.0 (aaa…) to p10 (bbb…): the files a delta install needs
+    if (u.includes(`/compare/${SHA}...${'b'.repeat(40)}`)) return json({ status: 'ahead', ahead_by: 3, files: DELTA_FILES });
+    return json({ status: 'behind', behind_by: 1 }); // other tags are newer/elsewhere
+  }
+  if (u.startsWith('https://raw.githubusercontent.com/')) {
+    RAW_FETCHES.push(u);
+    const rel = decodeURIComponent(u.split('/').slice(6).join('/'));
+    return new Response(RAW[rel] || 'missing', { status: RAW[rel] ? 200 : 404 });
+  }
   throw new Error('unexpected ' + u);
 };
 
@@ -58,5 +78,33 @@ global.fetch = async (url, opts) => {
   assert.strictEqual(after.updateAvailable, false);
   const afterPush = await up.check('push');
   assert.deepStrictEqual(afterPush.newer.map(p => p.tag), ['p10']);
+  assert.strictEqual(res.mode, 'full', 'first install (running commit unknown): whole version');
+  console.log('  ✓ full install when the running commit is unknown');
+
+  // ---- delta install: only what changed between the running commit (v0.2.0) and p10 ----
+  fs.writeFileSync(path.join(app, 'old-file.txt'), 'removed by the update');
+  fs.mkdirSync(path.join(app, 'docs'), { recursive: true });
+  fs.writeFileSync(path.join(app, 'docs', 'before.md'), '# before');
+  const usersBefore = fs.existsSync(path.join(app, 'data', 'users.json'));
+  const d = await up.install('push', 'p10');
+  console.log('delta result:', Object.assign({}, d, { current: undefined }));
+  assert.strictEqual(d.mode, 'delta');
+  assert.strictEqual(RAW_FETCHES.length, 3, 'only the 3 changed files were downloaded (no tarball)');
+  assert.strictEqual(fs.readFileSync(path.join(app, 'js', 'app.js'), 'utf8'), '/* app from p10 */', 'modified file written');
+  assert(fs.existsSync(path.join(app, 'library', 'new-thing.js')), 'added file written');
+  assert(!fs.existsSync(path.join(app, 'old-file.txt')) && fs.readFileSync(path.join(app, d.backup, 'old-file.txt'), 'utf8') === 'removed by the update', 'removed file deleted, kept in the backup');
+  assert(!fs.existsSync(path.join(app, 'docs', 'before.md')) && fs.existsSync(path.join(app, 'docs', 'renamed.md')), 'renamed file moved');
+  assert.strictEqual(fs.existsSync(path.join(app, 'data', 'users.json')), usersBefore, 'protected data/ untouched');
+  assert(!fs.existsSync(path.join(app, '..', 'outside.js')), 'paths outside the app ignored');
+  assert.strictEqual(d.restartRequired, true, 'a server file changed → restart');
+  assert.strictEqual(d.files, 3); assert.strictEqual(d.removed, 2);
+  assert.strictEqual(up.runningCommit().commit, 'b'.repeat(40), 'running commit recorded');
+  console.log('  ✓ delta install: 3 files downloaded, removals and renames applied, protected paths untouched');
+
+  // ---- forcing the whole version ----
+  RAW_FETCHES.length = 0;
+  const f = await up.install('push', 'p10', { full: true });
+  assert.strictEqual(f.mode, 'full'); assert.strictEqual(RAW_FETCHES.length, 0);
+  console.log('  ✓ { full: true } downloads the whole version');
   console.log('ALL TESTS PASSED');
 })().catch(e => { console.error('FAILED:', e); process.exit(1); });

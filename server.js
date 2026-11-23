@@ -113,7 +113,7 @@ async function handleApi(req, res, url) {
     }
     if (method === 'POST' && url.pathname === '/api/updates/install') {
       const { user } = auth.requireAdmin(req);
-      const result = await updater.install(body.channel, String(body.tag || ''));
+      const result = await updater.install(body.channel, String(body.tag || ''), { full: body.full === true });
       // New server code: restart by itself after replying (the supervisor starts the new code); the page
       // waits for the server to come back and reloads
       result.autoRestart = result.restartRequired && SELF_RESTART;

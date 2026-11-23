@@ -419,15 +419,18 @@ a { color: var(--primary); text-decoration: none; }
 .cover__layer--1 { transform: translate(6px, -6px) scale(.96); opacity: .7; }
 .cover__layer--2 { transform: translate(12px, -12px) scale(.92); opacity: .45; }
 
-/* Card grids & shelves */
-.media-grid { display: grid; gap: clamp(12px, 1.4vw, 24px) clamp(10px, 1.2vw, 20px); grid-template-columns: repeat(auto-fill, minmax(clamp(120px, 13vw, 180px), 1fr)); }
-.media-card { position: relative; min-width: 0; }
+/* Card grids & shelves: every work/book tile has the same width (--tile-w) and the same height (two title
+   lines and one subtitle line are always reserved), on every page and in every library */
+:root { --tile-w: 160px; --tile-gap: 20px; }
+@media (max-width: 600px) { :root { --tile-w: 148px; --tile-gap: 12px; } }
+.media-grid { display: grid; gap: var(--tile-gap); grid-template-columns: repeat(auto-fill, var(--tile-w)); justify-content: start; }
+.media-card { position: relative; min-width: 0; width: var(--tile-w); }
 .media-card__link { display: block; color: var(--text); border-radius: 10px; }
 .media-card__link:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .media-card__link:hover .cover { box-shadow: 0 4px 14px rgba(0,0,0,.25); }
-.media-card__title { margin-top: 8px; font-weight: 500; font-size: 14px; line-height: 1.3; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.media-card__title { margin-top: 8px; font-weight: 500; font-size: 14px; line-height: 1.3; min-height: 2.6em; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
 .media-card__num { color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.media-card__sub { color: var(--text-muted); font-size: 12px; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.media-card__sub { color: var(--text-muted); font-size: 12px; line-height: 1.4; min-height: 1.4em; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .media-card__remove { position: absolute; top: 4px; left: 4px; z-index: 3; background: var(--surface); box-shadow: var(--shadow); opacity: 0; transition: opacity .15s; }
 .media-card:hover .media-card__remove, .media-card__remove:focus-visible { opacity: 1; }
 .media-card__tools { display: flex; justify-content: center; gap: 2px; margin-top: 4px; }
@@ -436,7 +439,7 @@ a { color: var(--primary); text-decoration: none; }
 .shelf { margin-bottom: 28px; }
 .shelf__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 10px; }
 .shelf__title { margin: 0; font-size: 18px; font-weight: 500; }
-.shelf__row { display: grid; grid-auto-flow: column; grid-auto-columns: clamp(120px, 13vw, 170px); gap: clamp(10px, 1.2vw, 20px); overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
+.shelf__row { display: grid; grid-auto-flow: column; grid-auto-columns: var(--tile-w); gap: var(--tile-gap); overflow-x: auto; padding: 4px 2px 10px; scroll-snap-type: x proximity; overscroll-behavior-x: contain; }
 .shelf__row > * { scroll-snap-align: start; }
 
 /* Version tabs on a work page */
@@ -542,8 +545,15 @@ a.chip--filter:hover { background: var(--hover); color: var(--text); }
 .prev-next__link--next { text-align: right; margin-left: auto; }
 
 /* Library management */
-.lib-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); margin-bottom: 16px; }
-.lib-card { gap: 10px; }
+/* One card grid for libraries and metadata sources: same column widths everywhere, cards in a row as tall as
+   the tallest, actions lined up at the bottom */
+.lib-list { display: grid; gap: 16px; grid-template-columns: repeat(auto-fill, minmax(min(100%, 380px), 1fr)); align-items: stretch; margin-bottom: 16px; }
+.lib-card { gap: 10px; min-width: 0; }
+.lib-card__actions { margin-top: auto; }
+/* Metadata sources: every card the same size (rows as tall as the tallest card, at least 260px) */
+.msrc-grid { grid-auto-rows: minmax(260px, 1fr); }
+.msrc-card .msrc-search { width: 100%; margin-top: auto; }
+.msrc-card [data-msrc-results] { width: 100%; max-height: 180px; overflow-y: auto; }
 .lib-card__head { display: flex; gap: 12px; align-items: center; min-width: 0; width: 100%; }
 .lib-card__icon { width: 40px; height: 40px; border-radius: 10px; background: var(--primary-soft); color: var(--on-primary-soft); display: flex; align-items: center; justify-content: center; flex: none; }
 .lib-card__text { min-width: 0; }
@@ -623,8 +633,7 @@ body.is-reading { overflow: hidden; }
   .detail { grid-template-columns: 1fr; }
   .detail__cover { width: min(60%, 220px); margin: 0 auto; }
   .reader__count { display: none; }
-  .shelf__row { grid-auto-columns: 42vw; }
-  .media-grid { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
+  /* (tiles keep the standard --tile-w; see "Card grids & shelves") */
 }
 
 /* ================= Dialog ================= */

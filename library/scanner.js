@@ -9,6 +9,7 @@
 // a time (Server settings: "Scan processes" and "Files at once per process"). Libraries are scanned one
 // at a time; this process applies the results to the database.
 const os = require('os');
+const fs = require('fs');
 const path = require('path');
 const { fork } = require('child_process');
 const core = require('./scan-core');
@@ -181,14 +182,40 @@ function onWorkerExit(w, code) {
 }
 
 /* ---------------- running one scan ---------------- */
-async function listFiles(lib, status) {
-  if (service.mode === 'inline') { status.mode = 'server'; return core.listFiles(lib.root, n => { status.filesSeen = n; }); }
+async function listFiles(lib, status, prev, quick) {
+  if (service.mode === 'inline') { status.mode = 'server'; return core.listFiles(lib.root, n => { status.filesSeen = n; }, { prev, quick }); }
   const w = service.workers[0];
   if (!w || service.state !== 'running') throw cancelled();
   status.mode = 'worker';
   status.worker = w.pid;
-  return request(w, { type: 'list', root: lib.root }, m => { status.filesSeen = m.filesSeen; });
+  return request(w, { type: 'list', root: lib.root, prev, quick }, m => { status.filesSeen = m.filesSeen; });
 }
+
+/* ---------------- saved scan index (data/scan-index/<library>.json) ----------------
+ * What the last scan saw: every folder with its modification time and its files' sizes/dates. A quick scan
+ * reuses the entries of folders that haven't changed, so it only has to check folders, not every file. */
+const INDEX_DIR = path.join(store.DATA_DIR, 'scan-index');
+const indexFile = libraryId => path.join(INDEX_DIR, `${libraryId}.json`);
+function loadIndex(libraryId) {
+  try { return JSON.parse(fs.readFileSync(indexFile(libraryId), 'utf8')); } catch { return null; }
+}
+function saveIndex(libraryId, index) {
+  try {
+    fs.mkdirSync(INDEX_DIR, { recursive: true });
+    const tmp = indexFile(libraryId) + `.${process.pid}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(index));
+    fs.renameSync(tmp, indexFile(libraryId));
+  } catch (e) { console.error('[library] could not save the scan index:', e.message); }
+}
+function forgetIndex(libraryId) { fs.rmSync(indexFile(libraryId), { force: true }); }
+
+// Scan modes, lightest first:
+//   quick   – folders unchanged since the last scan are not looked into (startup, schedule, triggers)
+//   changes – every file's size and date is checked (the "Scan changes" button)
+//   full    – every file is read again (first scan of a library, or the "Full scan" button)
+// Only new or changed files are opened in quick/changes scans.
+const MODES = ['quick', 'changes', 'full'];
+const strongest = (a, b) => MODES[Math.max(MODES.indexOf(a), MODES.indexOf(b))];
 
 // Spread the files to read over every worker; each reads `scanConcurrency` files at a time
 async function analyzeFiles(lib, rels, status) {
@@ -230,15 +257,20 @@ async function runScan(job) {
   const started = Date.now();
   try {
     status.phase = 'listing';
-    const listing = await listFiles(lib, status);
+    // The first scan of a library is always full; a quick scan needs the saved index of the last one
+    const hasBooks = Object.values(store.db.books).some(b => b.libraryId === libraryId);
+    if (!hasBooks && !lib.lastScan) job.mode = 'full';
+    const prev = job.mode === 'full' ? null : loadIndex(libraryId);
+    const listing = await listFiles(lib, status, prev, job.mode === 'quick');
     status.filesSeen = listing.files.length;
+    const full = job.mode === 'full';
 
     // Read only new or changed files (by size and modification time), or every file for a full scan.
     // Books read by an older version of the reader (READ_VERSION) are read again once.
     const books = new Map(Object.values(store.db.books).filter(b => b.libraryId === libraryId).map(b => [b.relPath, b]));
     const toRead = listing.files.filter(f => {
       const b = books.get(f.rel);
-      return job.full || !b || b.size !== f.size || b.fileModified !== f.fileModified || (b.readVersion || 1) < READ_VERSION;
+      return full || !b || b.size !== f.size || b.fileModified !== f.fileModified || (b.readVersion || 1) < READ_VERSION;
     }).map(f => f.rel);
     status.phase = 'reading';
     status.readingStartedAt = Date.now();
@@ -335,8 +367,13 @@ async function runScan(job) {
 
     store.reindex();
     const cfg = config.get();
+    if (listing.index) saveIndex(libraryId, listing.index); // the next quick scan starts from here
+    const ls = listing.stats || {};
     lib.lastScan = {
-      at: new Date().toISOString(), durationMs: Date.now() - started, mode: status.mode, full: Boolean(job.full),
+      at: new Date().toISOString(), durationMs: Date.now() - started, mode: status.mode,
+      scanMode: job.mode, full: full, reason: job.reason || 'manual',
+      // quick scans: how many folders were unchanged (not looked into) and how many files were checked
+      folders: ls.dirs || 0, foldersSkipped: ls.dirsReused || 0, filesChecked: ls.filesChecked != null ? ls.filesChecked : listing.files.length,
       processes: status.mode === 'worker' ? service.workers.length : 1, concurrency: cfg.scanConcurrency, read: toRead.length,
       series: seenSeries.size, books: seenBooks.size, added, updated, removed,
       unsupported: listing.unsupported.length, unsupportedExamples: listing.unsupported.slice(0, 5),
@@ -345,7 +382,8 @@ async function runScan(job) {
     };
     delete lib.scanError;
     store.saveLibrary();
-    console.log(`[library] scanned "${lib.name}": ${seenSeries.size} series, ${seenBooks.size} books (+${added} new, ${updated} changed, ${removed} removed; read ${toRead.length} files) in ${Date.now() - started} ms`);
+    console.log(`[library] ${job.mode} scan of "${lib.name}" (${job.reason || 'manual'}): ${seenSeries.size} series, ${seenBooks.size} books (+${added} new, ${updated} changed, ${removed} removed; read ${toRead.length} files` +
+      (job.mode === 'quick' && ls.quick ? `; ${ls.dirsReused} of ${ls.dirs} folders unchanged` : '') + `) in ${Date.now() - started} ms`);
     // Online metadata for works that don't have it yet (in the background, if the library fetches it automatically)
     try { metadata.afterScan(libraryId); } catch (e) { console.error('[metadata]', e.message); }
     return lib.lastScan;
@@ -364,22 +402,24 @@ async function runScan(job) {
 const queue = [];
 let currentJob = null;
 
-// full: re-read every file (otherwise only new and changed files are read)
-function scanLibrary(libraryId, { full = false } = {}) {
+// mode: 'quick' | 'changes' | 'full' (see MODES); { full: true } is the same as mode 'full'.
+// reason: 'startup' | 'schedule' | 'trigger' | 'manual' | 'settings' (shown in the scan report and log)
+function scanLibrary(libraryId, { full = false, mode, reason = 'manual' } = {}) {
   if (!store.db.libraries[libraryId]) return Promise.reject(Object.assign(new Error('Library not found'), { status: 404, code: 'notFound' }));
+  mode = full ? 'full' : MODES.includes(mode) ? mode : 'changes';
   const existing = scanning.get(libraryId);
   if (existing) {
-    // Waiting in line: a full scan request upgrades it. Running: run once more afterwards
-    // (settings may have changed), as a full scan if one was asked for.
+    // Waiting in line: a stronger request upgrades it. Running: run once more afterwards
+    // (settings may have changed), as the strongest mode asked for.
     const waiting = queue.find(j => j.libraryId === libraryId);
-    if (waiting) { waiting.full = waiting.full || full; existing.full = waiting.full; }
-    else { existing.again = true; existing.againFull = existing.againFull || full; }
+    if (waiting) { waiting.mode = strongest(waiting.mode, mode); existing.scanMode = waiting.mode; existing.full = waiting.mode === 'full'; }
+    else { existing.again = true; existing.againMode = strongest(existing.againMode || 'quick', mode); existing.againReason = reason; }
     return Promise.resolve({ alreadyScheduled: true });
   }
-  const status = { queued: true, full, filesSeen: 0, toAnalyze: 0, analyzed: 0 };
+  const status = { queued: true, full: mode === 'full', scanMode: mode, reason, filesSeen: 0, toAnalyze: 0, analyzed: 0 };
   scanning.set(libraryId, status);
   return new Promise((resolve, reject) => {
-    queue.push({ libraryId, full, status, resolve, reject });
+    queue.push({ libraryId, mode, reason, status, resolve, reject });
     pump();
   });
 }
@@ -398,7 +438,7 @@ async function pump() {
   } else {
     scanning.delete(job.libraryId);
     if (error) job.reject(error); else job.resolve(result);
-    if (job.status.again && store.db.libraries[job.libraryId]) scanLibrary(job.libraryId, { full: job.status.againFull }).catch(() => {});
+    if (job.status.again && store.db.libraries[job.libraryId]) scanLibrary(job.libraryId, { mode: job.status.againMode, reason: job.status.againReason }).catch(() => {});
   }
   pump();
 }
@@ -427,9 +467,9 @@ function serviceInfo() {
     startedAt: service.startedAt, restarts: service.restarts, lastError: service.lastError,
     processes: cfg.scanWorkers, concurrency: cfg.scanConcurrency,
     workers: service.workers.map(w => ({ pid: w.pid, startedAt: w.startedAt, stats: w.stats, busy: w.pending.size > 0 })),
-    current: currentJob ? { libraryId: currentJob.libraryId, name: name(currentJob.libraryId), full: Boolean(currentJob.full),
+    current: currentJob ? { libraryId: currentJob.libraryId, name: name(currentJob.libraryId), full: currentJob.mode === 'full', scanMode: currentJob.mode, reason: currentJob.reason,
       startedAt: currentJob.status.startedAt, filesSeen: currentJob.status.filesSeen, toAnalyze: currentJob.status.toAnalyze, analyzed: currentJob.status.analyzed, progress: progressOf(currentJob.status) } : null,
-    queue: queue.map(j => ({ libraryId: j.libraryId, name: name(j.libraryId), full: Boolean(j.full) }))
+    queue: queue.map(j => ({ libraryId: j.libraryId, name: name(j.libraryId), full: j.mode === 'full', scanMode: j.mode, reason: j.reason }))
   };
 }
 
@@ -439,18 +479,19 @@ function init() {
 }
 
 // Scan every library now, and again every N minutes (settings.scanIntervalMinutes; 0 = never)
+// Automatic scans (startup, schedule, and future file-change triggers) are quick scans.
 let timer = null;
-function scanAll() {
-  for (const id of Object.keys(store.db.libraries)) scanLibrary(id).catch(() => {});
+function scanAll(reason = 'startup') {
+  for (const id of Object.keys(store.db.libraries)) scanLibrary(id, { mode: 'quick', reason }).catch(() => {});
 }
 function startSchedule() {
   clearInterval(timer);
   const minutes = Number(store.db.settings.scanIntervalMinutes) || 0;
-  if (minutes > 0) timer = setInterval(scanAll, minutes * 60 * 1000).unref();
+  if (minutes > 0) timer = setInterval(() => scanAll('schedule'), minutes * 60 * 1000).unref();
 }
 
 module.exports = {
   scanLibrary, scanAll, startSchedule, init, scanning, imageEntries, IMAGE_TYPES, BOOK_EXT, parseComicInfo,
-  oneshotSettings, normalizeOneshotFolder,
+  oneshotSettings, normalizeOneshotFolder, forgetIndex, MODES,
   startService, stopService, restartService, serviceInfo, serviceState: () => service.state, progressOf
 };

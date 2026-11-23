@@ -94,6 +94,18 @@ const byTitle = (items, t) => items.find(s => s.workTitle === t || s.title === t
   ok(manga.some(s => s.workTitle === 'One Piece') && !manga.some(s => s.workTitle === 'Solo Leveling'), 'filter by type');
   ok((await all('&q=oda')).some(s => s.workTitle === 'One Piece'), 'library filter finds works by author name');
 
+  // ---- delta: unchanged results don't count as an update; "Update metadata" only re-checks what needs it ----
+  const before = (await call('GET', `/api/series/${sl.id}`)).data.series;
+  await wait(1100);
+  const again = (await call('POST', `/api/series/${sl.id}/metadata/refresh`)).data.series;
+  ok(again.metadata.fetchedAt === before.metadata.fetchedAt && again.updated === before.updated && again.metadata.checkedAt > before.metadata.checkedAt,
+    'refreshing with the same results: checked again, but not marked as updated');
+  ok((await call('POST', `/api/libraries/${L.id}/metadata`, { mode: 'stale' })).data.queued === 0, '"Update metadata" right after a lookup: nothing to do');
+  await call('PATCH', `/api/series/${sl.id}`, { publisher: 'Changed here' });
+  await call('PATCH', `/api/series/${sl.id}`, { publisher: '' });
+  ok((await call('POST', `/api/libraries/${L.id}/metadata`, { mode: 'stale' })).data.queued === 1, '…a work changed since its last check is picked up');
+  await until(async () => { const m = (await call('GET', '/api/processes')).data.metadata; return m.queue === 0 && !m.current.length; }, 120000);
+
   // ---- precedence: admin edits > files > online ----
   await call('PATCH', `/api/series/${op.id}`, { summary: 'My own summary', type: 'comic' });
   let s1 = (await call('GET', `/api/series/${op.id}`)).data.series;

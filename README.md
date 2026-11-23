@@ -8,8 +8,10 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
 ## Features
 
 - **Libraries**: each library is a folder on the server. Every folder inside it that contains books
-  becomes a **series**; each file is a **book**. Scanned when the server starts, on a schedule
-  (default hourly) and on demand; only new or changed files are analyzed again.
+  becomes a **series**; each file is a **book**. The first scan reads everything; after that, quick scans at
+  startup and on a schedule (default hourly) only look into folders that changed, and only new or changed
+  files are opened again. Full scans run only when you ask. Each library has a **default order** (A–Z,
+  recently added or recently updated), a default chapter layout and a default reading mode.
 - **Metadata** from `ComicInfo.xml` inside CBZ files (title, number, summary, authors, publisher,
   genres, release date, manga reading direction, webtoon format). Administrators can override any of it;
   their edits survive rescans.
@@ -23,6 +25,8 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   per-library grids with text search, sort, read status and **filters by type, status, genre, tag and
   metadata state** (each option shows how many works have it; genre/tag chips on a work page open the filtered
   library), series and book pages, global search (series, books, authors, genres, tags, collections, read lists).
+- **Going back** (browser Back or the back link) returns to exactly where you were: same scroll position, the
+  same works loaded with *Load more*, same search, order and filters. All work tiles have the same size.
 - **Work page**: chapters as **tiles or a list** (library default, changeable per work). A one-shot shows
   its **pages** instead, each opening the reader at that page.
 - **Reader**: left to right, right to left (manga) and continuous (vertical scroll, webtoon); fit to screen, width,
@@ -106,9 +110,19 @@ chapters/books, with its own progress and metadata.
   One Piece [Raw]/           ← "Raw" tab
 ```
 
-**Two kinds of scan.** *Scan changes* reads only new and changed files (by size and modification time)
-and removes books whose files are gone; it's what automatic scans do. *Full scan* reads every file again,
-which is slower but fixes anything that looks wrong. Both are on the **Manage libraries** page.
+**Three kinds of scan.** Every scan saves what it saw (each folder's modification time and each file's size
+and date) in `data/scan-index/<library>.json`, so later scans only do what's needed:
+
+| Scan | When | What it does |
+| --- | --- | --- |
+| **Quick scan** | at startup, on the schedule (and future file-change triggers) | Looks only into folders whose modification time changed since the last scan; files in unchanged folders aren't even checked. Opens only new and changed files. |
+| **Scan changes** | the *Scan changes* button; after changing the one-shots folder | Checks every file's size and date; opens only new and changed files. Catches files rewritten in place without their folder changing. |
+| **Full scan** | the first scan of a library, a new library folder, the *Full scan* button | Opens and reads every file again. |
+
+Adding, removing or renaming files changes their folder's modification time, so quick scans find them. A file
+rewritten in place may not change its folder's date on every file system (NTFS does), so use *Scan changes*
+if a modified file isn't picked up. The library card says which kind of scan ran last, why (at startup,
+scheduled, requested…) and, for quick scans, how many folders were unchanged.
 
 **Scanning runs in its own processes: the scan service.** Walking folders and opening archives happens in a
 pool of long-running Node processes with the lowest CPU priority, so browsing and reading stay fast during
@@ -168,13 +182,16 @@ order them with the arrows.
 - **What wins.** Your edits (series *Edit*) > the files' `ComicInfo.xml` > online metadata. Titles always stay
   the library's, so versions keep grouping and works stay recognizable.
 - **When.** With *Fetch metadata automatically* on (default), works that were never looked up are queued
-  after each scan. *Fetch metadata* (missing ones) and *Refresh all metadata* are on each library's card, and
-  every work page has **Refresh metadata**, **Identify** (search the sites and pick the right match; it
+  after each scan. Each library's card has **Update metadata** (the delta: only works never looked up, works
+  whose files changed since their last check, matched works missing a cover, and works not checked for 30 days)
+  and **Refresh all metadata** (every work again). A check that finds the same data doesn't mark the work as
+  updated (so "Recently updated" only shows real changes). Every
+  work page has **Refresh metadata**, **Identify** (search the sites and pick the right match; it
   sticks for future refreshes) and **Clear metadata**.
 - **Covers** are downloaded as part of every metadata check (from the first source that has one; if that
   image fails, the next source's) and stored in `data/covers/`. Per library: show them only when the files
   have no cover page (default, e.g. PDFs), always, or never (never = not downloaded). Per work (Edit → Cover):
-  library setting, first page, or downloaded cover. *Fetch metadata* also downloads covers still missing for
+  library setting, first page, or downloaded cover. *Update metadata* also downloads covers still missing for
   matched works. The work page says where its cover came from.
 - **Rate limits.** Lookups run inside the web server, several works at once (Server settings, default 3), with
   a pause between requests to the same site and automatic retries when a site says "too many requests". A big
@@ -288,6 +305,7 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
 
 | Setting | Library (Manage libraries → Edit) | Work (its page → Edit) |
 | --- | --- | --- |
+| Default order of works | Title A–Z (default), Recently added or Recently updated (readers can still change it on the page) | — |
 | Chapters shown as | Tiles (default) or List | Library default, Tiles or List |
 | Reading mode | Automatic (default: `ComicInfo.xml`, then online metadata, else left to right), or a fixed mode for every work | Library default/automatic, Left to right, Right to left, Continuous |
 | Cover | Metadata covers: only when missing (default), always, never | Library setting, First page, Downloaded |
@@ -334,10 +352,13 @@ The **Updates** page (sidebar, or account menu → *Check for updates*) checks
 **Publishing:** for a release, tag the commit `v1.2.3` and create a GitHub release titled `v1.2.3`.
 For a push build, tag it `p1`, `p2`, … (`git tag p4 && git push origin p4`).
 
-**Installing** is done by the Node server (`updater.js`): it downloads the tag's source,
-copies the files over the app folder, and backs up every replaced file to `.updates/backup-<time>/`.
-Files that no longer exist in the new version are left in place. `data/`, `.git`, `.claude`, `.env`,
-`node_modules` and `.updates` are never touched. If the update changed server code, the server
+**Installing** is done by the Node server (`updater.js`) and is a **delta** whenever possible: when the app
+knows which commit it's running, it asks GitHub which files differ between that commit and the update,
+downloads only those, and deletes the files the update removed (renames included). Nothing is written until
+every changed file has been downloaded. If the running commit is unknown (e.g. a copy downloaded as a ZIP) or
+more than ~300 files changed, it downloads the whole version instead and copies only the files that differ.
+Every replaced or removed file is backed up to `.updates/backup-<time>/`, and the Updates page says how many
+files changed. `data/`, `.git`, `.claude`, `.env`, `node_modules` and `.updates` are never touched. If the update changed server code, the server
 **restarts itself** right after installing (no manual step), and the open page reloads when it's back.
 
 - **How the app knows its version.** The version isn't written in a file; the app works out which commit it's

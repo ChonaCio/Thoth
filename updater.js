@@ -3,8 +3,10 @@
 //  Channel "release": GitHub releases (not drafts) whose tag AND name match vX.Y.Z
 //  Channel "push":    any tag matching pN (released or not), N = incrementing integer
 //
-// Installing downloads the tag's source tarball, backs up the current files to
-// .updates/backup-<timestamp>/, then copies the new files over the app folder.
+// Installing is a delta when possible: only the files that differ between the running commit and the
+// update are downloaded (and files the update deletes are removed). Otherwise the tag's whole source
+// tarball is downloaded and only files that differ are copied. Replaced/removed files are backed up to
+// .updates/backup-<timestamp>/.
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
@@ -385,17 +387,103 @@ function serverCodeFingerprint() {
   return out.sort().join('|');
 }
 
-async function install(channel, tag) {
+/* Delta install: ask GitHub which files differ between the running commit and the update, download only
+ * those (raw files) and delete the ones the update removed. Returns null when it can't be done (unknown
+ * running commit, too many changes for GitHub's list, a download fails before anything was changed) so the
+ * caller falls back to the full tarball. Nothing is written until every file has been downloaded. */
+const MAX_DELTA_FILES = 299; // GitHub's compare lists at most 300 files
+function safeRel(rel) {
+  if (!rel || path.isAbsolute(rel) || rel.split('/').some(p => p === '..' || p === '')) return false;
+  const first = rel.split('/')[0];
+  return !PROTECTED.has(first) && !first.startsWith('.git');
+}
+async function rawFile(commit, rel) {
+  const url = `https://raw.githubusercontent.com/${REPO}/${commit}/${rel.split('/').map(encodeURIComponent).join('/')}`;
+  const res = await fetch(url, { headers: Object.assign({ 'User-Agent': 'thoth-updater' }, process.env.GITHUB_TOKEN ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) });
+  if (!res.ok) throw new Error(`${rel}: download answered ${res.status}`);
+  return Buffer.from(await res.arrayBuffer());
+}
+async function installDelta(base, head, backup) {
+  const cmp = await gh(`/repos/${REPO}/compare/${base}...${head}`, { allow404: true });
+  if (!cmp || !Array.isArray(cmp.files) || cmp.files.length > MAX_DELTA_FILES) return null;
+  const writes = [], removes = [];
+  for (const f of cmp.files) {
+    if (!safeRel(f.filename)) continue;
+    if (f.status === 'removed') removes.push(f.filename);
+    else {
+      writes.push(f.filename);
+      if (f.status === 'renamed' && safeRel(f.previous_filename || '')) removes.push(f.previous_filename);
+    }
+  }
+  // Download everything first
+  const contents = new Map();
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(6, writes.length) }, async () => {
+    while (next < writes.length) { const rel = writes[next++]; contents.set(rel, await rawFile(head, rel)); }
+  }));
+  // Then apply, backing up what's replaced or removed
+  let changed = 0, removed = 0, serverChanged = false;
+  const keep = (rel, buf) => { const b = path.join(backup, rel); fs.mkdirSync(path.dirname(b), { recursive: true }); fs.writeFileSync(b, buf); };
+  for (const rel of writes) {
+    const dst = path.join(ROOT, rel), buf = contents.get(rel);
+    if (fs.existsSync(dst)) {
+      const before = fs.readFileSync(dst);
+      if (before.equals(buf)) continue;
+      keep(rel, before);
+    }
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.writeFileSync(dst, buf);
+    changed++;
+    if (isServerCode(rel)) serverChanged = true;
+  }
+  for (const rel of removes) {
+    const dst = path.join(ROOT, rel);
+    if (!fs.existsSync(dst) || writes.includes(rel)) continue;
+    keep(rel, fs.readFileSync(dst));
+    fs.rmSync(dst, { force: true });
+    removed++;
+    if (isServerCode(rel)) serverChanged = true;
+  }
+  return { mode: 'delta', changed, removed, downloaded: writes.length, serverChanged };
+}
+
+// The commit a tag points to
+async function tagCommit(tag) {
+  const { tags } = await repoInfo();
+  const tagged = tags.find(t => t.name === tag);
+  let commit = tagged && tagged.commit && tagged.commit.sha;
+  if (!SHA_RE.test(commit || '')) commit = ((await gh(`/repos/${REPO}/commits/${encodeURIComponent(tag)}`).catch(() => null)) || {}).sha || null;
+  return SHA_RE.test(commit || '') ? commit : null;
+}
+
+// full: download and compare every file (the whole tarball) even when a delta install is possible
+async function install(channel, tag, { full = false } = {}) {
   if (installing) throw httpError(409, 'busy', 'An update is already being installed.');
   installing = true;
   const stamp = new Date().toISOString().replace(/[:.]/g, '-');
   const staging = path.join(WORK_DIR, `staging-${stamp}`);
+  const backup = path.join(WORK_DIR, `backup-${stamp}`);
   try {
     // Only install tags the channel actually offers
     const items = channel === 'release' ? await listReleases() : channel === 'push' ? await listPushes() : null;
     if (!items) throw httpError(400, 'badChannel', 'Unknown channel.');
     const item = items.find(i => i.tag === tag);
     if (!item) throw httpError(404, 'tagNotFound', `${tag} is not a valid ${channel}.`);
+    const commit = await tagCommit(tag);
+
+    // Delta first, when the running commit is known
+    const running = runningCommit().commit;
+    let delta = null;
+    if (!full && running && commit) {
+      try { delta = await installDelta(running, commit, backup); } catch (e) { console.warn(`[updates] delta install not possible (${e.message}); downloading the whole version`); delta = null; }
+    }
+    if (delta) {
+      const next = { channel, tag, commit, release: channel === 'release' ? tag : null, push: channel === 'push' ? parsePush(tag) : null, installedAt: new Date().toISOString(), mode: 'delta' };
+      fs.writeFileSync(STATE_FILE, JSON.stringify(next, null, 2));
+      console.log(`[updates] installed ${tag} as a delta: ${delta.changed} files changed, ${delta.removed} removed (${delta.downloaded} downloaded)`);
+      return { installed: tag, channel, mode: 'delta', files: delta.changed, removed: delta.removed, downloaded: delta.downloaded,
+        backup: fs.existsSync(backup) ? path.relative(ROOT, backup) : null, restartRequired: delta.serverChanged, current: await resolveVersion() };
+    }
 
     const res = await fetch(`https://api.github.com/repos/${REPO}/tarball/${encodeURIComponent(tag)}`, {
       headers: Object.assign({ 'User-Agent': 'thoth-updater' },
@@ -411,9 +499,8 @@ async function install(channel, tag) {
       throw httpError(422, 'invalidPackage', 'The downloaded version does not look like a Thoth app (no index.html).');
     }
 
-    // Back up every file the update will replace
-    const backup = path.join(WORK_DIR, `backup-${stamp}`);
-    let serverChanged = false;
+    // Back up every file the update will replace (identical files are left alone)
+    let serverChanged = false, changed = 0;
     for (const rel of incoming) {
       const dst = path.join(ROOT, rel);
       const src = path.join(staging, rel);
@@ -429,14 +516,12 @@ async function install(channel, tag) {
       }
       fs.mkdirSync(path.dirname(dst), { recursive: true });
       fs.copyFileSync(src, dst);
+      changed++;
     }
 
     // Record the installed commit; the release/push names are worked out from it (see resolveVersion)
-    const { tags } = await repoInfo();
-    const tagged = tags.find(t => t.name === tag);
-    let commit = tagged && tagged.commit && tagged.commit.sha;
-    if (!SHA_RE.test(commit || '')) commit = ((await gh(`/repos/${REPO}/commits/${encodeURIComponent(tag)}`).catch(() => null)) || {}).sha || null;
     const next = {
+      mode: 'full',
       channel, tag, commit,
       // Hints used only if GitHub can't be reached later
       release: channel === 'release' ? tag : null,
@@ -445,7 +530,8 @@ async function install(channel, tag) {
     };
     fs.writeFileSync(STATE_FILE, JSON.stringify(next, null, 2));
 
-    return { installed: tag, channel, files: incoming.length, backup: path.relative(ROOT, backup), restartRequired: serverChanged, current: await resolveVersion() };
+    return { installed: tag, channel, mode: 'full', files: changed, total: incoming.length, removed: 0,
+      backup: fs.existsSync(backup) ? path.relative(ROOT, backup) : null, restartRequired: serverChanged, current: await resolveVersion() };
   } finally {
     fs.rmSync(staging, { recursive: true, force: true });
     installing = false;

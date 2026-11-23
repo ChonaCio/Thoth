@@ -88,26 +88,6 @@ async function analyze(file, format) {
   return { pageCount: images.length, meta };
 }
 
-/* ---------------- walking the folder ---------------- */
-async function walk(root, rel, out) {
-  let entries;
-  try { entries = await fs.promises.readdir(path.join(root, rel), { withFileTypes: true }); } catch (e) {
-    if (!rel) throw e; // the library folder itself must be readable
-    out.errors.push(`${rel}: ${e.code || e.message}`);
-    return;
-  }
-  for (const ent of entries) {
-    if (ent.name.startsWith('.') || ent.name === '@eaDir' || ent.name === '#recycle') continue;
-    const childRel = rel ? path.join(rel, ent.name) : ent.name;
-    if (ent.isDirectory()) await walk(root, childRel, out);
-    else if (ent.isFile()) {
-      const ext = path.extname(ent.name).toLowerCase();
-      if (BOOK_EXT[ext]) out.books.push(childRel);
-      else if (UNSUPPORTED_EXT.has(ext)) out.unsupported.push(childRel);
-    }
-  }
-}
-
 // Run fn over items with at most `limit` running at the same time
 async function mapLimit(items, limit, fn) {
   const out = new Array(items.length);
@@ -118,21 +98,75 @@ async function mapLimit(items, limit, fn) {
 }
 
 /*
- * Step 1 of a scan: every book file in the library with its size and modification time (cheap).
+ * Step 1 of a scan: every book file in the library with its size and modification time.
+ * Also returns a scan index ({ version, root, dirs: { relDir: { mtimeMs, files: [[name, size, modified]],
+ * dirs: [names], unsupported: [names] } } }) that the scanner saves for the next scan.
+ * opts.prev: the saved index; opts.quick: reuse a folder's saved listing when the folder's modification time
+ * is unchanged (adding, removing or renaming files changes it), so only folders are checked, not every file.
  * onProgress(filesSeen)
  */
-async function listFiles(root, onProgress) {
-  const found = { books: [], unsupported: [], errors: [] };
-  await walk(root, '', found);
-  let seen = 0;
-  const files = (await mapLimit(found.books, 16, async rel => {
+async function listFiles(root, onProgress, opts = {}) {
+  const prev = opts.prev && opts.prev.version === 1 && opts.prev.root === root ? opts.prev.dirs : null;
+  const quick = Boolean(opts.quick && prev);
+  const dirs = {}, files = [], unsupported = [], errors = [];
+  let seen = 0, dirsReused = 0, filesChecked = 0;
+  const join = (rel, name) => (rel ? path.join(rel, name) : name);
+  const tick = n => { const before = seen; seen += n; if (onProgress && Math.floor(seen / 200) !== Math.floor(before / 200)) onProgress(seen); };
+  async function visit(rel) {
+    const abs = rel ? path.join(root, rel) : root;
     let st;
-    try { st = await fs.promises.stat(path.join(root, rel)); } catch { return null; }
-    if (++seen % 200 === 0 && onProgress) onProgress(seen);
-    return { rel, size: st.size, fileModified: st.mtime.toISOString() };
-  })).filter(Boolean);
+    try { st = await fs.promises.stat(abs); } catch (e) {
+      if (!rel) throw e; // the library folder itself must be readable
+      errors.push(`${rel}: ${e.code || e.message}`);
+      return;
+    }
+    const old = prev && prev[rel];
+    if (quick && old && old.mtimeMs === st.mtimeMs) {
+      // Unchanged folder: same files as last time
+      dirs[rel] = old;
+      dirsReused++;
+      for (const [name, size, modified] of old.files) files.push({ rel: join(rel, name), size, fileModified: modified });
+      for (const name of old.unsupported || []) unsupported.push(join(rel, name));
+      tick(old.files.length);
+      for (const d of old.dirs) await visit(join(rel, d));
+      return;
+    }
+    let entries;
+    try { entries = await fs.promises.readdir(abs, { withFileTypes: true }); } catch (e) {
+      if (!rel) throw e;
+      errors.push(`${rel}: ${e.code || e.message}`);
+      return;
+    }
+    const entry = { mtimeMs: st.mtimeMs, files: [], dirs: [], unsupported: [] };
+    const books = [];
+    for (const ent of entries) {
+      if (ent.name.startsWith('.') || ent.name === '@eaDir' || ent.name === '#recycle') continue;
+      if (ent.isDirectory()) entry.dirs.push(ent.name);
+      else if (ent.isFile()) {
+        const ext = path.extname(ent.name).toLowerCase();
+        if (BOOK_EXT[ext]) books.push(ent.name);
+        else if (UNSUPPORTED_EXT.has(ext)) entry.unsupported.push(ent.name);
+      }
+    }
+    const stats = await mapLimit(books, 16, async name => {
+      try { const f = await fs.promises.stat(path.join(abs, name)); return [name, f.size, f.mtime.toISOString()]; } catch { return null; }
+    });
+    entry.files = stats.filter(Boolean);
+    entry.dirs.sort(); entry.unsupported.sort();
+    filesChecked += entry.files.length;
+    dirs[rel] = entry;
+    for (const [name, size, modified] of entry.files) files.push({ rel: join(rel, name), size, fileModified: modified });
+    for (const name of entry.unsupported) unsupported.push(join(rel, name));
+    tick(entry.files.length);
+    for (const d of entry.dirs) await visit(join(rel, d));
+  }
+  await visit('');
   if (onProgress) onProgress(files.length);
-  return { files, unsupported: found.unsupported, errors: found.errors };
+  return {
+    files, unsupported, errors,
+    index: { version: 1, root, dirs },
+    stats: { quick, dirs: Object.keys(dirs).length, dirsReused, filesChecked }
+  };
 }
 
 /*

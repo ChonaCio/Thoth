@@ -124,6 +124,7 @@
     $('#app-view').hidden = false;
     $('#auth-form').reset();
     if (!location.hash) history.replaceState(null, '', '#home');
+    markHistoryEntry();
     applyTranslations();
     renderAll();
     onRouteEnter();
@@ -245,6 +246,40 @@
     };
   }
   function currentRoute() { return parseRoute().name; }
+
+  /* ---------------- scroll position per history entry ----------------
+   * Every history entry gets a key (history.state.k). The scroll position is remembered per key. A new entry
+   * (following a link) starts at the top; coming back to an entry (Back/Forward) scrolls to where the user
+   * left it as soon as the page has loaded enough content (pages load their data after rendering). */
+  var scrollMem = {}, scrollKey = null, scrollPending = null;
+  try { history.scrollRestoration = 'manual'; } catch (e) { /* old browser */ }
+  function markHistoryEntry() {
+    var k = history.state && history.state.k;
+    if (k) {
+      scrollKey = k;
+      var y = scrollMem[k] || 0;
+      scrollPending = y > 0 ? { y: y, until: Date.now() + 10000 } : null;
+      if (!scrollPending) window.scrollTo(0, 0);
+      return;
+    }
+    k = 'e' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    try { history.replaceState(Object.assign({}, history.state || {}, { k: k }), ''); } catch (e) { /* ignore */ }
+    scrollKey = k; scrollPending = null;
+    window.scrollTo(0, 0);
+  }
+  // Called after anything renders: scroll back to the remembered spot once the page is tall enough
+  function restoreScroll() {
+    var p = scrollPending;
+    if (!p) return;
+    var max = document.documentElement.scrollHeight - window.innerHeight;
+    if (max >= p.y - 2) { scrollPending = null; window.scrollTo(0, p.y); }
+    else if (Date.now() > p.until) { scrollPending = null; window.scrollTo(0, Math.max(0, max)); }
+  }
+  window.addEventListener('scroll', function () { if (scrollKey && !scrollPending) scrollMem[scrollKey] = window.scrollY; }, { passive: true });
+  // The user scrolling or clicking takes over
+  ['wheel', 'touchstart', 'keydown', 'mousedown'].forEach(function (ev) {
+    window.addEventListener(ev, function () { scrollPending = null; }, { passive: true });
+  });
 
   function onRouteEnter() {
     var route = parseRoute();
@@ -518,6 +553,7 @@
     if (libPage && libPage.mount) libPage.mount($('#content'), info);
     renderIcons($('#content'));
     document.title = (title ? title + ' – ' : '') + 'Thoth';
+    restoreScroll();
   }
 
   /* ---------------- user management ---------------- */
@@ -892,7 +928,9 @@
       html += '<div class="banner banner--ok"><div><strong>' + esc(t('upd.success', { tag: u.done.installed })) + '</strong>' +
         (u.done.autoRestart ? '<p>' + esc(t('upd.restarting')) + '</p>'
           : u.done.restartRequired ? '<p>' + esc(t('upd.restart')) + '</p>' : '') +
-        '<p class="small">' + esc(t('upd.backup', { path: u.done.backup })) + '</p></div>' +
+        // How it was installed: only the changed files (delta) or the whole version
+        (u.done.mode ? '<p class="small">' + esc(t(u.done.mode === 'delta' ? 'upd.modeDelta' : 'upd.modeFull', { files: u.done.files, removed: u.done.removed || 0 })) + '</p>' : '') +
+        (u.done.backup ? '<p class="small">' + esc(t('upd.backup', { path: u.done.backup })) + '</p>' : '') + '</div>' +
         '<button class="btn btn--primary" data-action="reload">' + esc(t('upd.reload')) + '</button></div>';
     }
     if (u.installError) html += '<div class="banner banner--error">' + esc(errMsg(u.installError)) + '</div>';
@@ -1005,6 +1043,7 @@
 
     window.addEventListener('hashchange', function () {
       if (!state.user) return;
+      markHistoryEntry();
       renderSidebar(); renderPage(); applyTranslations();
       onRouteEnter();
     });
@@ -1056,7 +1095,8 @@
     isAdmin: isAdmin, parseRoute: parseRoute, renderPage: renderPage, refreshLibraries: refreshLibraries,
     applyTranslations: applyTranslations, setRestartNeeded: setRestartNeeded,
     // Re-render only if the user is still on the page that asked for it
-    rerenderIf: function (hash) { if (state.user && location.hash === hash) { renderPage(); applyTranslations(); } }
+    rerenderIf: function (hash) { if (state.user && location.hash === hash) { renderPage(); applyTranslations(); } },
+    restoreScroll: restoreScroll
   };
 
   init();
