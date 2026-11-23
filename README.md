@@ -396,13 +396,22 @@ one renamed). A bar above the list does it for all of them at once: delete those
 or delete the existing ones (rename these). Deleting can't be undone and always asks first; reading progress
 and read-list entries of a deleted file go with it.
 
-**Merging works.** *Merge works* moves the files of some works into the folder of the one you keep, so they
-become one work (reading progress and read lists follow the files; emptied folders are removed; a file whose
-name is already in the kept folder stays where it is and is reported). It **suggests** merges when the
+**Merging works.** *Merge works* moves the chapters the kept work doesn't have yet into its folder, so the works
+become one (reading progress and read lists follow the files; emptied folders are removed). A chapter it already
+has is a **repeat** and isn't moved: same file name, or the same chapter (`chapter-2.cbz` = `Chapter 2.cbz` =
+`Chapter 2 - Title.cbz`, also by the number in the book's own metadata). Tick *Delete the other folders when done*
+to delete the other works' folders after the merge, with the repeats and anything else left in them (never the
+library folder, nor a folder that holds the kept work). It **suggests** merges when the
 metadata says two works are the same: matched to the same entry of a metadata site, sharing a link, or sharing
 a title (main or alternative). Different versions (Colored, Raw…) are never suggested: they're already shown
 as versions of one work. *Not the same* hides a suggestion for good. *Merge works by hand* finds any works by
 title or folder to merge them.
+
+**When the list is behind the disk.** After renaming, deleting or merging, every file of the library is checked
+(not a quick scan): some disks and mounts (Docker bind mounts, network shares, FAT/exFAT drives) don't update a
+folder's date reliably, and a quick scan trusting it would bring old file names back, so the same renames would be
+proposed again. Checking also looks for each proposed file on disk: one that already has its new name isn't
+proposed, and that library's files are re-checked so the list catches up.
 
 **Large batches.** Renaming, deleting and merging are background **jobs**: *Rename selected* answers at once and the page shows the
 job's progress (you can leave and come back). Jobs wait in a queue and run one at a time; each goes through its

@@ -12,6 +12,7 @@
 // everything attached to the book to its new name (book ids come from the file path): reading progress, read
 // lists. Matching JSON files of folder sources can be renamed along (otherwise 11.json would stop matching
 // once 11.cbz is renamed).
+const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { fork } = require('child_process');
@@ -72,13 +73,19 @@ function relWithName(relPath, name) {
 // Proposals for a library ('all' = every library). Each: { bookId, seriesId, libraryId, library, work, from,
 // to, fromName, toName, status: 'ok' | 'conflict' | 'exists', with: … } — conflicts are never applied.
 // Only the first `limit` proposals are listed (a page can't show 100 000 rows); the counts cover all of them.
+// checkDisk: each proposal's file is looked for on disk. If it's not there under its old name but its new name
+// is, the database is behind the disk (a scan that trusted an unchanged folder date: Docker bind mounts, network
+// shares and FAT drives don't always update it): it isn't proposed again, and `stale` lists the libraries to
+// re-check (the caller starts a full check of their files).
 const PREVIEW_LIMIT = 2000;
-function preview(libraryId, { limit = PREVIEW_LIMIT } = {}) {
+function preview(libraryId, { limit = PREVIEW_LIMIT, checkDisk = false } = {}) {
   const titles = new Map(); // work titles, once per work
   const libs = Object.values(db.libraries).filter(l => !libraryId || libraryId === 'all' || l.id === libraryId);
   const items = [];
+  const stale = { count: 0, libraries: new Set() };
   let checked = 0;
   for (const lib of libs) {
+    const root = path.resolve(lib.root);
     const books = Object.values(db.books).filter(b => b.libraryId === lib.id);
     const taken = new Map(); // folder\0lowercase name → the book with that file
     const key = (rel, name) => sep(rel).slice(0, -1).join('/') + '\0' + name.toLowerCase();
@@ -88,6 +95,11 @@ function preview(libraryId, { limit = PREVIEW_LIMIT } = {}) {
       checked++;
       const toName = proposedName(b.fileName);
       if (!toName) continue;
+      if (checkDisk && !fs.existsSync(path.join(root, b.relPath))) {
+        // Gone or already renamed on disk: the database is behind; don't propose it
+        stale.count++; stale.libraries.add(lib.id);
+        continue;
+      }
       const s = db.series[b.seriesId];
       if (s && !titles.has(s.id)) titles.set(s.id, store.seriesMeta(s).title);
       props.push({ b, toName, work: s ? titles.get(s.id) : '' });
@@ -112,7 +124,8 @@ function preview(libraryId, { limit = PREVIEW_LIMIT } = {}) {
   items.sort((a, b) => store.collator.compare(a.library + '\0' + a.work, b.library + '\0' + b.work) || store.collator.compare(a.fromName, b.fromName));
   const ok = items.reduce((n, x) => n + (x.status === 'ok' ? 1 : 0), 0);
   const exists = items.reduce((n, x) => n + (x.status === 'exists' ? 1 : 0), 0);
-  return { checked, total: items.length, ok, conflicts: items.length - ok, exists, truncated: items.length > limit, items: items.slice(0, limit) };
+  return { checked, total: items.length, ok, conflicts: items.length - ok, exists, truncated: items.length > limit, items: items.slice(0, limit),
+    stale: { count: stale.count, libraries: [...stale.libraries] } };
 }
 
 // Folder-source JSON files that describe this book (same name next to it in path mode, or by name)
@@ -147,7 +160,7 @@ const state = { worker: null, last: null };
 
 const jobView = j => ({
   id: j.id, kind: j.kind, status: j.status, createdAt: j.createdAt, startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
-  by: j.by || null, total: j.total, done: j.done, renamed: j.renamed, deleted: j.deleted, moved: j.moved, json: j.json, failedCount: j.failed.length, foldersKept: j.foldersKept || [],
+  by: j.by || null, total: j.total, done: j.done, renamed: j.renamed, deleted: j.deleted, moved: j.moved, skipped: j.skipped || 0, repeats: j.repeats || [], foldersDeleted: j.foldersDeleted || [], json: j.json, failedCount: j.failed.length, foldersKept: j.foldersKept || [],
   failed: j.failed.slice(0, 50), error: j.error || null, libraries: j.libraries ? [...j.libraries] : [], process: j.process || null,
   progress: j.total ? Math.min(100, Math.floor(j.done / j.total * 100)) : (j.status === 'done' ? 100 : 0)
 });
@@ -357,9 +370,38 @@ async function runDeleteJob(job) {
   store.saveProgress();
 }
 
-/* ---------------- merging works: their files move into one work's folder ---------------- */
+/* ---------------- merging works: missing chapters move into the kept work's folder ----------------
+ * A chapter the kept work already has (same file name, or the same chapter: "chapter-2.cbz" = "Chapter 2.cbz"
+ * = "Chapter 2 - Title.cbz", also by the number from the book's own metadata) is a repeat: it isn't moved.
+ * With deleteSources, the other works' folders are deleted afterwards with what's left in them (the repeats);
+ * a one-shot source's file goes if it was a repeat. */
+const extless = f => f.replace(/\.[^.]+$/, '');
+// The ways a book can be "the same chapter" as another
+function chapterKeys(b) {
+  const keys = new Set();
+  const name = extless(b.fileName);
+  keys.add('n:' + name.toLowerCase());
+  const better = proposedName(b.fileName);
+  if (better) keys.add('n:' + extless(better).toLowerCase());
+  const p = parse(name);
+  if (p) keys.add('c:' + p.word.toLowerCase() + ':' + p.number);
+  // An explicit number from the book's ComicInfo/JSON (not the position-based fallback)
+  const own = (b.overrides && b.overrides.number) || (b.local && b.local.merged && b.local.merged.number) || (b.meta && b.meta.number);
+  if (own != null && own !== '') { const n = String(own).trim().replace(/^0+(?=\d)/, ''); if (n) keys.add('c:chapter:' + n); }
+  return [...keys];
+}
+// A work's folder that may be deleted as a whole: inside its library, not the library itself, and neither
+// inside nor around the kept work's folder
+function deletableFolder(s, tDir) {
+  const lib = db.libraries[s.libraryId];
+  if (!lib || s.oneshot || !s.relPath) return null;
+  const root = path.resolve(lib.root), dir = path.resolve(root, s.relPath);
+  if (!dir.startsWith(root + path.sep) || dir === root) return null;
+  if (tDir === dir || tDir.startsWith(dir + path.sep) || dir.startsWith(tDir + path.sep)) return null;
+  return dir;
+}
 async function runMergeJob(job) {
-  const { target, sources } = job.picks;
+  const { target, sources, deleteSources } = job.picks;
   const t = db.series[target];
   const tLib = t && db.libraries[t.libraryId];
   if (!t || !tLib || t.oneshot) throw Object.assign(new Error('The work to merge into must be a folder'), { code: 'mergeTarget' });
@@ -367,8 +409,10 @@ async function runMergeJob(job) {
   const tDir = path.resolve(tRoot, t.relPath);
   if (!tDir.startsWith(tRoot + path.sep)) throw new Error('outside the library folder');
   const srcs = (sources || []).map(id => db.series[id]).filter(s => s && s.id !== t.id);
-  // Names already in the target folder (and claimed by earlier files of this merge): never overwritten
+  // What the kept work already has (and what earlier files of this merge bring): names and chapters
   const names = new Set(store.booksOf(t.id).map(b => b.fileName.toLowerCase()));
+  const have = new Set(store.booksOf(t.id).flatMap(chapterKeys));
+  job.skipped = 0; job.repeats = [];
   const plan = [];
   for (const s of srcs) for (const b of store.booksOf(s.id).slice()) plan.push({ s, b });
   job.total = plan.length;
@@ -378,9 +422,17 @@ async function runMergeJob(job) {
     for (const { s, b } of chunk) {
       const from = absOf(b);
       if (!from || db.books[b.id] !== b) { job.failed.push({ from: b.relPath, error: 'changed' }); continue; }
+      const keys = chapterKeys(b);
+      if (keys.some(k => have.has(k))) {
+        // A repeat: the kept work has this chapter already
+        job.skipped++;
+        if (job.repeats.length < 50) job.repeats.push(b.relPath.split(/[\\/]/).join('/'));
+        continue;
+      }
       if (names.has(b.fileName.toLowerCase())) { job.failed.push({ from: b.relPath.split(/[\\/]/).join('/'), error: 'exists' }); continue; }
       names.add(b.fileName.toLowerCase());
-      todo.push({ s, b, newRel: path.join(t.relPath, b.fileName), op: { kind: 'move', from, to: path.join(tDir, b.fileName) } });
+      keys.forEach(k => have.add(k));
+      todo.push({ s, b, keys, newRel: path.join(t.relPath, b.fileName), op: { kind: 'move', from, to: path.join(tDir, b.fileName) } });
     }
     const base = job.done;
     const results = todo.length ? await runOps(todo.map(x => x.op), n => { job.done = base + Math.round(n / todo.length * chunk.length); }) : [];
@@ -390,8 +442,7 @@ async function runMergeJob(job) {
       if (!r.ok) { names.delete(x.b.fileName.toLowerCase()); job.failed.push({ from: x.b.relPath.split(/[\\/]/).join('/'), error: r.error }); return; }
       job.libraries.add(x.b.libraryId);
       x.b.libraryId = t.libraryId;
-      const oldId = x.b.id;
-      moved.set(oldId, moveBook(x.b, x.newRel));
+      moved.set(x.b.id, moveBook(x.b, x.newRel));
       x.b.seriesId = t.id;
       job.moved++;
     });
@@ -402,23 +453,45 @@ async function runMergeJob(job) {
   }
   job.libraries.add(t.libraryId);
   store.reindex();
-  // Works left without books are gone (their collections now hold the target); their emptied folders too
-  const rmdirs = [];
+  // The other works: deleted with their folders when asked (repeats included), else removed when emptied
+  const ops = [], after = [];
+  job.foldersDeleted = [];
   for (const s of srcs) {
-    if (store.booksOf(s.id).length) continue;
-    for (const c of Object.values(db.collections)) if (c.seriesIds.includes(s.id)) c.seriesIds = [...new Set(c.seriesIds.map(id => (id === s.id ? t.id : id)))];
-    if (job.metadata) job.metadata.forgetSeries(s);
-    delete db.series[s.id];
+    const left = store.booksOf(s.id).slice();
+    const dir = deleteSources ? deletableFolder(s, tDir) : null;
+    if (deleteSources && dir) { ops.push({ kind: 'rmtree', from: dir }); after.push({ s, left, all: true, rel: s.relPath }); continue; }
+    if (deleteSources && s.oneshot && left.length) {
+      // A one-shot: its file goes only if it was a repeat (anything else would have moved)
+      for (const b of left) { const a = absOf(b); if (a) { ops.push({ kind: 'delete', from: a }); after.push({ s, left: [b], file: true }); } }
+      continue;
+    }
+    if (left.length) { if (deleteSources) job.failed.push({ from: String(s.relPath || '').split(/[\\/]/).join('/'), error: 'notDeletable' }); continue; }
     const lib = db.libraries[s.libraryId];
     if (!s.oneshot && lib && s.relPath) {
-      const root = path.resolve(lib.root), dir = path.resolve(root, s.relPath);
-      if (dir.startsWith(root + path.sep)) rmdirs.push({ kind: 'rmdir', from: dir, rel: s.relPath });
+      const root = path.resolve(lib.root), d = path.resolve(root, s.relPath);
+      if (d.startsWith(root + path.sep)) { ops.push({ kind: 'rmdir', from: d }); after.push({ s, left: [], rmdir: true, rel: s.relPath }); continue; }
     }
+    after.push({ s, left: [], none: true });
   }
-  if (rmdirs.length) {
-    const res = await runOps(rmdirs.map(({ kind, from }) => ({ kind, from })));
-    job.foldersKept = rmdirs.filter((d, k) => !(res[k] && res[k].ok)).map(d => d.rel.split(/[\\/]/).join('/')); // other files are still in them
+  const res = ops.length ? await runOps(ops) : [];
+  job.foldersKept = [];
+  const gone = new Set();
+  let k = 0;
+  for (const a of after) {
+    const r = a.none ? { ok: true } : res[k++] || { ok: false, error: 'not done' };
+    const rel = String(a.rel || '').split(/[\\/]/).join('/');
+    if (a.all) {
+      if (r.ok || r.error === 'missing') { a.left.forEach(b => gone.add(b.id)); job.deleted += a.left.length; job.foldersDeleted.push(rel); }
+      else { job.failed.push({ from: rel, error: r.error }); continue; }
+    } else if (a.file) {
+      if (r.ok || r.error === 'missing') { gone.add(a.left[0].id); job.deleted++; } else { job.failed.push({ from: a.left[0].relPath, error: r.error }); continue; }
+    } else if (a.rmdir && !r.ok) job.foldersKept.push(rel); // other (non-book) files are still in it
+    if (a.left.some(b => !gone.has(b.id))) continue; // the work still has books
+    for (const c of Object.values(db.collections)) if (c.seriesIds.includes(a.s.id)) c.seriesIds = [...new Set(c.seriesIds.map(id => (id === a.s.id ? t.id : id)))];
+    if (job.metadata) job.metadata.forgetSeries(a.s);
+    delete db.series[a.s.id];
   }
+  removeBooks(gone);
   t.updated = new Date().toISOString();
   store.reindex();
   store.saveLibrary();

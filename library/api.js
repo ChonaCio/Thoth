@@ -697,7 +697,11 @@ async function handle(ctx) {
   // POST /api/rename/apply { items: [{ bookId, toName }], renameJson }
   if (p === '/api/rename/preview' && method === 'GET') {
     requireAdmin();
-    return send(200, rename.preview(q.get('library') || 'all'));
+    const pv = rename.preview(q.get('library') || 'all', { checkDisk: true });
+    // Files already renamed (or gone) on disk while the database still has their old names: re-check those
+    // libraries' files (every file, not trusting folder dates) so the database catches up
+    for (const id of pv.stale.libraries) scanner.scanLibrary(id, { mode: 'changes', reason: 'files' }).catch(() => {});
+    return send(200, pv);
   }
   // GET  /api/rename/rules → examples of the naming rules, worked out by them
   if (p === '/api/rename/rules' && method === 'GET') {
@@ -716,7 +720,9 @@ async function handle(ctx) {
       renameJson: body.renameJson !== false, metadata, by,
       onDone: j => {
         // Book order/numbers follow file names: let a quick scan put them in order (and refresh folder sources)
-        for (const id of j.libraries) scanner.scanLibrary(id, { mode: 'quick', reason: 'rename' }).catch(() => {});
+        // Every file checked (not a quick scan: a folder's date isn't updated reliably on every disk, and a scan
+        // trusting it would bring the old names back)
+        for (const id of j.libraries) scanner.scanLibrary(id, { mode: 'changes', reason: 'rename' }).catch(() => {});
         console.log(`[library] ${by} renamed ${j.renamed} file(s)${j.json ? ` and ${j.json} JSON file(s)` : ''}; ${j.failedCount} failed`);
       }
     });
@@ -725,7 +731,7 @@ async function handle(ctx) {
   }
   // ---- File management: deleting files, merging works (same job queue as renaming) ----
   const fileJobDone = (by, what) => j => {
-    for (const id of j.libraries) if (db.libraries[id]) scanner.scanLibrary(id, { mode: 'quick', reason: 'files' }).catch(() => {});
+    for (const id of j.libraries) if (db.libraries[id]) scanner.scanLibrary(id, { mode: 'changes', reason: 'files' }).catch(() => {});
     console.log(`[library] ${by} ${what}: ${j.renamed ? `${j.renamed} renamed, ` : ''}${j.deleted ? `${j.deleted} deleted, ` : ''}${j.moved ? `${j.moved} moved, ` : ''}${j.failedCount} failed`);
   };
   // POST /api/files/delete { items: [{ bookId, replace }] } or { allExists: true, library, keep: 'existing'|'renamed' } → 202 { job }
@@ -766,7 +772,7 @@ async function handle(ctx) {
     rename.dismissSuggestion(body.key);
     return send(200, { ok: true });
   }
-  // POST /api/files/merge { target, sources: [seriesId] } → 202 { job }: the sources' files move into the target's folder
+  // POST /api/files/merge { target, sources: [seriesId], deleteSources } → 202 { job }: the chapters the target lacks move into its folder
   if (p === '/api/files/merge' && method === 'POST') {
     requireAdmin();
     const t = db.series[body.target];
@@ -774,7 +780,8 @@ async function handle(ctx) {
     if (t.oneshot) throw httpError(400, 'mergeTarget');
     const sources = [...new Set((Array.isArray(body.sources) ? body.sources : []).filter(id => typeof id === 'string' && id !== t.id))];
     if (!sources.length || sources.some(id => !db.series[id])) throw httpError(400, 'invalid');
-    const job = rename.enqueue({ target: t.id, sources }, { kind: 'merge', metadata, by: user.username, onDone: fileJobDone(user.username, `merged ${sources.length} work(s) into "${store.seriesMeta(t).title}"`) });
+    // deleteSources: the other works' folders are deleted afterwards, with the chapters the kept work already had
+    const job = rename.enqueue({ target: t.id, sources, deleteSources: body.deleteSources === true }, { kind: 'merge', metadata, by: user.username, onDone: fileJobDone(user.username, `merged ${sources.length} work(s) into "${store.seriesMeta(t).title}"`) });
     if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
     return send(202, { job });
   }

@@ -17,8 +17,14 @@ async function run(ops, onProgress = () => {}) {
     const r = { ok: false, error: null, json: [] };
     if (op.kind === 'delete') {
       try { await fs.promises.unlink(op.from); r.ok = true; } catch (e) { r.error = e.code === 'ENOENT' ? 'missing' : reason(e); }
+    } else if (op.kind === 'rmtree') {
+      // A whole folder (the server checked it's a work's folder inside its library, not the library itself)
+      try { await fs.promises.rm(op.from, { recursive: true, force: false }); r.ok = true; } catch (e) { r.error = e.code === 'ENOENT' ? 'missing' : reason(e); }
     } else if (op.kind === 'rmdir') {
       try { await fs.promises.rmdir(op.from); r.ok = true; } catch (e) { r.error = e.code === 'ENOTEMPTY' || e.code === 'EEXIST' ? 'notEmpty' : reason(e); }
+    } else if (op.kind !== 'move' && !fs.existsSync(op.from) && fs.existsSync(op.to)) {
+      // Already has its new name on disk (the database was behind): nothing to do but say so
+      r.ok = true; r.already = true;
     } else if (fs.existsSync(op.to) && op.from.toLowerCase() !== op.to.toLowerCase()) {
       // A case-only change ("chapter 1" → "Chapter 1") is fine; otherwise never overwrite
       r.error = 'exists';

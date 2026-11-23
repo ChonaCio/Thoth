@@ -1041,7 +1041,7 @@
 
   /* ================= RENAME FILES (admins) ================= */
   // Check a library for files to rename (chapter-1.cbz → Chapter 1.cbz), review, rename the picked ones
-  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', notEmpty: 'files.err.notEmpty' };
+  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', notEmpty: 'files.err.notEmpty', notDeletable: 'files.err.notDeletable', otherDisk: 'files.err.otherDisk' };
   // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
   // except `excluded`; mode 'some' = only the ticked ones (`selected`)
   function renameState() {
@@ -1109,11 +1109,14 @@
     if (r.json) lines.push(t('ren.doneJson', { count: r.json }));
     if (r.deleted) lines.push(t('files.deletedCount', { count: r.deleted }));
     if (r.moved) lines.push(t('files.movedCount', { count: r.moved }));
+    if (r.skipped) lines.push(t('files.repeatsCount', { count: r.skipped }));
     if (!lines.length) lines.push(t('ren.done', { count: 0 }));
     var failed = r.failed || [];
     return '<div class="banner ' + (failed.length || r.status === 'failed' ? 'banner--error' : 'banner--ok') + '"><div>' +
       '<strong>' + esc(lines.join(' ')) + '</strong>' +
       (r.error ? '<p>' + esc(r.error) + '</p>' : '') +
+      (r.foldersDeleted && r.foldersDeleted.length ? '<p class="small">' + esc(t('files.foldersDeleted', { folders: r.foldersDeleted.join(', ') })) + '</p>' : '') +
+      (r.repeats && r.repeats.length && !(r.foldersDeleted && r.foldersDeleted.length) ? '<p class="small">' + esc(t('files.repeatsLeft', { files: r.repeats.slice(0, 10).join(', ') + (r.skipped > 10 ? '…' : '') })) + '</p>' : '') +
       (r.foldersKept && r.foldersKept.length ? '<p class="small">' + esc(t('files.foldersKept', { folders: r.foldersKept.join(', ') })) + '</p>' : '') +
       (r.failedCount > failed.length ? '<p class="small">' + esc(t('ren.failedMore', { count: r.failedCount })) + '</p>' : '') +
       (failed.length ? '<ul class="msrc-examples">' + failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> — ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
@@ -1153,6 +1156,8 @@
       var nSel = renameSelectedCount(st);
       var summary = '<p class="muted small">' + esc(t('ren.summary', { checked: st.data.checked, count: okTotal, conflicts: st.data.conflicts != null ? st.data.conflicts : items.length - okTotal })) + '</p>' +
         (st.data.truncated ? '<p class="notice notice--info small">' + esc(t('ren.truncated', { shown: items.length, total: st.data.total })) + '</p>' : '') +
+        // The list of files was behind the disk (files already renamed there): not proposed, being re-checked
+        (st.data.stale && st.data.stale.count ? '<p class="notice notice--info small">' + esc(t('ren.stale', { count: st.data.stale.count })) + '</p>' : '') +
         // Files whose new name is already taken by another file: delete one of the two (all at once or per file)
         (st.data.exists ? '<div class="notice notice--info files-exists"><span>' + esc(t('files.existsSummary', { count: st.data.exists })) + '</span>' +
           '<span class="files-exists__actions">' +
@@ -1228,7 +1233,7 @@
    * Suggestions (works the metadata says are the same) and a manual merge: pick works, choose the one to keep;
    * the others' files move into its folder (a job in the same queue as renaming). */
   function mergeState() {
-    if (!cache.merge) cache.merge = { library: 'all', data: null, loading: false, error: null, choice: {}, job: null, result: null, q: '', found: null, manual: [], manualTarget: null };
+    if (!cache.merge) cache.merge = { library: 'all', data: null, loading: false, error: null, choice: {}, job: null, result: null, q: '', found: null, manual: [], manualTarget: null, deleteSources: {} };
     return cache.merge;
   }
   function loadMergeSuggestions() {
@@ -1278,6 +1283,11 @@
         ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span>' +
         (w.oneshot ? ' <span class="badge">' + esc(t('lib.oneshot')) + '</span>' : '') + '</span></label></li>';
   }
+  // "Delete the other folders when done": per suggestion / for the manual merge
+  function mergeDeleteBox(st, key) {
+    return '<label class="checkbox merge-delete"><input type="checkbox" data-merge-delete="' + esc(key) + '"' + (st.deleteSources[key] ? ' checked' : '') + ' />' +
+      '<span>' + esc(t('files.deleteSources')) + '</span></label>';
+  }
   function mergeRender() {
     var st = mergeState();
     var libs = A().state.libraries || [];
@@ -1293,7 +1303,7 @@
           '<button class="btn btn--text btn--small" data-lib="merge-add" data-id="' + w.id + '"' + (added ? ' disabled' : '') + '>' + icon('add') + esc(t(added ? 'files.added' : 'files.add')) + '</button></li>';
       }).join('') + '</ul>' : '<p class="muted small">' + esc(t('lib.noMatch')) + '</p>') : '') +
       (st.manual.length ? '<ul class="merge-list">' + st.manual.map(function (w) { return mergeRow('manual', w, st.manualTarget, true); }).join('') + '</ul>' +
-        '<div class="merge-actions"><button class="btn btn--primary" data-lib="merge-go" data-key="manual"' + (st.manual.length < 2 || !st.manualTarget || st.job ? ' disabled' : '') + '>' + icon('collections') + esc(t('files.mergeN', { count: st.manual.length })) + '</button>' +
+        '<div class="merge-actions">' + mergeDeleteBox(st, 'manual') + '<button class="btn btn--primary" data-lib="merge-go" data-key="manual"' + (st.manual.length < 2 || !st.manualTarget || st.job ? ' disabled' : '') + '>' + icon('collections') + esc(t('files.mergeN', { count: st.manual.length })) + '</button>' +
         '<button class="btn btn--text" data-lib="merge-clear">' + esc(t('filter.clear')) + '</button></div>' : '') +
       '</section>';
     var toolbar = '<div class="toolbar"><div class="toolbar__group">' +
@@ -1313,7 +1323,7 @@
       return '<section class="card card--wide merge-group" data-key="' + esc(g.key) + '">' +
         '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(reasonText(g)) + '</span></p>' +
         '<ul class="merge-list">' + g.works.map(function (w) { return mergeRow(g.key, w, ch.target, ch.include[w.id]); }).join('') + '</ul>' +
-        '<div class="merge-actions">' +
+        '<div class="merge-actions">' + mergeDeleteBox(st, g.key) +
           '<button class="btn btn--primary" data-lib="merge-go" data-key="' + esc(g.key) + '"' + (n < 2 || !ch.target || st.job ? ' disabled' : '') + '>' + icon('collections') + esc(t('files.mergeN', { count: n })) + '</button>' +
           '<button class="btn btn--text" data-lib="merge-dismiss" data-key="' + esc(g.key) + '">' + esc(t('files.notSame')) + '</button>' +
         '</div></section>';
@@ -1345,6 +1355,7 @@
         else { st.choice[key].target = tg.value; st.choice[key].include[tg.value] = true; }
         return A().renderPage();
       }
+      if ((key = tg.dataset.mergeDelete)) { st.deleteSources[key] = tg.checked; return; }
       if ((key = tg.dataset.mergeInclude)) {
         if (key === 'manual') { if (!tg.checked) st.manual = st.manual.filter(function (w) { return w.id !== tg.value; }); }
         else st.choice[key].include[tg.value] = tg.checked;
@@ -1370,8 +1381,9 @@
     sources = sources.filter(function (id) { return id !== target; });
     var tw = works.filter(function (w) { return w.id === target; })[0];
     if (!tw || !sources.length) return;
-    if (!confirm(t('files.mergeConfirm', { count: sources.length, title: tw.title, path: tw.path }))) return;
-    return api('POST', '/api/files/merge', { target: target, sources: sources }).then(function (r) {
+    var del = Boolean(st.deleteSources[key]);
+    if (!confirm(t(del ? 'files.mergeConfirmDelete' : 'files.mergeConfirm', { count: sources.length, title: tw.title, path: tw.path }))) return;
+    return api('POST', '/api/files/merge', { target: target, sources: sources, deleteSources: del }).then(function (r) {
       st.job = r.job; st.result = null;
       A().toast(t('files.mergeStarted'));
       A().renderPage();

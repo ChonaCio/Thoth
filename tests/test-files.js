@@ -101,10 +101,10 @@ const scanned = async id => until(async () => { const l = (await call('GET', '/a
   ok((await call('POST', '/api/files/merge', { target: (await call('GET', '/api/series?q=saga&limit=10')).data.items.find(s => s.oneshot) ? 'x' : target.id, sources: [] })).status === 400, 'a merge needs works to move');
   j = await job((await call('POST', '/api/files/merge', { target: target.id, sources: [source.id] })).data.job.id);
   const sagaA = fs.readdirSync(path.join(A, 'Saga')).sort();
-  ok(j.moved === 2 && j.failed.length === 1 && j.failed[0].error === 'exists' && sagaA.join('|') === 'Chapter 1.cbz|Chapter 2.cbz|Chapter 3.cbz|Chapter 4.cbz',
-    `files moved into the kept work’s folder; a name already there is left alone (${sagaA.join(', ')})`);
+  ok(j.moved === 2 && j.skipped === 1 && !j.failed.length && j.repeats[0] === 'Saga/Chapter 2.cbz' && sagaA.join('|') === 'Chapter 1.cbz|Chapter 2.cbz|Chapter 3.cbz|Chapter 4.cbz',
+    `only the missing chapters moved into the kept work’s folder; the repeat stayed (${sagaA.join(', ')})`);
   const left = await call('GET', `/api/series/${source.id}`);
-  ok(left.status === 200 && left.data.books.length === 1 && fs.existsSync(path.join(B, 'Saga', 'Chapter 2.cbz')), 'the work whose file couldn’t move stays, with that file');
+  ok(left.status === 200 && left.data.books.length === 1 && fs.existsSync(path.join(B, 'Saga', 'Chapter 2.cbz')), 'without “delete”, the other work keeps its repeat');
   const merged = (await call('GET', `/api/series/${target.id}`)).data.books;
   ok(merged.length === 4 && merged.find(b => b.fileName === 'Chapter 3.cbz').progress.completed, 'the kept work has the moved chapters, with their reading progress');
   await scanned(LA); await scanned(LB);
@@ -118,6 +118,49 @@ const scanned = async id => until(async () => { const l = (await call('GET', '/a
   const s2 = (await call('GET', '/api/files/works?q=saga%202')).data.works[0];
   j = await job((await call('POST', '/api/files/merge', { target: target.id, sources: [s2.id] })).data.job.id);
   ok(j.moved === 1 && !fs.existsSync(path.join(B, 'Saga 2')) && (await call('GET', `/api/series/${s2.id}`)).status === 404, 'a work whose files all moved is gone, and so is its empty folder');
+
+  // Repeats by chapter (not by name), and deleting the other folder when done
+  book(path.join(B, 'Saga Again', 'chapter-001.cbz'));                 // = Chapter 1 (a repeat by number)
+  book(path.join(B, 'Saga Again', 'Chapter 5 - The End.cbz'));         // missing: moves
+  fs.writeFileSync(path.join(B, 'Saga Again', 'cover.jpg'), 'not a book');
+  await call('POST', `/api/libraries/${LB}/scan`, {});
+  const again = await until(async () => (await call('GET', '/api/files/works?q=saga%20again')).data.works[0]);
+  const keptBefore = (await call('GET', `/api/series/${target.id}`)).data.books.length;
+  j = await job((await call('POST', '/api/files/merge', { target: target.id, sources: [again.id, source.id], deleteSources: true })).data.job.id);
+  ok(j.moved === 1 && j.skipped === 2 && fs.existsSync(path.join(A, 'Saga', 'Chapter 5 - The End.cbz')) && !fs.existsSync(path.join(A, 'Saga', 'chapter-001.cbz')),
+    '“chapter-001” is the kept work’s Chapter 1 (same number): a repeat; the missing chapter moved');
+  ok(!fs.existsSync(path.join(B, 'Saga Again')) && !fs.existsSync(path.join(B, 'Saga')) && j.foldersDeleted.length === 2 && j.deleted === 2,
+    `with “delete the other folders”, they’re gone with the repeats and other files in them (${j.foldersDeleted.join(', ')})`);
+  ok((await call('GET', `/api/series/${again.id}`)).status === 404 && (await call('GET', `/api/series/${source.id}`)).status === 404
+    && (await call('GET', `/api/series/${target.id}`)).data.books.length === keptBefore + 1, 'the other works are gone; the kept one gained the missing chapter');
+
+  // ---- the list of files behind the disk (a scan that trusted an unchanged folder date) ----
+  const D = path.join(A, 'Stale');
+  book(path.join(D, 'chapter-1.cbz')); book(path.join(D, 'chapter-2.cbz'));
+  await call('POST', `/api/libraries/${LA}/scan`, {});
+  await until(async () => (await call('GET', `/api/rename/preview?library=${LA}`)).data.items.some(x => x.from === 'Stale/chapter-1.cbz'));
+  // Renamed behind Thoth's back on a disk that doesn't update the folder's date: the saved scan index still
+  // matches the folder's date, so a quick scan reuses the old listing
+  await until(async () => !(await call('GET', '/api/libraries')).data.libraries.find(x => x.id === LA).scanning);
+  fs.renameSync(path.join(D, 'chapter-1.cbz'), path.join(D, 'Chapter 1.cbz'));
+  const idxFile = path.join(DATA, 'scan-index', `${LA}.json`);
+  const idx = JSON.parse(fs.readFileSync(idxFile, 'utf8'));
+  idx.dirs.Stale.mtimeMs = fs.statSync(D).mtimeMs;
+  fs.writeFileSync(idxFile, JSON.stringify(idx));
+  const lastAt = (await call('GET', '/api/libraries')).data.libraries.find(l => l.id === LA).lastScan.at;
+  await call('POST', `/api/libraries/${LA}/scan`, { mode: 'quick' });
+  await until(async () => { const l = (await call('GET', '/api/libraries')).data.libraries.find(x => x.id === LA); return !l.scanning && l.lastScan.at !== lastAt; });
+  const stalePv = (await call('GET', `/api/rename/preview?library=${LA}`)).data;
+  ok(!stalePv.items.some(x => x.from === 'Stale/chapter-1.cbz') && stalePv.stale.count === 1 && stalePv.items.some(x => x.from === 'Stale/chapter-2.cbz'),
+    'a file already renamed on disk isn’t proposed again (the list was behind); the others still are');
+  const fixed = await until(async () => { const l = (await call('GET', '/api/libraries')).data.libraries.find(x => x.id === LA); return !l.scanning && l.lastScan.scanMode === 'changes' && l; });
+  const staleWork = (await call('GET', '/api/files/works?q=stale')).data.works[0];
+  const staleBooks = (await call('GET', `/api/series/${staleWork.id}`)).data.books.map(b => b.fileName).sort();
+  ok(fixed.lastScan.reason === 'files' && staleBooks.join('|') === 'Chapter 1.cbz|chapter-2.cbz', `…and a full check of the files brought the list up to date (${staleBooks.join(', ')})`);
+  j = await job((await call('POST', '/api/rename/apply', { all: true, library: LA })).data.job.id);
+  ok(j.renamed >= 1 && !j.failed.length && fs.readdirSync(D).sort().join('|') === 'Chapter 1.cbz|Chapter 2.cbz', 'renaming then works normally');
+  const after = await until(async () => { const l = (await call('GET', '/api/libraries')).data.libraries.find(x => x.id === LA); return !l.scanning && l.lastScan.reason === 'rename' && l; });
+  ok(after.lastScan.scanMode === 'changes', 'after renaming, every file is checked (not a quick scan that could trust a stale folder date)');
 
   // Not the same: dismissed suggestions don't come back
   book(path.join(B, 'Dup', 'Chapter 7.cbz'));

@@ -1881,4 +1881,64 @@
     "proc.media.warmDone": "{total} obras verificadas, {added} capas adicionadas",
     "proc.media.help": "Capas, páginas e obras (listas, filtros, páginas de obra) são servidas de um cache. As capas de todas as obras são lidas antecipadamente após as análises. O que não está no cache é lido por um processo separado, iniciado quando preciso e fechado quando ocioso; ler uma página também lê as seguintes."
   });
+  add('en', {
+    "ren.stale": "{count} files already have their new names on disk (the list of files was behind). They’re not proposed again; the library is being re-checked.",
+    "files.repeatsCount": "{count} chapters the kept work already had were not moved.",
+    "files.foldersDeleted": "Deleted: {folders}",
+    "files.repeatsLeft": "Left where they were (the kept work has them): {files}",
+    "files.deleteSources": "Delete the other folders when done (with the chapters the kept work already has)",
+    "files.mergeConfirm": "Move the chapters “{title}” ({path}) doesn’t have from {count} works into its folder? Chapters it already has stay where they are.",
+    "files.mergeConfirmDelete": "Move the chapters “{title}” ({path}) doesn’t have from {count} works into its folder, then DELETE the other works’ folders with everything left in them? This can’t be undone.",
+    "files.mergeIntro": "Merging moves the chapters the kept work doesn’t have yet into its folder, so the works become one. A chapter it already has (same file name or same chapter number) is a repeat and isn’t moved; you can delete the other folders when the merge finishes. Reading progress and read lists follow the files.",
+    "files.err.notDeletable": "this folder can’t be deleted (it holds the kept work or is the library folder)",
+    "files.err.otherDisk": "on another disk"
+  });
+  add('es', {
+    "ren.stale": "{count} archivos ya tienen su nombre nuevo en el disco (la lista de archivos estaba desactualizada). No se proponen otra vez; la biblioteca se está revisando.",
+    "files.repeatsCount": "No se movieron {count} capítulos que la obra conservada ya tenía.",
+    "files.foldersDeleted": "Eliminadas: {folders}",
+    "files.repeatsLeft": "Se quedaron donde estaban (la obra conservada los tiene): {files}",
+    "files.deleteSources": "Eliminar las otras carpetas al terminar (con los capítulos que la obra conservada ya tiene)",
+    "files.mergeConfirm": "¿Mover a la carpeta de “{title}” ({path}) los capítulos que le faltan de {count} obras? Los capítulos que ya tiene se quedan donde están.",
+    "files.mergeConfirmDelete": "¿Mover a la carpeta de “{title}” ({path}) los capítulos que le faltan de {count} obras y después ELIMINAR las carpetas de las otras obras con todo lo que quede en ellas? No se puede deshacer.",
+    "files.mergeIntro": "Fusionar mueve a la carpeta de la obra que conservas los capítulos que aún no tiene, para que sean una sola obra. Un capítulo que ya tiene (mismo nombre de archivo o mismo número) es repetido y no se mueve; puedes eliminar las otras carpetas al terminar. El progreso de lectura y las listas siguen a los archivos.",
+    "files.err.notDeletable": "esta carpeta no se puede eliminar (contiene la obra conservada o es la carpeta de la biblioteca)",
+    "files.err.otherDisk": "en otro disco"
+  });
+  add('fr', {
+    "ren.stale": "{count} fichiers ont déjà leur nouveau nom sur le disque (la liste des fichiers était en retard). Ils ne sont plus proposés ; la bibliothèque est revérifiée.",
+    "files.repeatsCount": "{count} chapitres que l’œuvre gardée avait déjà n’ont pas été déplacés.",
+    "files.foldersDeleted": "Supprimés : {folders}",
+    "files.repeatsLeft": "Laissés en place (l’œuvre gardée les a) : {files}",
+    "files.deleteSources": "Supprimer les autres dossiers à la fin (avec les chapitres que l’œuvre gardée a déjà)",
+    "files.mergeConfirm": "Déplacer dans le dossier de « {title} » ({path}) les chapitres qui lui manquent de {count} œuvres ? Les chapitres qu’elle a déjà restent en place.",
+    "files.mergeConfirmDelete": "Déplacer dans le dossier de « {title} » ({path}) les chapitres qui lui manquent de {count} œuvres, puis SUPPRIMER les dossiers des autres œuvres avec tout ce qui y reste ? Action irréversible.",
+    "files.mergeIntro": "Fusionner déplace dans le dossier de l’œuvre gardée les chapitres qu’elle n’a pas encore, pour n’en faire qu’une. Un chapitre qu’elle a déjà (même nom de fichier ou même numéro) est un doublon et n’est pas déplacé ; vous pouvez supprimer les autres dossiers à la fin. La progression et les listes de lecture suivent les fichiers.",
+    "files.err.notDeletable": "ce dossier ne peut pas être supprimé (il contient l’œuvre gardée ou c’est le dossier de la bibliothèque)",
+    "files.err.otherDisk": "sur un autre disque"
+  });
+  add('de', {
+    "ren.stale": "{count} Dateien haben auf der Festplatte schon ihren neuen Namen (die Dateiliste war veraltet). Sie werden nicht erneut vorgeschlagen; die Bibliothek wird neu geprüft.",
+    "files.repeatsCount": "{count} Kapitel, die das behaltene Werk schon hatte, wurden nicht verschoben.",
+    "files.foldersDeleted": "Gelöscht: {folders}",
+    "files.repeatsLeft": "Blieben, wo sie waren (das behaltene Werk hat sie): {files}",
+    "files.deleteSources": "Die anderen Ordner danach löschen (mit den Kapiteln, die das behaltene Werk schon hat)",
+    "files.mergeConfirm": "Die Kapitel, die „{title}“ ({path}) fehlen, aus {count} Werken in seinen Ordner verschieben? Kapitel, die es schon hat, bleiben, wo sie sind.",
+    "files.mergeConfirmDelete": "Die Kapitel, die „{title}“ ({path}) fehlen, aus {count} Werken in seinen Ordner verschieben und danach die Ordner der anderen Werke mit allem, was darin bleibt, LÖSCHEN? Das lässt sich nicht rückgängig machen.",
+    "files.mergeIntro": "Zusammenführen verschiebt die Kapitel, die das behaltene Werk noch nicht hat, in seinen Ordner, sodass die Werke eins werden. Ein Kapitel, das es schon hat (gleicher Dateiname oder gleiche Nummer), ist doppelt und wird nicht verschoben; die anderen Ordner können danach gelöscht werden. Lesefortschritt und Leselisten folgen den Dateien.",
+    "files.err.notDeletable": "dieser Ordner kann nicht gelöscht werden (er enthält das behaltene Werk oder ist der Bibliotheksordner)",
+    "files.err.otherDisk": "auf einer anderen Festplatte"
+  });
+  add('pt', {
+    "ren.stale": "{count} arquivos já têm o nome novo no disco (a lista de arquivos estava desatualizada). Não são propostos de novo; a biblioteca está sendo verificada.",
+    "files.repeatsCount": "{count} capítulos que a obra mantida já tinha não foram movidos.",
+    "files.foldersDeleted": "Excluídas: {folders}",
+    "files.repeatsLeft": "Ficaram onde estavam (a obra mantida os tem): {files}",
+    "files.deleteSources": "Excluir as outras pastas ao terminar (com os capítulos que a obra mantida já tem)",
+    "files.mergeConfirm": "Mover para a pasta de “{title}” ({path}) os capítulos que faltam a ela, de {count} obras? Os capítulos que ela já tem ficam onde estão.",
+    "files.mergeConfirmDelete": "Mover para a pasta de “{title}” ({path}) os capítulos que faltam a ela, de {count} obras, e depois EXCLUIR as pastas das outras obras com tudo o que restar nelas? Não dá para desfazer.",
+    "files.mergeIntro": "Juntar move para a pasta da obra mantida os capítulos que ela ainda não tem, para virarem uma só obra. Um capítulo que ela já tem (mesmo nome de arquivo ou mesmo número) é repetido e não é movido; você pode excluir as outras pastas ao terminar. O progresso de leitura e as listas seguem os arquivos.",
+    "files.err.notDeletable": "esta pasta não pode ser excluída (contém a obra mantida ou é a pasta da biblioteca)",
+    "files.err.otherDisk": "em outro disco"
+  });
 })();
