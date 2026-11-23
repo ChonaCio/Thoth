@@ -13,6 +13,10 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
 - **Metadata** from `ComicInfo.xml` inside CBZ files (title, number, summary, authors, publisher,
   genres, release date, manga reading direction, webtoon format). Administrators can override any of it;
   their edits survive rescans.
+- **Online metadata** (like Jellyfin): summary, status, year, type (manga, manhwa, manhua, webcomic, comic,
+  novel, book), authors, genres/tags, rating, alternative titles and covers from AniList, MangaDex,
+  MangaUpdates, Kitsu, MyAnimeList, Open Library, Google Books and Comic Vine. Each library chooses which
+  sources to use and in what order. See [Online metadata](#online-metadata).
 - **Browse**: Home (*Keep reading*, *On deck* = next book in series you've started, recently added),
   per-library series grids with filter, sort and read-status filters, series and book pages, global search
   (series, books, authors, tags, collections, read lists).
@@ -112,15 +116,67 @@ them in small batches, each process reading several files at once. Libraries are
 | --- | --- | --- |
 | Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each). Changing it restarts the scan service. |
 | Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
+| Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
+| Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
-**Processes page (administrators).** Shows the web server and the scan service: process ID, uptime,
-memory, CPU time, what's being scanned and what's waiting.
+**Processes page (administrators).** Shows the web server, the scan service and the metadata lookups:
+process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting.
 - **Scan service: Start / Stop / Restart.** Stopping cancels the scan in progress (it starts over later);
   scans requested while stopped wait in line. A stopped service stays stopped across server restarts until
   you start it. If the service crashes it restarts by itself, and gives up after 3 crashes in a minute.
-- **Restart server** works when the server runs under systemd or Docker (they start it again).
-- When the server code on disk is newer than the running server (after an update or `git pull`),
-  administrators see a notice asking to restart.
+- **Restart server** always works: `npm start` / `node server.js` runs a tiny built-in supervisor that
+  starts the real server as a child process and starts it again when asked (see
+  [Restarts](#restarts-are-automatic)).
+- When the server code on disk is newer than the running server (after a `git pull`), administrators see
+  a notice asking to restart.
+
+### Online metadata
+
+Like Jellyfin's metadata fetchers, Thoth looks each work up on metadata sites and fills in what the files
+don't say. Each library has its own **metadata sources** (Manage libraries → *Edit*): tick the ones to use and
+order them with the arrows.
+
+| Source | Good for | Key |
+| --- | --- | --- |
+| AniList | Manga, manhwa, manhua, light novels | — |
+| MangaDex | Manga, manhwa, manhua, webcomics | — |
+| MangaUpdates | Manga, manhwa, manhua, novels | — |
+| Kitsu | Manga, manhwa, manhua, novels | — |
+| MyAnimeList (via Jikan) | Manga, manhwa, manhua, novels | — |
+| Open Library | Books, novels, comics | — |
+| Google Books | Books, novels, comics | optional (off by default) |
+| Comic Vine | Western comics | required (off by default) |
+
+- **How results are combined.** For each work, the enabled sources are asked in order with the work's title
+  (the folder name without its version suffix). A result counts only if its title (or an alternative title)
+  is a close match; the publication year from the books breaks ties. The **first** good match fills each field
+  (summary, status, year, type, publisher, authors, tags, rating, cover, reading direction, age rating);
+  later sources only fill fields still empty. It stops once the main fields are filled.
+- **What wins.** Your edits (series *Edit*) > the files' `ComicInfo.xml` > online metadata. Titles always stay
+  the library's, so versions keep grouping and works stay recognizable.
+- **When.** With *Fetch metadata automatically* on (default), works that were never looked up are queued
+  after each scan. *Fetch metadata* (missing ones) and *Refresh all metadata* are on each library's card, and
+  every work page has **Refresh metadata**, **Identify** (search the sites and pick the right match; it
+  sticks for future refreshes) and **Clear metadata**.
+- **Covers.** Downloaded once to `data/covers/`. Per library: use them only when the files have no cover
+  page (default, e.g. PDFs), always, or never.
+- **Rate limits.** Lookups run inside the web server one work at a time, with a pause between requests to the
+  same site and automatic retries when a site says "too many requests". A big library takes a while the
+  first time; the Processes page shows progress.
+- **Privacy.** Only work titles (and, for Identify, what you type) are sent to the metadata sites, with a
+  generic user agent. Nothing about your users or server is sent. Turn off every source of a library to keep
+  it fully offline.
+- Works can be filtered by **type** on library pages.
+
+### Restarts are automatic
+
+`npm start` (and the Docker image and systemd service, which run the same command) starts a small
+supervisor process that runs the real server as a child. After an update that changes server code, the
+server exits with a "restart me" code and the supervisor starts the new code within a second; open pages
+reload on their own. **Restart server** on the Processes page does the same. If the server crashes, the
+supervisor starts it again (it gives up after 5 crashes in a minute, so a broken install doesn't loop
+forever; systemd/Docker then take over). Stopping the supervisor (Ctrl+C, `systemctl stop`, `docker stop`)
+stops the server cleanly. `THOTH_NO_SUPERVISOR=1` runs the server without it.
 
 The library page shows scan results: new/changed/removed books, files skipped for unsupported formats,
 and books that couldn't be opened. Removing a library from Thoth never deletes files.
@@ -132,7 +188,8 @@ all accounts) and start it again to get the *Create the first user* screen back.
 
 `data/` (or `THOTH_DATA_DIR`) holds `users.json` (password hashes use scrypt), `sessions.json`,
 `settings.json`, `library.json` (libraries, series, books, metadata edits, collections, read lists) and
-`progress.json` (reading progress). Back this folder up; your comic files are never stored there. It's never served to browsers, never committed to git, never
+`progress.json` (reading progress), `config.json` (server settings and metadata API keys) and `covers/`
+(downloaded metadata covers). Back this folder up; your comic files are never stored there. It's never served to browsers, never committed to git, never
 copied into the container image, and never touched by updates. Sessions are HttpOnly cookies that last
 30 days. After 10 failed sign-ins from one address, sign-in is blocked for that address for 15 minutes.
 
@@ -162,8 +219,8 @@ is its internal Docker IP; use the server's own IP instead (`hostname -I`).
 | Reset everything (drops installed updates **and all accounts**) | `docker compose down -v && docker compose up -d --build` |
 
 The app files and the `data/` folder live in the `thoth-app` volume, so accounts and updates installed
-from the Updates page survive restarts and container re-creation. When an update changes the server code, the app exits and Docker's
-restart policy starts it again with the new code. Because the volume keeps the files, rebuilding the
+from the Updates page survive restarts and container re-creation. When an update changes the server code, the built-in
+supervisor restarts the server inside the container with the new code. Because the volume keeps the files, rebuilding the
 image alone does not change the running code; install updates from the Updates page instead.
 
 Without Compose:
@@ -188,7 +245,9 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
 | `js/reader.js` | The reader |
 | `server.js` | Zero-dependency web server: page + CSS/JS, accounts API, library API, update API |
 | `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, library access |
-| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `db.js` (storage, versions), `api.js` (routes) |
+| `supervisor.js` | Runs the server as a child process and restarts it after updates or crashes |
+| `config.js` | Server settings (`data/config.json`), including metadata API keys |
+| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `db.js` (storage, versions), `api.js` (routes), `metadata/` (online metadata: `providers.js` per site, `index.js` queue, merging, covers, Identify) |
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |
@@ -209,8 +268,8 @@ For a push build, tag it `p1`, `p2`, … (`git tag p4 && git push origin p4`).
 **Installing** is done by the Node server (`updater.js`): it downloads the tag's source,
 copies the files over the app folder, and backs up every replaced file to `.updates/backup-<time>/`.
 Files that no longer exist in the new version are left in place. `data/`, `.git`, `.claude`, `.env`,
-`node_modules` and `.updates` are never touched. If `server.js`, `updater.js` or `package.json`
-changed, restart the server to finish.
+`node_modules` and `.updates` are never touched. If the update changed server code, the server
+**restarts itself** right after installing (no manual step), and the open page reloads when it's back.
 
 - **How the app knows its version.** The version isn't written in a file; the app works out which commit it's
   running, then names it after the repository's tags. *Release* is the highest `vX.Y.Z` release that commit
@@ -269,8 +328,8 @@ Running it again updates the app and unit but keeps your settings, installed-ver
 `http://<server-ip>:3000`. Open the port in the firewall if one is active. For HTTPS or port 80, put nginx in front
 (see [deploy/nginx-thoth.conf](deploy/nginx-thoth.conf)) and set `HOST=127.0.0.1`.
 
-**Updates under systemd.** When an installed update changes the server code, the app restarts itself
-(`THOTH_SELF_RESTART=1` in the unit), systemd brings it back up, and the open page reloads on its own.
+**Updates under systemd.** When an installed update changes the server code, the built-in supervisor
+restarts the server inside the service (the service itself keeps running), and the open page reloads on its own.
 
 **Hardening.** The service runs as an unprivileged user and can only write to its own folder
 (`ProtectSystem=strict`, `ReadWritePaths=/opt/thoth`). It can still bind ports below 1024 (e.g. `PORT=80`).

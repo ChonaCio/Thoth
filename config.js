@@ -14,7 +14,10 @@ const SCHEMA = {
   // Leave one core for the web server by default.
   scanWorkers: { default: Math.min(4, Math.max(1, CPUS - 1)), min: 1, max: Math.max(1, Math.min(16, CPUS * 2)) },
   // Files each worker process reads at the same time (helps on fast disks and network storage)
-  scanConcurrency: { default: 4, min: 1, max: 32 }
+  scanConcurrency: { default: 4, min: 1, max: 32 },
+  // API keys for metadata providers (secret: never sent back to the browser, only whether one is set)
+  comicVineApiKey: { default: '', secret: true },
+  googleBooksApiKey: { default: '', secret: true }
 };
 
 const listeners = [];
@@ -27,6 +30,7 @@ function defaults() {
 }
 function clamp(key, v) {
   const s = SCHEMA[key];
+  if (s.secret) return typeof v === 'string' ? v.slice(0, 200) : '';
   const n = Math.round(Number(v));
   if (!Number.isFinite(n)) return s.default;
   return Math.min(s.max, Math.max(s.min, n));
@@ -53,6 +57,14 @@ function update(patch) {
   const next = Object.assign({}, values);
   for (const [k, v] of Object.entries(patch || {})) {
     if (!SCHEMA[k]) continue;
+    if (SCHEMA[k].secret) {
+      // null = remove the key; '' = keep the saved one; text = save it
+      if (v === '' || v === undefined) continue;
+      const val = v === null ? '' : String(v).trim();
+      if (val.length > 200 || /\s/.test(val)) throw Object.assign(new Error(`${k} doesn't look like an API key`), { status: 400, code: 'invalid', field: k });
+      if (next[k] !== val) { next[k] = val; changed.push(k); }
+      continue;
+    }
     const n = Number(v);
     if (!Number.isInteger(n) || n < SCHEMA[k].min || n > SCHEMA[k].max) {
       throw Object.assign(new Error(`${k} must be a whole number from ${SCHEMA[k].min} to ${SCHEMA[k].max}`), { status: 400, code: 'invalid', field: k });
@@ -71,6 +83,15 @@ module.exports = {
   get: () => Object.assign({}, values),
   update,
   onChange: fn => listeners.push(fn),
-  describe: () => ({ values: Object.assign({}, values), schema: SCHEMA, cpus: CPUS }),
+  // For the Server settings page: secrets are replaced by whether they're set
+  describe: () => {
+    const shown = {}, secretsSet = {};
+    for (const k of Object.keys(SCHEMA)) {
+      if (SCHEMA[k].secret) secretsSet[k] = Boolean(values[k]);
+      else shown[k] = values[k];
+    }
+    const schema = Object.fromEntries(Object.entries(SCHEMA).filter(([, s]) => !s.secret));
+    return { values: shown, schema, secretsSet, cpus: CPUS };
+  },
   CPUS
 };

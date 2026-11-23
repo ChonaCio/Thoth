@@ -766,13 +766,14 @@
     var u = state.updates;
     u.installing = tag; u.done = null; u.installError = null;
     renderPage();
+    var oldPid = await serverPid();
     try {
       var result = await Store.request('POST', '/api/updates/install', { channel: channel, tag: tag });
       u.done = result;
       u.current = result.current;
       u.release = {}; u.push = {};
       toast(t('upd.success', { tag: tag }));
-      if (result.autoRestart) waitForRestartThenReload();
+      if (result.autoRestart) waitForRestartThenReload(oldPid);
     } catch (e) {
       u.installError = e;
     }
@@ -780,15 +781,26 @@
     if (currentRoute() === 'updates') renderPage();
   }
 
-  // The server restarts itself after a server-code update (systemd/Docker); reload once it's back.
-  async function waitForRestartThenReload() {
-    await new Promise(function (r) { setTimeout(r, 1500); });
-    for (var i = 0; i < 40; i++) {
-      try {
-        var res = await fetch('/api/session', { cache: 'no-store' });
-        if (res.ok) { location.reload(); return; }
-      } catch (e) { /* still restarting */ }
-      await new Promise(function (r) { setTimeout(r, 1000); });
+  // The running server's process ID (changes when it restarts); null if unknown
+  async function serverPid() {
+    try {
+      var res = await fetch('/api/processes', { cache: 'no-store' });
+      if (!res.ok) return null;
+      return (await res.json()).server.pid || null;
+    } catch (e) { return null; }
+  }
+  // The server restarts itself after a server-code update (built-in supervisor, or systemd/Docker);
+  // reload once the new server process answers
+  async function waitForRestartThenReload(oldPid) {
+    for (var i = 0; i < 60; i++) {
+      await new Promise(function (r) { setTimeout(r, 750); });
+      if (!oldPid) {
+        // Server without the Processes API: wait a few seconds, then reload once it answers
+        try { if (i >= 4 && (await fetch('/api/session', { cache: 'no-store' })).ok) { location.reload(); return; } } catch (e) { /* restarting */ }
+        continue;
+      }
+      var pid = await serverPid();
+      if (pid !== null && pid !== oldPid) { location.reload(); return; }
     }
     state.updates.done.autoRestart = false;
     state.updates.done.restartRequired = true;

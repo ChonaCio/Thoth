@@ -97,8 +97,13 @@ function splitEdition(name) {
 }
 
 /* ---------------- metadata (scanned values + admin overrides) ---------------- */
+// Precedence: admin edits > the files' own metadata (ComicInfo.xml) > online providers. Titles are never
+// taken from providers (the library's names group versions and stay recognizable).
+const filled = o => Object.fromEntries(Object.entries(o || {}).filter(([, v]) => v != null && v !== '' && !(Array.isArray(v) && !v.length)));
 function seriesMeta(s) {
-  const m = Object.assign({}, s.meta || {}, s.overrides || {});
+  const online = filled(s.provider && s.provider.merged);
+  delete online.title;
+  const m = Object.assign({}, online, filled(s.meta), filled(s.overrides));
   // Version: admin override, else a suffix on the folder/file name, else on the title, else Regular
   const fromTitle = splitEdition(m.title || s.name);
   const fromName = splitEdition(s.name);
@@ -115,7 +120,12 @@ function seriesMeta(s) {
     publisher: m.publisher || '',
     readingDirection: m.readingDirection || 'ltr', // ltr | rtl | vertical
     tags: Array.isArray(m.tags) ? m.tags : [],
-    ageRating: m.ageRating || null
+    ageRating: m.ageRating || null,
+    type: m.type || null, // manga | manhwa | manhua | webcomic | comic | novel | book | other
+    year: Number.isInteger(Number(m.year)) && m.year ? Number(m.year) : null,
+    rating: m.rating != null && Number.isFinite(Number(m.rating)) ? Number(m.rating) : null, // 0–100
+    authors: Array.isArray(m.authors) ? m.authors : [],
+    altTitles: Array.isArray(m.altTitles) ? m.altTitles : []
   };
 }
 function bookMeta(b) {
@@ -195,18 +205,37 @@ function seriesView(s, user, { admin = false } = {}) {
   const m = seriesMeta(s);
   const books = booksBySeries.get(s.id) || [];
   const cover = books.find(b => b.format === 'cbz' && b.pageCount) || books[0];
+  const online = coverFromMetadata(s);
   const v = Object.assign({
     id: s.id, libraryId: s.libraryId, libraryName: (db.libraries[s.libraryId] || {}).name || '', oneshot: Boolean(s.oneshot),
     title: m.title, edition: m.edition, workKey: m.workKey, sortTitle: m.sortTitle, summary: m.summary, status: m.status, publisher: m.publisher,
     depth: String(s.relPath || '').split(/[\\/]/).filter(Boolean).length, // folder depth in the library (tie-breaker when grouping versions)
     readingDirection: m.readingDirection, tags: m.tags, ageRating: m.ageRating,
+    type: m.type, year: m.year, rating: m.rating, authors: m.authors, altTitles: m.altTitles,
     created: s.created, updated: s.updated,
     coverBookId: cover ? cover.id : null, coverV: cover ? Math.round(Date.parse(cover.fileModified || 0) / 1000) : 0,
     coverFormat: cover ? cover.format : null,
+    // Where /api/series/:id/thumbnail gets its image: 'metadata' (downloaded cover), 'file' (first page) or null
+    coverSource: online ? 'metadata' : cover && cover.format === 'cbz' && cover.pageCount ? 'file' : null,
+    // Online metadata: where it came from (the cover image itself is served by /api/series/:id/thumbnail)
+    metadata: s.provider ? {
+      fetchedAt: s.provider.fetchedAt, links: s.provider.links || [], sources: s.provider.sources || {},
+      matched: (s.provider.matches || []).length > 0, locked: s.provider.locked || null,
+      cover: Boolean(s.provider.coverFile), errors: admin ? s.provider.errors || [] : undefined
+    } : null,
     overrides: s.overrides || {}
   }, seriesCounts(s, user));
   if (admin) v.path = s.relPath;
+  if (online) v.coverV = Math.round(Date.parse(s.provider.fetchedAt || 0) / 1000);
   return v;
+}
+// Use the downloaded cover? Per library: 'always', 'missing' (only when the files have no cover page) or 'never'
+function coverFromMetadata(s) {
+  if (!s.provider || !s.provider.coverFile) return false;
+  const mode = ((db.libraries[s.libraryId] || {}).metadata || {}).cover || 'missing';
+  if (mode === 'never') return false;
+  if (mode === 'always') return true;
+  return !(booksBySeries.get(s.id) || []).some(b => b.format === 'cbz' && b.pageCount);
 }
 
 module.exports = {
@@ -214,5 +243,5 @@ module.exports = {
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,
-  bookView, seriesView, seriesCounts
+  bookView, seriesView, seriesCounts, coverFromMetadata
 };

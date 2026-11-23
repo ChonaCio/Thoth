@@ -5,6 +5,7 @@ const os = require('os');
 const path = require('path');
 const store = require('./db');
 const scanner = require('./scanner');
+const metadata = require('./metadata');
 const zip = require('./zip');
 
 const { db } = store;
@@ -39,6 +40,8 @@ function libraryView(lib, user) {
     const progress = scanner.scanning.get(lib.id);
     Object.assign(v, {
       root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, oneshots: scanner.oneshotSettings(lib),
+      metadata: metadata.librarySettings(lib),
+      metadataCount: Object.values(db.series).filter(s => s.libraryId === lib.id && s.provider && (s.provider.matches || []).length).length,
       scanProgress: progress ? Object.assign({}, progress, { serviceStopped: progress.queued && scanner.serviceState() !== 'running' }) : null
     });
   }
@@ -160,8 +163,11 @@ function listSeries(user, q) {
     .filter(s => libs.has(s.libraryId))
     .map(s => store.seriesView(s, user)), library || null);
   if (library) items = items.filter(w => w.editions.some(e => e.libraryId === library));
-  if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term) || s.tags.some(t => searchable(t).includes(term)));
+  if (term) items = items.filter(s => searchable(s.title).includes(term) || searchable(s.publisher).includes(term) || s.tags.some(t => searchable(t).includes(term))
+    || s.altTitles.some(t => searchable(t).includes(term)) || s.authors.some(a => searchable(a.name).includes(term)));
   if (read) items = items.filter(s => readState(s) === read);
+  const type = q.get('type');
+  if (type) items = items.filter(s => (s.type || 'unknown') === type);
   const sort = q.get('sort') || 'title';
   if (sort === 'added') items.sort((a, b) => b.created.localeCompare(a.created));
   else if (sort === 'updated') items.sort((a, b) => b.updated.localeCompare(a.updated));
@@ -203,7 +209,7 @@ function home(user) {
 function collectionView(c, user, full) {
   const series = c.seriesIds.map(id => db.series[id]).filter(s => s && store.canAccessLibrary(user, s.libraryId));
   const v = { id: c.id, name: c.name, seriesCount: series.length, created: c.created, updated: c.updated,
-    coverSeries: series.slice(0, 4).map(s => store.seriesView(s, user)).map(s => ({ id: s.id, coverBookId: s.coverBookId, coverV: s.coverV, coverFormat: s.coverFormat })) };
+    coverSeries: series.slice(0, 4).map(s => store.seriesView(s, user)).map(s => ({ id: s.id, coverBookId: s.coverBookId, coverV: s.coverV, coverFormat: s.coverFormat, coverSource: s.coverSource })) };
   if (full) v.series = series.map(s => store.seriesView(s, user));
   return v;
 }
@@ -283,7 +289,8 @@ async function handle(ctx) {
     if (!name) throw httpError(400, 'nameRequired');
     const root = await validateRoot(body.root);
     if (Object.values(db.libraries).some(l => l.root === root)) throw httpError(409, 'folderInUse');
-    const lib = { id: store.newId(), name, root, created: new Date().toISOString(), oneshots: parseOneshots(body) || { folder: '' } };
+    const lib = { id: store.newId(), name, root, created: new Date().toISOString(), oneshots: parseOneshots(body) || { folder: '' },
+      metadata: metadata.parseLibrarySettings(body.metadata || {}) };
     db.libraries[lib.id] = lib;
     store.saveLibrary();
     scanner.scanLibrary(lib.id).catch(() => {});
@@ -295,7 +302,7 @@ async function handle(ctx) {
     if (!lib) throw httpError(404, 'notFound');
     if (method === 'DELETE') {
       for (const b of Object.values(db.books)) if (b.libraryId === lib.id) delete db.books[b.id];
-      for (const s of Object.values(db.series)) if (s.libraryId === lib.id) delete db.series[s.id];
+      for (const s of Object.values(db.series)) if (s.libraryId === lib.id) { metadata.forgetSeries(s); delete db.series[s.id]; }
       for (const c of Object.values(db.collections)) c.seriesIds = c.seriesIds.filter(id => db.series[id]);
       for (const r of Object.values(db.readlists)) r.bookIds = r.bookIds.filter(id => db.books[id]);
       delete db.libraries[lib.id];
@@ -318,6 +325,7 @@ async function handle(ctx) {
       if (oneshots.folder !== cur.folder) rescan = true;
       lib.oneshots = oneshots;
     }
+    if (body.metadata && typeof body.metadata === 'object') lib.metadata = metadata.parseLibrarySettings(body.metadata, metadata.librarySettings(lib));
     store.saveLibrary();
     if (rescan) scanner.scanLibrary(lib.id).catch(() => {});
     return send(200, { library: libraryView(lib, user) });
@@ -361,6 +369,7 @@ async function handle(ctx) {
       for (const k of ['title', 'sortTitle', 'summary', 'publisher']) if (k in body) { const v = clean(body[k], k === 'summary' ? 5000 : 200); if (v) o[k] = v; else delete o[k]; }
       if ('status' in body) { if (body.status && !STATUSES.includes(body.status)) throw httpError(400, 'invalid'); if (body.status) o.status = body.status; else delete o.status; }
       if ('readingDirection' in body) { if (body.readingDirection && !DIRECTIONS.includes(body.readingDirection)) throw httpError(400, 'invalid'); if (body.readingDirection) o.readingDirection = body.readingDirection; else delete o.readingDirection; }
+      if ('type' in body) { if (body.type && !metadata.TYPES.includes(body.type)) throw httpError(400, 'invalid'); if (body.type) o.type = body.type; else delete o.type; }
       if ('edition' in body) { if (body.edition && !store.EDITIONS.includes(body.edition)) throw httpError(400, 'invalid'); if (body.edition) o.edition = body.edition; else delete o.edition; }
       if ('tags' in body) { const tags = (Array.isArray(body.tags) ? body.tags : String(body.tags || '').split(',')).map(t => clean(t, 40)).filter(Boolean).slice(0, 50); if (tags.length) o.tags = tags; else delete o.tags; }
       s.overrides = o;
@@ -379,10 +388,52 @@ async function handle(ctx) {
   }
   if ((m = /^\/api\/series\/([\w-]+)\/thumbnail$/.exec(p)) && method === 'GET') {
     const s = getSeries(user, m[1]);
+    if (store.coverFromMetadata(s)) {
+      const file = metadata.coverPath(s);
+      const buf = await fs.promises.readFile(file).catch(() => null);
+      if (buf) {
+        const type = { '.jpg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' }[path.extname(file)] || 'application/octet-stream';
+        return sendImage(req, res, buf, type, `"${s.id}-meta-${Date.parse(s.provider.fetchedAt || 0)}"`).then(() => true);
+      }
+    }
     const cover = store.booksOf(s.id).find(b => b.format === 'cbz' && b.pageCount);
     if (!cover) throw httpError(404, 'noCover');
     await sendPage(req, res, cover, 1);
     return true;
+  }
+
+  // ---- online metadata (admins) ----
+  if (p === '/api/metadata/providers' && method === 'GET') {
+    requireAdmin();
+    return send(200, { providers: metadata.providerList(), status: metadata.info() });
+  }
+  if ((m = /^\/api\/libraries\/([\w-]+)\/metadata$/.exec(p)) && method === 'POST') {
+    requireAdmin();
+    if (!db.libraries[m[1]]) throw httpError(404, 'notFound');
+    // { mode: 'missing' } works never looked up; { mode: 'all' } every work again
+    const queued = metadata.enqueueLibrary(m[1], body.mode === 'all' ? 'all' : 'missing');
+    return send(202, { queued, status: metadata.info() });
+  }
+  if ((m = /^\/api\/series\/([\w-]+)\/metadata(\/refresh|\/search|\/identify)?$/.exec(p))) {
+    requireAdmin();
+    const s = getSeries(user, m[1]);
+    const action = m[2] || '';
+    if (action === '/refresh' && method === 'POST') {
+      await metadata.refreshSeries(s.id);
+      return send(200, { series: store.seriesView(db.series[s.id] || s, user, { admin }) });
+    }
+    if (action === '/search' && method === 'GET') {
+      const provider = q.get('provider') || '';
+      return send(200, await metadata.searchForSeries(s.id, clean(q.get('q'), 200), provider || null));
+    }
+    if (action === '/identify' && method === 'POST') {
+      await metadata.identify(s.id, String(body.provider || ''), clean(body.id, 100));
+      return send(200, { series: store.seriesView(db.series[s.id] || s, user, { admin }) });
+    }
+    if (action === '' && method === 'DELETE') {
+      metadata.clear(s.id);
+      return send(200, { series: store.seriesView(s, user, { admin }) });
+    }
   }
 
   // ---- books ----

@@ -14,6 +14,7 @@ const { fork } = require('child_process');
 const core = require('./scan-core');
 const store = require('./db');
 const config = require('../config');
+const metadata = require('./metadata');
 
 const { BOOK_EXT, IMAGE_TYPES, parseComicInfo } = core;
 const WORKER = path.join(__dirname, 'scan-worker.js');
@@ -317,7 +318,7 @@ async function runScan(job) {
       if (b.libraryId === libraryId && !seenBooks.has(b.id)) { delete store.db.books[b.id]; removed++; }
     }
     for (const s of Object.values(store.db.series)) {
-      if (s.libraryId === libraryId && !seenSeries.has(s.id)) delete store.db.series[s.id];
+      if (s.libraryId === libraryId && !seenSeries.has(s.id)) { metadata.forgetSeries(s); delete store.db.series[s.id]; }
     }
     for (const c of Object.values(store.db.collections)) c.seriesIds = c.seriesIds.filter(id => store.db.series[id]);
     for (const r of Object.values(store.db.readlists)) r.bookIds = r.bookIds.filter(id => store.db.books[id]);
@@ -335,6 +336,8 @@ async function runScan(job) {
     delete lib.scanError;
     store.saveLibrary();
     console.log(`[library] scanned "${lib.name}": ${seenSeries.size} series, ${seenBooks.size} books (+${added} new, ${updated} changed, ${removed} removed; read ${toRead.length} files) in ${Date.now() - started} ms`);
+    // Online metadata for works that don't have it yet (in the background, if the library fetches it automatically)
+    try { metadata.afterScan(libraryId); } catch (e) { console.error('[metadata]', e.message); }
     return lib.lastScan;
   } catch (e) {
     if (e.code === 'cancelled') throw e; // stopped from the Processes page: not an error, it runs again later

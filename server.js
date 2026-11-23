@@ -1,5 +1,14 @@
 // Zero-dependency web server: static files, accounts API and update API.
 // `npm start` → http://<this-machine>:3000
+//
+// The first process started is a small supervisor (supervisor.js) that runs the real server as a child
+// and starts it again when it asks to be restarted (after an update) or crashes. THOTH_NO_SUPERVISOR=1
+// skips it (the server then can't restart itself).
+if (!process.env.THOTH_SERVER_PROCESS && process.env.THOTH_NO_SUPERVISOR !== '1') {
+  require('./supervisor')();
+  return; // eslint-disable-line no-useless-return -- (CommonJS: stop here; the child runs the server)
+}
+
 const http = require('http');
 const fs = require('fs');
 const os = require('os');
@@ -10,6 +19,7 @@ const updater = require('./updater');
 const library = require('./library/api');
 const libraryStore = require('./library/db');
 const scanner = require('./library/scanner');
+const metadata = require('./library/metadata');
 
 // Deleting a user also deletes their reading progress
 auth.hooks.userDeleted.push(username => libraryStore.removeUser(username));
@@ -18,7 +28,11 @@ const PORT = Number(process.env.PORT) || 3000;
 // 0.0.0.0 = reachable from other devices (needed in containers/headless servers).
 // Set HOST=127.0.0.1 to allow only this machine.
 const HOST = process.env.HOST || '0.0.0.0';
-const SELF_RESTART = process.env.THOTH_SELF_RESTART === '1'; // set by systemd unit / Docker image
+// Can this server restart itself? Yes when run by the built-in supervisor (it starts it again), or under
+// systemd/Docker with THOTH_SELF_RESTART=1 (they start it again).
+const SUPERVISED = Boolean(process.send && process.env.THOTH_SERVER_PROCESS);
+const SELF_RESTART = SUPERVISED || process.env.THOTH_SELF_RESTART === '1';
+const RESTART_CODE = 75; // tells the built-in supervisor "start me again"
 const STARTED_AT = new Date().toISOString();
 // What the server code on disk looked like when this process started; if it changes (an update or a
 // git pull), the running server is out of date until it's restarted
@@ -100,13 +114,14 @@ async function handleApi(req, res, url) {
     if (method === 'POST' && url.pathname === '/api/updates/install') {
       const { user } = auth.requireAdmin(req);
       const result = await updater.install(body.channel, String(body.tag || ''));
-      // Under systemd/Docker (THOTH_SELF_RESTART=1) exit after replying; the supervisor starts the new code.
+      // New server code: restart by itself after replying (the supervisor starts the new code); the page
+      // waits for the server to come back and reloads
       result.autoRestart = result.restartRequired && SELF_RESTART;
       sendJson(res, 200, result);
       console.log(`[update] ${result.installed} installed by ${user.username}`);
       if (result.autoRestart) {
-        console.log('[update] restarting to load new server code');
-        setTimeout(shutdown, 500);
+        console.log('[update] restarting to load the new server code');
+        setTimeout(restartServer, 500);
       }
       return;
     }
@@ -120,9 +135,12 @@ async function handleApi(req, res, url) {
           pid: process.pid, startedAt: STARTED_AT, rss: m.rss, heapUsed: m.heapUsed,
           cpuMs: Math.round((process.cpuUsage().user + process.cpuUsage().system) / 1000),
           node: process.version, platform: `${os.type()} ${os.release()} (${process.arch})`,
-          supervised: SELF_RESTART, restartNeeded: updater.serverCodeFingerprint() !== CODE_AT_START
+          supervised: SELF_RESTART, supervisorPid: SUPERVISED ? Number(process.env.THOTH_SUPERVISOR_PID) : null,
+          restarts: Number(process.env.THOTH_RESTARTS) || 0,
+          restartNeeded: updater.serverCodeFingerprint() !== CODE_AT_START
         },
-        scanService: scanner.serviceInfo()
+        scanService: scanner.serviceInfo(),
+        metadata: metadata.info()
       });
     }
     // ---- server settings (administrators) ----
@@ -130,7 +148,8 @@ async function handleApi(req, res, url) {
       const { user } = auth.requireAdmin(req);
       if (method === 'PATCH') {
         const changed = config.update(body);
-        if (changed.length) console.log(`[config] ${changed.map(k => `${k}=${config.get()[k]}`).join(', ')} (by ${user.username})`);
+        // (API keys are never written to the log)
+        if (changed.length) console.log(`[config] ${changed.map(k => (/ApiKey$/.test(k) ? `${k} ${config.get()[k] ? 'set' : 'removed'}` : `${k}=${config.get()[k]}`)).join(', ')} (by ${user.username})`);
       }
       return sendJson(res, 200, config.describe());
     }
@@ -143,10 +162,10 @@ async function handleApi(req, res, url) {
     }
     if (url.pathname === '/api/processes/server/restart' && method === 'POST') {
       const { user } = auth.requireAdmin(req);
-      if (!SELF_RESTART) return sendJson(res, 409, { error: 'notSupervised', message: 'The server is not running under systemd or Docker.' });
+      if (!SELF_RESTART) return sendJson(res, 409, { error: 'notSupervised', message: 'The server was started with THOTH_NO_SUPERVISOR=1 and cannot restart itself.' });
       console.log(`[processes] server restart by ${user.username}`);
       sendJson(res, 202, { restarting: true });
-      setTimeout(shutdown, 300);
+      setTimeout(restartServer, 300);
       return;
     }
 
@@ -232,11 +251,22 @@ function describeVersion(v) {
   return `${parts.join(', ')} (commit ${v.commit.slice(0, 7)}, from ${v.origin})`;
 }
 
-// Graceful stop for `systemctl stop`, `docker stop` and Ctrl+C
-function shutdown() {
-  server.close(() => process.exit(0));
+// Graceful stop for `systemctl stop`, `docker stop` and Ctrl+C (data is saved by the 'exit' handlers)
+let shuttingDown = false;
+function shutdown(code = 0) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  server.close(() => process.exit(code));
   if (server.closeIdleConnections) server.closeIdleConnections();
-  setTimeout(() => process.exit(0), 5000).unref();
+  setTimeout(() => process.exit(code), 5000).unref();
 }
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+// Restart: the built-in supervisor (exit code 75) or systemd/Docker (exit 0, they restart it) starts the new code
+function restartServer() {
+  shutdown(SUPERVISED ? RESTART_CODE : 0);
+}
+process.on('SIGTERM', () => shutdown(0));
+process.on('SIGINT', () => shutdown(0));
+if (SUPERVISED) {
+  process.on('message', m => { if (m && m.type === 'shutdown') shutdown(0); });
+  process.on('disconnect', () => shutdown(0)); // the supervisor went away
+}

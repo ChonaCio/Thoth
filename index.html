@@ -297,6 +297,24 @@
     </form>
   </dialog>
 
+  <!-- ============ IDENTIFY (pick the right online match for a work) ============ -->
+  <dialog id="identify-dialog" class="dialog dialog--wide">
+    <form id="identify-form" class="form" novalidate>
+      <h2 class="dialog__title" data-i18n="meta.identifyTitle">Identify</h2>
+      <p class="muted small" data-i18n="meta.identifyIntro">Search the metadata sites and pick the right match. Its metadata is used for this work from now on.</p>
+      <div class="identify__search">
+        <input id="identify-q" type="search" spellcheck="false" data-i18n-placeholder="meta.identifySearch" />
+        <select class="select" id="identify-provider"></select>
+        <button type="submit" class="btn btn--primary" data-i18n="meta.search">Search</button>
+      </div>
+      <p class="form__error" id="identify-error" role="alert" hidden></p>
+      <div class="identify__results" id="identify-results"></div>
+      <div class="form__actions">
+        <button type="button" class="btn btn--text" id="identify-close" data-i18n="common.close">Close</button>
+      </div>
+    </form>
+  </dialog>
+
   <!-- ============ READER ============ -->
   <div class="reader" id="reader" hidden>
     <div class="reader__stage" id="reader-stage"></div>
