@@ -4,7 +4,7 @@ Read this before changing anything. **Keep it up to date**: whenever a change la
 sections it touches (what exists, conventions, known gaps, recent changes). User-facing documentation
 lives in [README.md](README.md); this file is for whoever develops Thoth next.
 
-_Last updated: 2026-11-23 (metadata links, several Identify matches, covers from links)_
+_Last updated: 2026-11-23 (rename rules + rename process, on-demand scan processes, genre/tag unification, people filters, score sort, cover zoom)_
 
 ## What Thoth is
 
@@ -40,10 +40,12 @@ from GitHub (`ChonaCio/Thoth`).
 | `library/api.js` | Library REST routes: libraries, series (works grouped by version), facets/filters, books, pages, progress, collections, read lists, metadata actions. |
 | `library/rename.js` | Batch renaming: rules (`proposedName`/`parse`), `preview` (proposals + conflicts), `apply` (rename on disk, `moveBook` moves the book id with its progress and read-list entries, renames matching folder-source JSON). |
 | `library/metadata/providers.js` | One object per site: `search(q)`, `fetch(id)` → normalized record. Per-site rate limit, retries on 429, timeouts. |
-| `library/metadata/index.js` | Source registry (online `PROVIDERS` + folder sources from `db.metadataSources`, `byId`), per-library order (folder sources forced first: `localFirst`), online merge (first match fills each field), cover download, Identify (locked match, online only), queue with concurrency + batch progress, folder sources: `applyLocal`, CRUD, `checkSource`. |
+| `library/metadata/index.js` | Source registry (online `PROVIDERS` + folder sources from `db.metadataSources`, `byId`), per-library order (folder sources forced first: `localFirst`), online merge (every enabled site asked; first match fills each field, genres/tags/altTitles combined), cover download, Identify (locked match, online only), queue with concurrency + batch progress, folder sources: `applyLocal`, CRUD, `checkSource`. |
 | `library/metadata/local.js` | Folder sources: indexing a folder (`buildIndex`), JSON parsing with mtime cache, key matching (`path` / `name` modes), JSON → work/book records (`seriesRecord`, `bookRecord`), covers next to the JSON. No DB access. |
 | `index.html`, `css/styles.css` | App shell, dialogs (form, identify, profile, users), theme tokens (light/dark). |
 | `js/app.js` | Router (`#name/param?query`), per-history-entry scroll memory (`history.state.k`, `markHistoryEntry`/`restoreScroll`: new entries start at the top, Back/Forward restore once content is tall enough), sidebar, account menu, users, updates (incl. waiting for the auto-restart). |
+| `library/rename-worker.js` | Short-lived process doing a rename batch's file operations (also `run()` for inline use). |
+| `library/metadata/terms.js` | One name per genre/tag: synonym table (`SYNONYMS`) and normalization; used by db.seriesMeta, the online merge and the API filters. |
 | `js/library.js` | All library pages (home, library grid + filters, work page, book, search, collections, read lists, manage libraries, metadata sources, processes, server settings), the generic form dialog, Identify dialog, progress bars. ES5 style (`var`, `function`), no modules. |
 | `js/reader.js` | Reader (ltr / rtl / continuous, fits, PDF via pdf.js from cdnjs). |
 | `js/i18n.js`, `js/i18n-library.js` | Strings; `add(lang, {...})` merges blocks. |
@@ -80,7 +82,7 @@ node tests/run.js metadata display   # specific suites
 ```
 
 Suites start the server from the checkout with `THOTH_DATA_DIR` in a temp folder, on their own ports
-(3984–3991). `updater` runs on a temporary copy (it installs over the folder it gets). Sample comics come from
+(3984–3995). `updater` runs on a temporary copy (it installs over the folder it gets). Sample comics come from
 `tests/make-comics.js`. Note: suites that add libraries without `metadata: { autoFetch: false }` will also
 start online lookups in the background (harmless, but not offline); `test-display.js` turns it off.
 
@@ -129,6 +131,8 @@ through `/api/setup`, and use the browser.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+
+- **2026-11-23** — Rename rules: no zero padding (`cleanNumber`), `1x1` → `1.1`, dashes are spaces in names of files without spaces (`cleanName(s, spaced)`). Renames run in `library/rename-worker.js` (forked per batch, low priority, killed when done; `rename.info()` on `/api/processes` → Processes page card; 409 `renameBusy` while one runs; inline if fork fails or `THOTH_SCAN_IN_PROCESS=1`). Scan workers are on demand: `pump()` → `ensureWorkers()` (tops up to the configured count), `scheduleIdle()` closes them `THOTH_WORKER_IDLE_MS` (default 10 s) after the queue empties; `serviceInfo().idle`; a crashed worker is only replaced while a scan runs. Genres/tags: `library/metadata/terms.js` (`canonical`, `unify`, `unifyGenresTags`, `keyOf` ignores case/accents/punctuation/plural `s`); `seriesMeta` combines genres/tags of folder sources + ComicInfo + online (overrides replace); online merge asks every enabled site (no more early stop) and unions genres/tags/altTitles (`provider.sources[f]` may be `'anilist,kitsu'`). People filters (`person`/`xperson`, facets `people`), `sort=rating` (also a library default), work page people chips + cover lightbox (`openCoverZoom`). New suite `tests/test-terms.js` (port 3995).
 
 - **2026-11-23** — Links: matches' addresses, folder-JSON `url`/`links`, editable (Edit → Links); shown one per line on the work page; site links are exact matches in `refreshSeries` (lock → link → title search per site; it no longer stops once the main fields are filled when a site is locked/linked). Identify accepts several picks (`{ matches: [...] }`, one per site). Cover picker adds covers from links (site entry's cover, else the page's `og:image`; local/private addresses never fetched). *Update metadata* runs `applyLocal` first. Unreadable JSON is skipped in matching (`usable()` in `local.js`). Kitsu slug links resolved by `fetch`. `request()` retries once on connection failures (not timeouts). "Same data" checks compare data only (`strip()`), so a different `via` doesn't count as a change. New suite `tests/test-links.js`.
 

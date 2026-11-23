@@ -4,7 +4,8 @@
 //   its own work, shown like any other work.
 //
 // The slow part (walking folders, opening archives, reading ComicInfo.xml and PDFs) runs in the scan
-// service: a pool of long-running, lowest-priority worker processes (scan-worker.js). A scan lists the
+// service: a pool of lowest-priority worker processes (scan-worker.js), started when a scan begins and closed
+// when there's nothing left to scan. A scan lists the
 // files in one worker, then spreads the new/changed files over all workers, each reading several files at
 // a time (Server settings: "Scan processes" and "Files at once per process"). Libraries are scanned one
 // at a time; this process applies the results to the database.
@@ -62,11 +63,14 @@ function normalizeOneshotFolder(value) {
  * state: 'running' | 'stopped' | 'crashed' (gave up after repeated crashes)
  * mode:  'process' (worker processes) | 'inline' (inside the server: THOTH_SCAN_IN_PROCESS=1 or fork unavailable)
  * Whether it should run is saved (settings.scanServiceEnabled), so a stopped service stays stopped after a restart.
+ * The processes only exist while there is work: they start when a scan begins and are closed IDLE_MS after the
+ * last one ends (a running service with no processes is "idle").
  */
+const IDLE_MS = Math.max(0, Number(process.env.THOTH_WORKER_IDLE_MS) || 10000);
 const service = {
   mode: IN_PROCESS ? 'inline' : 'process',
   state: 'stopped', workers: [], startedAt: null,
-  restarts: 0, crashTimes: [], lastError: null
+  restarts: 0, crashTimes: [], lastError: null, idleTimer: null
 };
 let reqSeq = 0;
 const cancelled = () => Object.assign(new Error('Scan stopped'), { code: 'cancelled' });
@@ -93,28 +97,32 @@ function spawnWorker() {
 function startService({ persist = true } = {}) {
   if (persist) { setEnabled(true); service.lastError = null; }
   if (service.state === 'running') return;
-  if (service.mode === 'process') {
-    const count = config.get().scanWorkers;
-    try {
-      service.workers = Array.from({ length: count }, spawnWorker);
-    } catch (e) {
-      console.warn(`[library] couldn't start scan processes (${e.message}); scanning inside the server`);
-      for (const w of service.workers) try { w.child.kill(); } catch { /* ignore */ }
-      service.workers = [];
-      service.mode = 'inline';
-      service.lastError = e.message;
-    }
-  }
   service.state = 'running';
   service.startedAt = new Date().toISOString();
-  if (service.mode === 'process') console.log(`[library] scan service started: ${service.workers.length} process(es), pids ${service.workers.map(w => w.pid).join(', ')}`);
   pump();
 }
 
-function stopService({ persist = true } = {}) {
-  if (persist) setEnabled(false);
+// The processes a scan needs (started on demand; a stopped idle timer keeps them)
+function ensureWorkers() {
+  clearTimeout(service.idleTimer); service.idleTimer = null;
+  const missing = config.get().scanWorkers - service.workers.length; // (also tops up after a crash)
+  if (service.mode !== 'process' || missing <= 0) return;
+  try {
+    const added = Array.from({ length: missing }, spawnWorker);
+    service.workers = service.workers.concat(added);
+    console.log(`[library] scan processes started: ${added.length}, pids ${added.map(w => w.pid).join(', ')}`);
+  } catch (e) {
+    console.warn(`[library] couldn't start scan processes (${e.message}); scanning inside the server`);
+    for (const w of service.workers) try { w.child.kill(); } catch { /* ignore */ }
+    service.workers = [];
+    service.mode = 'inline';
+    service.lastError = e.message;
+  }
+}
+function killWorkers(reason) {
+  clearTimeout(service.idleTimer); service.idleTimer = null;
   const workers = service.workers;
-  Object.assign(service, { state: 'stopped', workers: [], startedAt: null });
+  service.workers = [];
   // Requests in flight are cancelled; the scan goes back to the front of the queue
   for (const w of workers) {
     for (const p of w.pending.values()) p.reject(cancelled());
@@ -123,7 +131,20 @@ function stopService({ persist = true } = {}) {
     w.child.on('exit', () => {});
     try { w.child.kill(); } catch { /* already gone */ }
   }
-  if (workers.length) console.log(`[library] scan service stopped (pids ${workers.map(w => w.pid).join(', ')})`);
+  if (workers.length) console.log(`[library] scan processes closed (${reason}; pids ${workers.map(w => w.pid).join(', ')})`);
+}
+// Nothing left to scan: close the processes after a short while (another scan soon reuses them)
+function scheduleIdle() {
+  clearTimeout(service.idleTimer);
+  if (!service.workers.length) return;
+  service.idleTimer = setTimeout(() => { if (!currentJob && !queue.length) killWorkers('idle'); }, IDLE_MS);
+  service.idleTimer.unref();
+}
+
+function stopService({ persist = true } = {}) {
+  if (persist) setEnabled(false);
+  Object.assign(service, { state: 'stopped', startedAt: null });
+  killWorkers('service stopped');
 }
 
 function restartService() {
@@ -132,11 +153,13 @@ function restartService() {
   startService({ persist: true });
 }
 
-// Server settings changed: a running pool restarts with the new number of processes
+// Server settings changed: processes that are up restart with the new number (the scan in progress, if any,
+// goes back to the front of the line and runs again with them); idle ones just use it next time
 config.onChange(changed => {
-  if (changed.includes('scanWorkers') && service.state === 'running' && service.mode === 'process') {
-    stopService({ persist: false });
-    startService({ persist: false });
+  if (changed.includes('scanWorkers') && service.state === 'running' && service.mode === 'process' && service.workers.length) {
+    killWorkers('settings changed');
+    if (currentJob || queue.length) ensureWorkers(); else return;
+    pump();
   }
 });
 
@@ -176,7 +199,8 @@ function onWorkerExit(w, code) {
     return;
   }
   setTimeout(() => {
-    if (service.state !== 'running') return;
+    // Replaced only while there is work for it (otherwise the next scan starts a full set anyway)
+    if (service.state !== 'running' || !service.workers.length || (!currentJob && !queue.length)) return;
     try { service.workers.push(spawnWorker()); service.restarts++; pump(); } catch (e) { service.lastError = e.message; }
   }, 1000).unref();
 }
@@ -425,7 +449,9 @@ function scanLibrary(libraryId, { full = false, mode, reason = 'manual' } = {}) 
 }
 
 async function pump() {
-  if (currentJob || !queue.length || service.state !== 'running') return;
+  if (currentJob || service.state !== 'running') return;
+  if (!queue.length) { scheduleIdle(); return; }
+  ensureWorkers();
   const job = currentJob = queue.shift();
   Object.assign(job.status, { queued: false, startedAt: new Date().toISOString(), filesSeen: 0, toAnalyze: 0, analyzed: 0 });
   let result, error;
@@ -464,6 +490,7 @@ function serviceInfo() {
   const cfg = config.get();
   return {
     mode: service.mode, state: service.state, enabled: serviceEnabled(),
+    idle: service.state === 'running' && service.mode === 'process' && !service.workers.length, idleCloseMs: IDLE_MS,
     startedAt: service.startedAt, restarts: service.restarts, lastError: service.lastError,
     processes: cfg.scanWorkers, concurrency: cfg.scanConcurrency,
     workers: service.workers.map(w => ({ pid: w.pid, startedAt: w.startedAt, stats: w.stats, busy: w.pending.size > 0 })),

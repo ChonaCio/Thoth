@@ -73,7 +73,7 @@ const byTitle = (items, t) => items.find(s => s.workTitle === t || s.title === t
   ok(op && op.editions.length === 2, 'versions still group into one work ("One Piece" + Colored)');
   ok(op.type === 'manga' && op.year === 1997 && op.status === 'ongoing' && op.summary.length > 50 && op.readingDirection === 'rtl', `One Piece: manga, 1997, ongoing, summary, right-to-left (${op.type}, ${op.year}, ${op.status})`);
   ok(op.authors.some(a => /oda/i.test(a.name)) && op.tags.length > 0 && op.rating > 0, `One Piece: authors (${op.authors.map(a => a.name).slice(0, 2).join(', ')}), tags, rating ${op.rating}`);
-  ok(op.genres.includes('Adventure') && !op.tags.includes('Adventure') && op.tags.length <= 8, `genres kept apart from tags (${op.genres.join(', ')} | ${op.tags.join(', ')})`);
+  ok(op.genres.includes('Adventure') && !op.tags.includes('Adventure') && op.tags.length <= 40, `genres kept apart from tags, tags of every site combined (${op.genres.join(', ')} | ${op.tags.join(', ')})`);
   ok(op.metadata.cover && op.metadata.coverProvider === 'anilist', 'the matched cover was downloaded (from the first source)');
   ok((await all('&metadata=matched')).length === 3 && (await all('&metadata=unmatched')).length === 1 && (await all('&genre=adventure')).some(s => s.workTitle === 'One Piece'), `filter by metadata state and by online genre (matched: ${(await all('&metadata=matched')).map(s => s.workTitle).join(', ')}; unmatched: ${(await all('&metadata=unmatched')).map(s => s.workTitle).join(', ')})`);
   ok(op.metadata.matched && op.metadata.sources.summary === 'anilist' && op.metadata.links.some(l => /anilist\.co/.test(l.url)), 'first source in the order (AniList) filled the summary; link to it');
@@ -81,7 +81,7 @@ const byTitle = (items, t) => items.find(s => s.workTitle === t || s.title === t
   ok(op.coverSource === 'file', 'cover setting "missing": a CBZ keeps its first page as cover');
   ok(sl && sl.type === 'manhwa', `Solo Leveling: manhwa (${sl && sl.type})`);
   ok(hb && hb.oneshot && ['novel', 'book'].includes(hb.type) && hb.metadata.matched && hb.metadata.sources.summary !== 'anilist', `The Hobbit (PDF one-shot): ${hb.type} from ${hb.metadata.links.map(l => l.provider).join(', ')}`);
-  ok(Object.values(op.metadata.sources).concat(Object.values(sl.metadata.sources), Object.values(hb.metadata.sources)).every(p => ['anilist', 'mangadex', 'kitsu', 'openlibrary'].includes(p)), 'only the enabled sources were used');
+  ok(Object.values(op.metadata.sources).concat(Object.values(sl.metadata.sources), Object.values(hb.metadata.sources)).flatMap(p => p.split(',')).every(p => ['anilist', 'mangadex', 'kitsu', 'openlibrary'].includes(p)), 'only the enabled sources were used');
   ok(zz && zz.metadata && !zz.metadata.matched && zz.type === null, 'a title no site knows: looked up, no match, nothing invented');
   if (hb.coverSource === 'metadata') {
     const th = await fetch(`${BASE}/api/series/${hb.id}/thumbnail?v=${hb.coverV}`, { headers: { Cookie: cookie } });

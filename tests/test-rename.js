@@ -8,7 +8,7 @@ const DATA = path.join(TMP, 'data'), MEDIA = path.join(TMP, 'media'), META = pat
 const { makeZip, png } = (() => { const src = fs.readFileSync(path.join(__dirname, 'make-comics.js'), 'utf8').replace(/const root = [\s\S]*$/, 'module.exports = { png, makeZip };'); const mod = { exports: {} }; new Function('module', 'require', '__dirname', src)(mod, require, __dirname); return mod.exports; })();
 let n = 0;
 const book = f => { fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, makeZip([['p.png', png(10, 15, [n * 30 % 255, 50, 90], n++)]])); };
-const A = ['chapter-0.cbz', 'chapter-1.cbz', 'chapter-1.1.cbz', 'chapter-1x1.cbz', 'chapter-1-chapter name.cbz', 'Chapter 2.cbz'];
+const A = ['chapter-0.cbz', 'chapter-1.cbz', 'chapter-1.1.cbz', 'chapter-2x5.cbz', 'chapter-1-chapter name.cbz', 'Chapter 2.cbz'];
 A.forEach(f => book(path.join(MEDIA, 'Work A', f)));
 book(path.join(MEDIA, 'Work B', 'chapter-3.cbz')); book(path.join(MEDIA, 'Work B', 'Chapter 3.cbz'));   // target exists
 book(path.join(MEDIA, 'Work C', 'ch-5.cbz')); book(path.join(MEDIA, 'Work C', 'chapter-5.cbz'));        // both → Chapter 5
@@ -36,7 +36,8 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
 (async () => {
   // ---- the rules (in process) ----
   const rules = require(path.join(APP, 'library', 'rename.js'));
-  const expect = { 'chapter-0.cbz': 'Chapter 0.cbz', 'chapter-1.cbz': 'Chapter 1.cbz', 'chapter-1.1.cbz': 'Chapter 1.1.cbz', 'chapter-1x1.cbz': 'Chapter 1x1.cbz',
+  const expect = { 'chapter-0.cbz': 'Chapter 0.cbz', 'chapter-1.cbz': 'Chapter 1.cbz', 'chapter-1.1.cbz': 'Chapter 1.1.cbz', 'chapter-1x1.cbz': 'Chapter 1.1.cbz', 'chapter-2x5.cbz': 'Chapter 2.5.cbz', 'Chapter 001.cbz': 'Chapter 1.cbz', 'ch.007.5.cbz': 'Chapter 7.5.cbz',
+    'chapter-83-the-end.cbz': 'Chapter 83 - The End.cbz', 'chapter-010-re-zero.cbz': 'Chapter 10 - Re Zero.cbz', 'Chapter 5 - Spider-Man.cbz': null, 'chapter 0.cbz': 'Chapter 0.cbz',
     'chapter-1-chapter name.cbz': 'Chapter 1 - Chapter Name.cbz', 'ch_12_the_end.cbz': 'Chapter 12 - The End.cbz', 'vol.3.cbz': 'Volume 3.cbz',
     'Chapter 1.cbz': null, 'Chapter 1 - Chapter Name.cbz': null, 'Saga 001.cbz': null, 'EP-4.pdf': 'Episode 4.pdf' };
   ok(Object.entries(expect).every(([from, to]) => rules.proposedName(from) === to), 'naming rules: every example gives the expected name (and good names are left alone)');
@@ -61,16 +62,21 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   ok(!pv.items.some(x => x.fromName === 'Chapter 2.cbz'), 'well-named files aren’t listed');
 
   // ---- apply ----
-  const picks = pv.items.filter(x => x.status === 'ok' && x.fromName !== 'chapter-1x1.cbz').map(x => ({ bookId: x.bookId, toName: x.toName }));
+  const picks = pv.items.filter(x => x.status === 'ok' && x.fromName !== 'chapter-2x5.cbz').map(x => ({ bookId: x.bookId, toName: x.toName }));
   picks.push({ bookId: by('chapter-3.cbz').bookId, toName: by('chapter-3.cbz').toName }); // a conflict: refused
-  picks.push({ bookId: by('chapter-1x1.cbz').bookId, toName: 'Something else.cbz' });     // not what was proposed: refused
+  picks.push({ bookId: by('chapter-2x5.cbz').bookId, toName: 'Something else.cbz' });     // not what was proposed: refused
   await call('POST', '/api/users', { username: 'bob', password: 'bobpass12' });
   const bob = (await call('POST', '/api/login', { username: 'bob', password: 'bobpass12' }, null)).cookie;
   ok((await call('GET', '/api/rename/preview', null, bob)).status === 403 && (await call('POST', '/api/rename/apply', { items: picks }, bob)).status === 403, 'only admins rename');
   const r = (await call('POST', '/api/rename/apply', { items: picks, renameJson: true })).data;
   ok(r.renamed === 4 && r.json === 1 && r.failed.length === 2 && r.failed.some(f => f.error === 'exists') && r.failed.some(f => f.error === 'changed'), `applied: 4 renamed, 1 JSON renamed, 2 refused (${r.failed.map(f => f.error).join(', ')})`);
+  const procs = (await call('GET', '/api/processes')).data;
+  const alive = pid => { try { process.kill(pid, 0); return true; } catch { return false; } };
+  ok(r.process && r.process.mode === 'process' && r.process.pid && r.process.pid !== procs.server.pid, `the files were renamed by a separate process (pid ${r.process && r.process.pid})`);
+  for (let i = 0; i < 50 && alive(r.process.pid); i++) await new Promise(res => setTimeout(res, 100));
+  ok(!procs.rename.running && procs.rename.last.files === 4 && !alive(r.process.pid),'that process is closed once the batch is done (shown on the Processes page)');
   const disk = fs.readdirSync(path.join(MEDIA, 'Work A')).sort();
-  ok(['Chapter 0.cbz', 'Chapter 1 - Chapter Name.cbz', 'Chapter 1.1.cbz', 'Chapter 1.cbz', 'Chapter 2.cbz', 'chapter-1x1.cbz'].every(f => disk.includes(f)) && !disk.includes('chapter-0.cbz'), `files renamed on disk (${disk.join(', ')})`);
+  ok(['Chapter 0.cbz', 'Chapter 1 - Chapter Name.cbz', 'Chapter 1.1.cbz', 'Chapter 1.cbz', 'Chapter 2.cbz', 'chapter-2x5.cbz'].every(f => disk.includes(f)) && !disk.includes('chapter-0.cbz'), `files renamed on disk (${disk.join(', ')})`);
   ok(fs.existsSync(path.join(META, 'Work A', 'Chapter 1.json')) && !fs.existsSync(path.join(META, 'Work A', 'chapter-1.json')), 'its folder-source JSON was renamed along');
   ok(fs.existsSync(path.join(MEDIA, 'Work B', 'chapter-3.cbz')) && fs.existsSync(path.join(MEDIA, 'Work C', 'ch-5.cbz')), 'conflicting files untouched');
 
@@ -84,7 +90,7 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   ok(ls.read === 0 && ls.books === 10 && ls.removed === 0 && ls.added === 0, 'the quick scan afterwards finds nothing new to read (no duplicates, nothing lost)');
   const after = (await call('GET', `/api/series/${workA.id}`)).data.books.find(b => b.fileName === 'Chapter 1.cbz');
   ok(after.title === 'The First One', 'its JSON still matches after the rename');
-  ok(!(await call('GET', `/api/rename/preview?library=${L}`)).data.items.some(x => x.status === 'ok' && x.fromName !== 'chapter-1x1.cbz'), 'checking again: only what was skipped is left');
+  ok(!(await call('GET', `/api/rename/preview?library=${L}`)).data.items.some(x => x.status === 'ok' && x.fromName !== 'chapter-2x5.cbz'), 'checking again: only what was skipped is left');
   srv.kill();
 
   // ---- matching with alternative titles (in process, a fake site) ----

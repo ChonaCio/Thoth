@@ -1,5 +1,5 @@
-// Library scan worker: one of the long-running, low-priority processes of the scan service (scanner.js
-// starts as many as Server settings → "Scan processes" says). It does the slow file work on request and
+// Library scan worker: one of the low-priority processes of the scan service (scanner.js starts as many as
+// Server settings → "Scan processes" says when a scan begins, and closes them when idle). It does the slow file work on request and
 // reports its memory/CPU every few seconds. It never reads or writes the database.
 //   { type: 'list', reqId, root, prev, quick }             → every book file with size and modified time (+ scan index)
 //   { type: 'analyze', reqId, root, files, concurrency }   → page counts and ComicInfo.xml for those files

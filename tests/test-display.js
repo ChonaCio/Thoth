@@ -87,7 +87,7 @@ const works = async (qs = '') => (await call('GET', '/api/series?limit=200' + qs
   // ---- scan progress with an estimate ----
   // One process reading one file at a time, so the scan lasts long enough to watch
   await call('PATCH', '/api/config', { scanWorkers: 1, scanConcurrency: 1 });
-  await until(async () => (await call('GET', '/api/processes')).data.scanService.workers.length === 1);
+  await until(async () => (await call('GET', '/api/processes')).data.scanService.workers.length <= 1); // (started on demand)
   const B = (await call('POST', '/api/libraries', { name: 'Big', root: BIG, metadata: { autoFetch: false } })).data.library;
   const seen = { listing: false, reading: false, eta: null, percents: [] };
   await until(async () => {

@@ -3,9 +3,10 @@
 //
 // Per library: an ordered list of providers, each on or off. For each work the enabled providers are
 // asked in that order; the first one with a good title match fills each field (summary, status, year,
-// type, publisher, authors, tags, rating, cover, …) and later providers only fill fields still empty.
-// It stops early once the main fields are filled. Precedence when shown: admin edits > ComicInfo.xml in
-// the files > provider metadata. Titles stay the library's (folder/ComicInfo) titles.
+// type, publisher, authors, rating, cover, …) and later providers only fill fields still empty. Genres, tags
+// and alternative titles are combined from every site, with one name per genre/tag (terms.js). Precedence
+// when shown: admin edits > folder sources > ComicInfo.xml in the files > provider metadata (genres/tags of
+// all of them combined, see db.seriesMeta). Titles stay the library's (folder/ComicInfo) titles.
 //
 // Runs in the server process (it's network-bound, not CPU-bound), one work at a time from a queue.
 const fs = require('fs');
@@ -35,7 +36,14 @@ const localFirst = list => list.filter(p => db.metadataSources[p.id]).concat(lis
 const COVERS_DIR = path.join(store.DATA_DIR, 'covers');
 const MATCH_THRESHOLD = 0.85;
 const FIELDS = ['summary', 'status', 'year', 'type', 'publisher', 'authors', 'genres', 'tags', 'rating', 'cover', 'altTitles', 'readingDirection', 'ageRating'];
-const CORE = ['summary', 'status', 'year', 'type', 'authors', 'genres', 'cover']; // stop asking providers once these are filled
+const LISTS = ['genres', 'tags', 'altTitles']; // combined from every matched site (the rest: first site wins)
+const terms = require('./terms');
+// Alternative titles of several sites, without repeats (ignoring case and accents)
+function mergeTitles(a, b) {
+  const out = [], seen = new Set();
+  for (const t of [].concat(a || [], b || [])) { const k = terms.keyOf(t); if (k && !seen.has(k)) { seen.add(k); out.push(t); } }
+  return out;
+}
 const TYPES = ['manga', 'manhwa', 'manhua', 'webcomic', 'comic', 'novel', 'book', 'other'];
 const COVER_MODES = ['missing', 'always', 'never'];
 const MAX_COVER = 8 * 1024 * 1024;
@@ -565,15 +573,13 @@ async function refreshSeries(seriesId, cur) {
       if (x && !linked[x.provider]) linked[x.provider] = x.id;
     }
     const merged = {}, sources = {}, matches = [], errors = [], covers = [];
-    let coreDone = false;
     for (const { id: pid, enabled } of settings.providers) {
       const provider = BY_ID[pid];
       if (!provider) continue; // a folder source (applied above)
       const lock = locked.find(l => l.provider === pid);
       const linkId = linked[pid];
       if (!enabled && !lock) continue;
-      // Once the main fields are filled, only sites matched by hand or by a link are still read (to keep them all)
-      if (coreDone && !lock && !linkId) continue;
+      // Every enabled site is asked (genres, tags and alternative titles are combined from all of them)
       if (provider.needsKey && !keys()[provider.needsKey]) continue;
       step('searching', pid);
       try {
@@ -588,13 +594,21 @@ async function refreshSeries(seriesId, cur) {
         const m = await provider.fetch(id, keys());
         if (!m) continue;
         matches.push({ provider: pid, id: String(m.id || id), title: m.title, url: m.url, score, via, locked: Boolean(lock) });
-        for (const f of FIELDS) if (!has(merged[f]) && has(m[f])) { merged[f] = m[f]; sources[f] = pid; }
+        for (const f of FIELDS) {
+          if (!has(m[f])) continue;
+          if (LISTS.includes(f) && has(merged[f])) {
+            // Lists complement each other: what one site has and the others don't is added
+            const next = f === 'altTitles' ? mergeTitles(merged[f], m[f]) : terms.unify(merged[f], m[f]);
+            if (next.length > merged[f].length) { merged[f] = next; sources[f] = [].concat(sources[f], pid).filter((v, i, a) => a.indexOf(v) === i).join(','); }
+          } else if (!has(merged[f])) { merged[f] = LISTS.includes(f) && f !== 'altTitles' ? terms.unify(m[f]) : m[f]; sources[f] = pid; }
+        }
         if (m.cover) covers.push({ url: m.cover, provider: pid });
       } catch (e) {
         errors.push(e.message);
       }
-      if (CORE.every(f => has(merged[f]))) coreDone = true;
     }
+    if (merged.genres || merged.tags) Object.assign(merged, terms.unifyGenresTags([merged.genres], [merged.tags]));
+    if (merged.tags && !merged.tags.length) { delete merged.tags; delete sources.tags; }
     // Cover: part of the check. Downloaded once to data/covers/ (unless the library never uses metadata
     // covers); if the first source's image can't be downloaded, the next source's is tried.
     let coverFile = s.provider && s.provider.coverFile;

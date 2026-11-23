@@ -7,6 +7,7 @@ const store = require('./db');
 const scanner = require('./scanner');
 const metadata = require('./metadata');
 const rename = require('./rename');
+const terms = require('./metadata/terms');
 const zip = require('./zip');
 
 const { db } = store;
@@ -250,10 +251,16 @@ function listSeries(user, q) {
   //   genre, tag (lists on a work): ALL included values present, NONE of the excluded
   //   type, status, metadata (one value per work): ANY of the included values, none of the excluded
   const all = k => q.getAll(k).map(v => String(v).trim()).filter(Boolean).slice(0, 50);
-  const has = (list, v) => list.some(x => same(x, v));
+  // (genres/tags by their standard name: "Science Fiction" finds "Sci-Fi")
+  const termKey = v => terms.keyOf(terms.canonical(v));
+  const has = (list, v) => { const k = termKey(v); return list.some(x => termKey(x) === k); };
   const incG = all('genre'), excG = all('xgenre'), incT = all('tag'), excT = all('xtag');
   if (incG.length || excG.length) items = items.filter(s => incG.every(g => has(s.genres, g)) && !excG.some(g => has(s.genres, g)));
   if (incT.length || excT.length) items = items.filter(s => incT.every(x => has(s.tags, x)) && !excT.some(x => has(s.tags, x)));
+  // People (writers, artists, …) work like tags: ALL included present (any role), NONE of the excluded
+  const incP = all('person'), excP = all('xperson');
+  const hasPerson = (s, name) => s.authors.some(a => same(a.name, name));
+  if (incP.length || excP.length) items = items.filter(s => incP.every(n => hasPerson(s, n)) && !excP.some(n => hasPerson(s, n)));
   const single = (inc, exc, valueOf) => { if (inc.length || exc.length) items = items.filter(s => (!inc.length || inc.includes(valueOf(s))) && !exc.includes(valueOf(s))); };
   single(all('type'), all('xtype'), s => s.type || 'unknown');
   single(all('status'), all('xstatus'), s => s.status);
@@ -265,6 +272,8 @@ function listSeries(user, q) {
   const sort = q.get('sort') || 'title';
   if (sort === 'added') items.sort((a, b) => b.created.localeCompare(a.created));
   else if (sort === 'updated') items.sort((a, b) => b.updated.localeCompare(a.updated));
+  // Score: best first; works without one at the end (by title)
+  else if (sort === 'rating') items.sort((a, b) => (b.rating != null) - (a.rating != null) || (b.rating || 0) - (a.rating || 0) || store.collator.compare(a.sortTitle, b.sortTitle));
   else items.sort((a, b) => store.collator.compare(a.sortTitle, b.sortTitle));
   const offset = Math.max(0, Number(q.get('offset')) || 0);
   const limit = Math.min(200, Math.max(1, Number(q.get('limit')) || 60));
@@ -287,6 +296,22 @@ function seriesFacets(user, library) {
   return {
     genres: count(items.flatMap(s => s.genres), 'genres'),
     tags: count(items.flatMap(s => s.tags), 'tags'),
+    // People with their roles: [{ name, count, roles: ['writer', …] }]
+    people: (() => {
+      const m = new Map();
+      for (const s of items) {
+        const seen = new Set();
+        for (const a of s.authors || []) {
+          const k = searchable(a.name);
+          if (!k) continue;
+          if (!m.has(k)) m.set(k, { name: a.name, count: 0, roles: [] });
+          const e = m.get(k);
+          if (!seen.has(k)) { seen.add(k); e.count++; }
+          if (a.role && !e.roles.includes(a.role)) e.roles.push(a.role);
+        }
+      }
+      return [...m.values()].sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, 500);
+    })(),
     types: tally(items.map(s => s.type || 'unknown')),
     statuses: tally(items.map(s => s.status)),
     metadata: tally(items.map(metadataState))
@@ -568,6 +593,7 @@ async function handle(ctx) {
   if (p === '/api/rename/apply' && method === 'POST') {
     requireAdmin();
     const items = (Array.isArray(body.items) ? body.items : []).slice(0, 5000).filter(x => x && typeof x.bookId === 'string');
+    if (rename.info().running) throw httpError(409, 'renameBusy');
     const result = await rename.apply(items, { renameJson: body.renameJson !== false, metadata });
     // Book order/numbers follow file names: let a quick scan put them in order (and refresh folder sources)
     for (const id of result.libraries) scanner.scanLibrary(id, { mode: 'quick', reason: 'rename' }).catch(() => {});

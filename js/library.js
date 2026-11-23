@@ -213,10 +213,10 @@
   function libKey(route) { return libId(route) + (libDeleted(route) ? ':deleted' : ''); }
 
   /* Advanced search: every facet value can be included or excluded.
-   *   genre/tag (lists): the work needs ALL included values and NONE of the excluded ones
+   *   genre/tag/person (lists; person = a writer, artist, … in any role): the work needs ALL included values and NONE of the excluded ones
    *   type/status/metadata (one value per work): ANY of the included values, none of the excluded
    * plus a year range and an author. In the address: genre=…&genre=…&xgenre=…&yearFrom=…&author=… */
-  var MULTI = ['type', 'status', 'genre', 'tag', 'metadata'];
+  var MULTI = ['type', 'status', 'genre', 'tag', 'person', 'metadata'];
   function resetCriteria(st) {
     st.inc = {}; st.exc = {};
     MULTI.forEach(function (f) { st.inc[f] = []; st.exc[f] = []; });
@@ -349,7 +349,7 @@
             '<input type="search" id="lib-filter" placeholder="' + esc(t('lib.filterPlaceholder')) + '" value="' + esc(st.q) + '" /></label>' +
           '<div class="toolbar__group">' +
             '<select class="select select--compact" id="lib-sort" aria-label="' + esc(t('lib.sort')) + '">' +
-              opt('title', 'lib.sortTitle', st.sort) + opt('added', 'lib.sortAdded', st.sort) + opt('updated', 'lib.sortUpdated', st.sort) + '</select>' +
+              opt('title', 'lib.sortTitle', st.sort) + opt('added', 'lib.sortAdded', st.sort) + opt('updated', 'lib.sortUpdated', st.sort) + opt('rating', 'lib.sortRating', st.sort) + '</select>' +
             '<select class="select select--compact" id="lib-read" aria-label="' + esc(t('lib.read')) + '">' +
               opt('', 'lib.readAll', st.read) + opt('unread', 'lib.readUnread', st.read) + opt('inProgress', 'lib.readInProgress', st.read) + opt('read', 'lib.readRead', st.read) + '</select>' +
           '</div>' +
@@ -491,6 +491,7 @@
         section('status', map(fc && fc.statuses, function (k) { return t('series.status.' + k); }, ['ongoing', 'ended', 'hiatus', 'abandoned', 'unknown'])) +
         section('genre', named(fc && fc.genres), true) +
         section('tag', named(fc && fc.tags), true) +
+        section('person', named(fc && fc.people), true) +
         section('metadata', map(fc && fc.metadata, function (k) { return t('filter.metadata.' + k); }, ['matched', 'unmatched', 'none'])) +
         '<div class="adv-section adv-fields">' +
           '<label class="adv-field"><span>' + esc(t('adv.yearFrom')) + '</span><input type="number" inputmode="numeric" min="1000" max="9999" data-adv-field="yearFrom" value="' + esc(st.yearFrom) + '" class="input--short" /></label>' +
@@ -555,17 +556,21 @@
     var p = (providersCache || []).filter(function (x) { return x.id === id; })[0]; // folder sources have their own names
     return p ? p.name : id;
   }
-  // "Eiichiro Oda (writer, penciller), …": one entry per person
-  function authorsLine(list) {
+  // People as chips like the tags ("Eiichiro Oda · Writer, Penciller"), one per person; each opens the
+  // library filtered by that person (any role). Without a library (s null) they're plain chips.
+  function authorsLine(list, s) {
     if (!list || !list.length) return '';
     var byName = [], seen = {};
     list.forEach(function (a) {
       if (!seen[a.name]) { seen[a.name] = { name: a.name, roles: [] }; byName.push(seen[a.name]); }
       if (a.role && seen[a.name].roles.indexOf(a.role) === -1) seen[a.name].roles.push(a.role);
     });
-    return '<p class="detail__authors">' + byName.slice(0, 8).map(function (a) {
-      return esc(a.name) + (a.roles.length ? ' <span class="muted small">(' + esc(a.roles.map(function (r) { return t('author.' + r); }).join(', ')) + ')</span>' : '');
-    }).join(', ') + '</p>';
+    return '<div class="chips detail__authors" aria-label="' + esc(t('filter.person')) + '">' + byName.slice(0, 12).map(function (a) {
+      var inner = icon('person') + '<span>' + esc(a.name) + '</span>' +
+        (a.roles.length ? '<span class="chip__role">' + esc(a.roles.map(function (r) { return t('author.' + r); }).join(', ')) + '</span>' : '');
+      return s ? '<a class="chip chip--filter chip--person" href="#library/' + s.libraryId + '?person=' + encodeURIComponent(a.name) + '">' + inner + '</a>'
+        : '<span class="chip chip--person">' + inner + '</span>';
+    }).join('') + '</div>';
   }
   function metadataBlock(s) {
     var md = s.metadata, loc = s.localSources || [], urls = s.links || [];
@@ -634,12 +639,14 @@
         '<button class="btn btn--primary" data-lib="series-restore" data-id="' + s.id + '">' + esc(t('del.restore')) + '</button></div>' : '';
       return backLink('#library/' + s.libraryId, s.libraryName) + hiddenBanner + tabs +
         '<div class="detail">' +
-          '<div class="detail__cover cover cover--large">' + seriesCoverHtml(s) + '</div>' +
+          // The cover opens full size (click/Enter); a placeholder (no image) doesn't
+          (s.coverSource ? '<button type="button" class="detail__cover cover cover--large cover--zoom" data-lib="cover-zoom" data-src="/api/series/' + s.id + '/thumbnail?v=' + s.coverV + '" aria-label="' + esc(t('series.coverZoom')) + '" title="' + esc(t('series.coverZoom')) + '">' + seriesCoverHtml(s) + '</button>'
+            : '<div class="detail__cover cover cover--large">' + seriesCoverHtml(s) + '</div>') +
           '<div class="detail__body">' +
             (editions.length > 1 || s.edition !== 'base' ? '<p class="detail__eyebrow">' + esc(editionLabel(s.edition)) + '</p>' : '') +
             '<h1 class="detail__title">' + esc(d.workTitle || s.title) + '</h1>' +
             '<div class="detail__meta">' + meta.join('<span class="dot">·</span>') + '</div>' +
-            authorsLine(s.authors) +
+            authorsLine(s.authors, s) +
             (s.altTitles && s.altTitles.length ? '<p class="muted small detail__alt">' + esc(s.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
             progressLine +
             filterChips(s, 'genre', s.genres || [], 'chip--genre') +
@@ -689,7 +696,6 @@
         isAdmin() && b.path ? ['book.file', b.path] : null,
         b.localSource ? ['msrc.bookSource', b.localSource.name + (isAdmin() && b.localFile ? ' (' + b.localFile + ')' : '')] : null
       ].filter(Boolean);
-      var authors = b.authors.map(function (a) { return esc(a.name) + ' <span class="muted small">(' + esc(t('author.' + a.role)) + ')</span>'; });
       var seriesLabel = s ? s.title + (s.edition !== 'base' ? ' (' + editionLabel(s.edition) + ')' : '') : '';
       var back = s ? backLink('#series/' + s.id, seriesLabel) : '';
       return back +
@@ -701,7 +707,7 @@
             '<p class="detail__eyebrow">' + esc(b.oneshot ? t('lib.oneshot') : t('book.number', { number: b.number })) + '</p>' +
             '<h1 class="detail__title">' + esc(b.title) + '</h1>' +
             (b.altTitles && b.altTitles.length ? '<p class="muted small detail__alt">' + esc(b.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
-            (authors.length ? '<p class="detail__authors">' + authors.join(', ') + '</p>' : '') +
+            authorsLine(b.authors, s) +
             (s && b.genres && b.genres.length ? filterChips(s, 'genre', b.genres, 'chip--genre') : '') +
             (s && b.tags && b.tags.length ? filterChips(s, 'tag', b.tags, '') : '') +
             '<div class="detail__actions">' +
@@ -1301,7 +1307,7 @@
                 return '<tr><td>' + esc(w.pid) + '</td><td>' + esc(fmtBytes(s2.rss)) + '</td><td>' + esc(fmtCpu(s2.cpuMs)) + '</td>' +
                   '<td><span class="badge' + (w.busy ? ' badge--primary' : '') + '">' + esc(t(w.busy ? 'proc.busy' : 'proc.idle')) + '</span></td></tr>';
               }).join('') + '</tbody></table></div>'
-            : '') +
+            : sc.idle ? '<p class="muted small">' + esc(t('proc.onDemand')) + '</p>' : '') +
           '<h3 class="proc-sub">' + esc(t('proc.current')) + '</h3>' +
           (cur && cur.progress
             ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur)
@@ -1346,7 +1352,20 @@
           }).join('') + '</ul>' : '') +
           '<p class="field__help">' + esc(t('meta.serviceHelp')) + ' <a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>' +
         '</section>' : '';
-      return head + '<div class="cards">' + serverCard + scanCard + metaCard + '</div>';
+      // File renaming: its own process, started for one batch and closed right after
+      var rn = p.rename, rr = rn && rn.running;
+      var renameCard = rn ? '<section class="card proc-card">' +
+          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('edit') + '</span>' +
+            '<div><h2 class="card__title">' + esc(t('proc.rename')) + '</h2>' +
+            '<span class="badge ' + (rr ? 'badge--primary' : 'badge--ok') + '">' + esc(t(rr ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
+          facts([
+            rr && rr.pid ? ['proc.pid', esc(rr.pid)] : null,
+            rr ? ['proc.status', esc(t('proc.renameProgress', { done: rr.done, total: rr.total }))] : null,
+            !rr && rn.last ? ['proc.renameLast', esc(t('proc.renameLastValue', { files: rn.last.files, when: fmtDuration(rn.last.at) }))] : null
+          ]) +
+          '<p class="field__help">' + esc(t('proc.renameHelp')) + ' <a href="#rename">' + esc(t('nav.rename')) + '</a></p>' +
+        '</section>' : '';
+      return head + '<div class="cards">' + serverCard + scanCard + metaCard + renameCard + '</div>';
     },
     enter: function (route) {
       clearTimeout(procTimer);
@@ -1608,7 +1627,7 @@
     var f = s.fieldSources && s.fieldSources[k];
     if (!f) return '';
     return f.kind === 'edit' ? t('src.edit') : f.kind === 'folder' ? t('src.folder', { name: f.name }) : f.kind === 'files' ? t('src.files')
-      : f.kind === 'online' ? t('src.online', { name: providerName(f.name) }) : f.kind === 'books' ? t('src.books') : '';
+      : f.kind === 'online' ? t('src.online', { name: String(f.name || '').split(',').map(providerName).join(', ') }) : f.kind === 'books' ? t('src.books') : '';
   }
   function editSeries(id) {
     var s = cache.series[id].series, o = s.overrides || {};
@@ -1909,7 +1928,7 @@
     var dir = function (v) { return { value: v, label: t('series.direction.' + v) }; };
     var defaultFields = [
       { name: 'defSort', label: t('manage.defaultSort'), type: 'select', value: d.sort || 'title', help: t('manage.defaultSortHelp'),
-        options: [{ value: 'title', label: t('lib.sortTitle') }, { value: 'added', label: t('lib.sortAdded') }, { value: 'updated', label: t('lib.sortUpdated') }] },
+        options: [{ value: 'title', label: t('lib.sortTitle') }, { value: 'added', label: t('lib.sortAdded') }, { value: 'updated', label: t('lib.sortUpdated') }, { value: 'rating', label: t('lib.sortRating') }] },
       { name: 'defBookOrder', label: t('order.libraryLabel'), type: 'select', value: d.bookOrder || 'asc', help: t('order.help'),
         options: [{ value: 'asc', label: t('order.asc') }, { value: 'desc', label: t('order.desc') }] },
       { name: 'defLayout', label: t('layout.libraryLabel'), type: 'select', value: d.bookLayout || 'tiles', help: t('layout.help'),
@@ -1941,6 +1960,32 @@
         });
       }
     });
+  }
+
+  // The work's cover full size over the page; closes with a click anywhere, Esc or the close button, and
+  // gives the focus back to the cover
+  function openCoverZoom(src, from) {
+    if (!src || document.querySelector('.lightbox')) return;
+    var box = document.createElement('div');
+    box.className = 'lightbox';
+    box.setAttribute('role', 'dialog');
+    box.setAttribute('aria-modal', 'true');
+    box.setAttribute('aria-label', t('series.coverZoom'));
+    box.innerHTML = '<img class="lightbox__img" alt="" src="' + esc(src) + '" />' +
+      '<button type="button" class="icon-btn lightbox__close" data-icon="close" aria-label="' + esc(t('common.close')) + '" title="' + esc(t('common.close')) + '"></button>';
+    document.body.appendChild(box);
+    renderIcons(box);
+    var close = function () {
+      document.removeEventListener('keydown', onKey, true);
+      window.removeEventListener('hashchange', close);
+      if (box.parentNode) box.parentNode.removeChild(box);
+      if (from && from.focus) from.focus();
+    };
+    var onKey = function (e) { if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); close(); } };
+    box.addEventListener('click', close);
+    document.addEventListener('keydown', onKey, true);
+    window.addEventListener('hashchange', close);
+    $('.lightbox__close', box).focus();
   }
 
   function nameForm(titleKey, current, onSubmit) {
@@ -1987,6 +2032,7 @@
         return api('POST', '/api/series/' + id + '/restore', {}).then(function () {
           A().toast(t('del.restored')); invalidate(); markStale(cache.series); A().refreshLibraries(); refreshCurrent();
         }, fail);
+      case 'cover-zoom': return openCoverZoom(btn.dataset.src, btn);
       case 'book-order': {
         var sv = cache.series[id] && cache.series[id].series;
         if (!sv) return;

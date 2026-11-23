@@ -3,6 +3,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const terms = require('./metadata/terms'); // one name per genre/tag (no other dependencies)
 
 const DATA_DIR = path.resolve(process.env.THOTH_DATA_DIR || path.join(__dirname, '..', 'data'));
 const LIB_FILE = 'library.json';
@@ -102,7 +103,7 @@ function splitEdition(name) {
 // taken from providers (the library's names group versions and stay recognizable).
 const BOOK_LAYOUTS = ['tiles', 'list'];
 const DIRECTIONS = ['ltr', 'rtl', 'vertical'];
-const SORTS = ['title', 'added', 'updated'];
+const SORTS = ['title', 'added', 'updated', 'rating'];
 const BOOK_ORDERS = ['asc', 'desc'];
 // A library's defaults for its works: { bookLayout: 'tiles'|'list', readingDirection: null (automatic)|'ltr'|'rtl'|'vertical' }
 function libraryDefaults(lib) {
@@ -150,8 +151,9 @@ function seriesMeta(s) {
     bookOrder: BOOK_ORDERS.includes(overrides.bookOrder) ? overrides.bookOrder : defaults.bookOrder,
     // Which cover to show: 'file' (first page), 'metadata' (downloaded) or null (library setting decides)
     coverChoice: ['file', 'metadata'].includes(overrides.cover) ? overrides.cover : null,
-    genres: Array.isArray(m.genres) ? m.genres : [],
-    tags: Array.isArray(m.tags) ? m.tags : [],
+    // Genres and tags: combined from every source (folder sources, files, online sites), one name each
+    // ("Sci Fi" = "Science Fiction" = "Sci-Fi"); an administrator's list replaces them
+    ...combinedTerms(overrides, [local, filled(s.meta), online]),
     ageRating: m.ageRating || null,
     type: m.type || null, // manga | manhwa | manhua | webcomic | comic | novel | book | other
     // Year and authors: the work's own, else from its books (ComicInfo puts them on each book)
@@ -161,6 +163,10 @@ function seriesMeta(s) {
     altTitles: Array.isArray(m.altTitles) ? m.altTitles : [],
     links: linksOf(s).map(l => l.url)
   };
+}
+function combinedTerms(overrides, layers) {
+  const pick = f => (Array.isArray(overrides[f]) && overrides[f].length ? [overrides[f]] : layers.map(l => l[f]));
+  return terms.unifyGenresTags(pick('genres'), pick('tags'));
 }
 // A work's links (its pages on metadata sites and elsewhere): [{ url, from: 'edit'|'folder'|'online', site }]
 // An administrator's list replaces the rest; otherwise the folder sources' JSON links, then the addresses of
@@ -227,8 +233,7 @@ function bookMeta(b) {
     releaseDate: m.releaseDate || '',
     authors: Array.isArray(m.authors) ? m.authors : [],
     altTitles: Array.isArray(m.altTitles) ? m.altTitles : [],
-    genres: Array.isArray(m.genres) ? m.genres : [],
-    tags: Array.isArray(m.tags) ? m.tags : []
+    ...terms.unifyGenresTags([m.genres], [m.tags])
   };
 }
 

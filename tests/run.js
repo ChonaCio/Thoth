@@ -23,6 +23,7 @@ const SUITES = {
   covers: { file: 'test-covers.js', quick: true },     // Edit dialog data (value sources, new fields), cover picker
   rename: { file: 'test-rename.js', quick: true },     // batch renaming; metadata matching with alternative titles
   links: { file: 'test-links.js', quick: true },       // work links, JSON re-matching on updates, several matches, covers from links
+  terms: { file: 'test-terms.js', quick: true },       // one name per genre/tag, sources combined, people filters, sort by score
   processes: { file: 'test-processes.js' },            // scan pool, server settings, restarts (slow, big temp files)
   metadata: { file: 'test-metadata.js' },              // online metadata end to end (network)
   providers: { file: 'test-providers-live.js' },       // each metadata site answers (network)

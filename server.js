@@ -20,6 +20,7 @@ const library = require('./library/api');
 const libraryStore = require('./library/db');
 const scanner = require('./library/scanner');
 const metadata = require('./library/metadata');
+const rename = require('./library/rename');
 
 // Deleting a user also deletes their reading progress
 auth.hooks.userDeleted.push(username => libraryStore.removeUser(username));
@@ -148,7 +149,8 @@ async function handleApi(req, res, url) {
           restartNeeded: updater.serverCodeFingerprint() !== CODE_AT_START
         },
         scanService: scanner.serviceInfo(),
-        metadata: metadata.info()
+        metadata: metadata.info(),
+        rename: rename.info()
       });
     }
     // ---- server settings (administrators) ----

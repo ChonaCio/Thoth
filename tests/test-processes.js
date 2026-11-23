@@ -1,4 +1,4 @@
-// node test-processes.js <app dir> — Server settings, the scan pool (start/stop/restart/crash), scan
+﻿// node test-processes.js <app dir> â€” Server settings, the scan pool (start/stop/restart/crash), scan
 // speed with concurrency, server restart, "code changed" detection. Runs on a copy of the app.
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs'), path = require('path'), os = require('os'), assert = require('assert'), zlib = require('zlib');
@@ -24,7 +24,7 @@ const PORT = 3984, BASE = `http://127.0.0.1:${PORT}`;
 let srv, passed = 0, cookie, srvLog = '';
 function start(env = {}) {
   return new Promise((resolve, reject) => {
-    srv = spawn(process.execPath, ['server.js'], { cwd: APP, env: { ...process.env, PORT, HOST: '127.0.0.1', THOTH_DATA_DIR: DATA, ...env } });
+    srv = spawn(process.execPath, ['server.js'], { cwd: APP, env: { ...process.env, PORT, HOST: '127.0.0.1', THOTH_DATA_DIR: DATA, THOTH_WORKER_IDLE_MS: '3000', ...env } });
     let out = ''; srv.stdout.on('data', d => { out += d; srvLog += d; if (out.includes('Libraries:')) resolve(); }); srv.stderr.on('data', d => { out += d; srvLog += d; });
     srv.on('exit', c => reject(new Error('exit ' + c + out)));
   });
@@ -43,7 +43,7 @@ const call = async (m, u, b, c = cookie) => {
   const sc = r.headers.get('set-cookie');
   return { status: r.status, data: await r.json(), cookie: sc ? sc.split(';')[0] : null };
 };
-const ok = (c, n) => { assert(c, n); passed++; console.log('  ✓', n); };
+const ok = (c, n) => { assert(c, n); passed++; console.log('  âœ“', n); };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const svc = async () => (await call('GET', '/api/processes')).data.scanService;
 const pids = s => s.workers.map(w => w.pid);
@@ -64,47 +64,47 @@ async function timedFullScan(id) {
   let cfg = (await call('GET', '/api/config')).data;
   ok(cfg.cpus >= 1 && cfg.values.scanWorkers === cfg.schema.scanWorkers.default && cfg.values.scanConcurrency === 4, `defaults: ${cfg.values.scanWorkers} processes (of ${cfg.cpus} cores), 4 files at once`);
   let s = await svc();
-  ok(s.state === 'running' && s.workers.length === cfg.values.scanWorkers && pids(s).every(p => p !== srv.pid), `pool started: ${s.workers.length} scan processes`);
+  ok(s.state === 'running' && s.idle && !s.workers.length, 'service running but idle: no scan processes while there is nothing to scan');
   ok((await call('PATCH', '/api/config', { scanWorkers: 999 })).status === 400 && (await call('PATCH', '/api/config', { scanConcurrency: 0 })).status === 400, 'out-of-range values rejected');
   const bob = (await call('POST', '/api/users', { username: 'bob', password: 'bobpass12' }), (await call('POST', '/api/login', { username: 'bob', password: 'bobpass12' }, null)).cookie);
   ok((await call('GET', '/api/config', null, bob)).status === 403 && (await call('PATCH', '/api/config', { scanWorkers: 1 }, bob)).status === 403, 'only admins see and change server settings');
-  const oldPids = pids(s);
   cfg = (await call('PATCH', '/api/config', { scanWorkers: 3 })).data;
+  ok(!(await svc()).workers.length, 'changing "scan processes" while idle starts nothing');
+
+  // ---- scan modes (processes start with the first scan) ----
+  const L = (await call('POST', '/api/libraries', { name: 'Comics', root: MEDIA })).data.library.id;
   s = await until(async () => { const x = await svc(); return x.workers.length === 3 && x; });
-  ok(s.workers.length === 3 && pids(s).every(p => !oldPids.includes(p)), 'changing "scan processes" restarts the pool with the new count');
-  await until(async () => oldPids.every(p => !alive(p)));
-  ok(oldPids.every(p => !alive(p)), 'old processes are gone');
+  ok(s.workers.length === 3 && pids(s).every(p => p !== srv.pid), `a scan starts the pool: ${s.workers.length} scan processes`);
   const workerPrio = os.getPriority(s.workers[0].pid);
   ok(s.workers.every(w => os.getPriority(w.pid) === os.constants.priority.PRIORITY_LOW), `every scan process has the lowest priority (${workerPrio})`);
-  s = await until(async () => { const x = await svc(); return x.workers.every(w => w.stats) && x; });
+  s = await until(async () => { const x = await svc(); return x.workers.length === 3 && x.workers.every(w => w.stats) && x; });
   ok(s.workers.every(w => w.stats.rss > 0), 'each process reports its memory');
-
-  // ---- scan modes ----
-  const L = (await call('POST', '/api/libraries', { name: 'Comics', root: MEDIA })).data.library.id;
   await until(async () => { const l = await lib(L); return !l.scanning && l.lastScan; });
+  const oldPids = pids(s);
+  s = await until(async () => { const x = await svc(); return !x.workers.length && x; });
+  await until(async () => oldPids.every(p => !alive(p)));
+  ok(s.idle && oldPids.every(p => !alive(p)), 'nothing left to scan: the processes are closed after a moment');
   await call('POST', `/api/libraries/${L}/scan`, {});
   let l = await until(async () => { const x = await lib(L); return !x.scanning && x.lastScan && x.lastScan.full === false && x; });
   ok(l.lastScan.updated === 0 && l.lastScan.read === 0, 'scan changes: nothing read when nothing changed');
   l = { lastScan: await timedFullScan(L) };
   ok(l.lastScan.updated === l.lastScan.books && l.lastScan.read === l.lastScan.books, `full scan: every book read (${l.lastScan.read}/${l.lastScan.books})`);
 
-  // ---- speed: same library, 1 process × 1 file vs 4 processes × 4 files ----
+  // ---- speed: same library, 1 process Ã— 1 file vs 4 processes Ã— 4 files ----
   const M = (await call('POST', '/api/libraries', { name: 'Many', root: MANY })).data.library.id;
   await until(async () => { const x = await lib(M); return !x.scanning && x.lastScan && x; }, 300000);
   await call('PATCH', '/api/config', { scanWorkers: 1, scanConcurrency: 1 });
-  await until(async () => (await svc()).workers.length === 1);
   const slow = await timedFullScan(M);
   await call('PATCH', '/api/config', { scanWorkers: 4, scanConcurrency: 4 });
-  await until(async () => (await svc()).workers.length === 4);
   const fast = await timedFullScan(M);
-  console.log(`    full scan of ${fast.books} books: 1 process × 1 file = ${slow.durationMs} ms; 4 processes × 4 files = ${fast.durationMs} ms (${(slow.durationMs / fast.durationMs).toFixed(1)}× faster)`);
+  console.log(`    full scan of ${fast.books} books: 1 process Ã— 1 file = ${slow.durationMs} ms; 4 processes Ã— 4 files = ${fast.durationMs} ms (${(slow.durationMs / fast.durationMs).toFixed(1)}Ã— faster)`);
   ok(slow.books === fast.books && fast.processes === 4 && fast.concurrency === 4, 'both scans found every book; the report says how it ran');
   ok(fast.durationMs < slow.durationMs, 'more processes and files at once is faster');
   await call('PATCH', '/api/config', { scanWorkers: 2, scanConcurrency: 4 });
-  await until(async () => (await svc()).workers.length === 2);
 
   // ---- stop / start ----
-  const before = pids(await svc());
+  await call('POST', `/api/libraries/${M}/scan`, { full: true });
+  const before = pids(await until(async () => { const x = await svc(); return x.workers.length === 2 && x; }));
   s = (await call('POST', '/api/processes/scan-service/stop', {})).data.scanService;
   ok(s.state === 'stopped' && !s.workers.length, 'stop: service stopped');
   await until(async () => before.every(p => !alive(p)));
@@ -114,14 +114,14 @@ async function timedFullScan(id) {
   await wait(600);
   ok((await lib(L)).scanning, 'it does not run while stopped');
   s = (await call('POST', '/api/processes/scan-service/start', {})).data.scanService;
-  ok(s.state === 'running' && s.workers.length === 2 && pids(s).every(p => !before.includes(p)), 'start: new processes');
-  await until(async () => !(await lib(L)).scanning);
-  ok(true, 'the waiting scan ran after starting');
+  ok(s.state === 'running' && s.workers.length === 2 && pids(s).every(p => !before.includes(p)), 'start: new processes for the waiting scans');
+  await until(async () => !(await lib(L)).scanning && !(await lib(M)).scanning, 300000);
+  ok(true, 'the waiting scans ran after starting');
 
   // ---- restart ----
   const b2 = await svc();
   s = (await call('POST', '/api/processes/scan-service/restart', {})).data.scanService;
-  ok(pids(s).every(p => !pids(b2).includes(p)) && s.restarts === b2.restarts + 1, 'restart: new processes, counted');
+  ok(s.state === 'running' && pids(s).every(p => !pids(b2).includes(p)) && s.restarts === b2.restarts + 1, 'restart: counted (processes start again when needed)');
 
   // ---- stop in the middle of a scan ----
   const H = (await call('POST', '/api/libraries', { name: 'Heavy', root: HEAVY })).data.library.id;
@@ -139,12 +139,13 @@ async function timedFullScan(id) {
   const done = await until(async () => { const x = await lib(H); return !x.scanning && x.lastScan && x; }, 120000);
   ok(done.booksCount === 8 && !done.scanError, 'after starting again, the heavy library scans completely');
 
-  // ---- crash recovery: a dead process is replaced; 3 crashes in a minute → give up ----
-  let victim = (await svc()).workers[0].pid;
+  // ---- crash recovery: a dead process is replaced while scanning; 3 crashes in a minute â†’ give up ----
+  const busyPool = async () => { await call('POST', `/api/libraries/${H}/scan`, { full: true }); return until(async () => { const x = await svc(); return x.workers.length === 2 && x.current && x; }); };
+  let victim = (await busyPool()).workers[0].pid;
   process.kill(victim);
-  s = await until(async () => { const x = await svc(); return x.workers.length === 2 && !pids(x).includes(victim) && x; });
-  ok(/unexpectedly/.test(s.lastError) && s.state === 'running', 'a crashed scan process is replaced by itself');
-  for (let i = 0; i < 2; i++) { victim = (await svc()).workers[0].pid; process.kill(victim); await until(async () => !pids(await svc()).includes(victim)); }
+  s = await until(async () => { const x = await svc(); return /unexpectedly/.test(x.lastError || '') && !pids(x).includes(victim) && x; });
+  ok(s.state === 'running', 'a crashed scan process is noticed; the service keeps running');
+  for (let i = 0; i < 2; i++) { await until(async () => !(await lib(H)).scanning, 120000); victim = (await busyPool()).workers[0].pid; process.kill(victim); await until(async () => !pids(await svc()).includes(victim)); }
   s = await until(async () => { const x = await svc(); return x.state === 'crashed' && x; });
   ok(s.state === 'crashed' && !s.workers.length, '3 crashes in a minute: gives up (state "crashed")');
   ok((await call('POST', '/api/processes/scan-service/start', {})).data.scanService.state === 'running', 'an admin can start it again');
@@ -152,7 +153,7 @@ async function timedFullScan(id) {
   // ---- server restart & code-changed detection ----
   fs.appendFileSync(path.join(APP, 'library', 'api.js'), '\n// changed\n');
   let srvInfo = (await call('GET', '/api/processes')).data.server;
-  ok(srvInfo.restartNeeded === true, 'changing server code on disk → restart needed');
+  ok(srvInfo.restartNeeded === true, 'changing server code on disk â†’ restart needed');
   ok(srvInfo.supervised && srvInfo.supervisorPid === srv.pid && srvInfo.pid !== srv.pid, 'npm start runs the server under the built-in supervisor');
   r = await call('POST', '/api/processes/server/restart', {});
   ok(r.status === 202, 'restart server accepted (no systemd/Docker needed)');

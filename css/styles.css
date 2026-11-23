@@ -483,6 +483,22 @@ html { scrollbar-gutter: stable; } /* same content width whether or not the page
 a.chip--filter { text-decoration: none; }
 a.chip--filter:hover { background: var(--hover); color: var(--text); }
 .chip--genre { background: var(--primary-soft); color: var(--on-primary-soft); }
+/* People (writers, artists, …) as chips like the tags */
+.chip--person { display: inline-flex; align-items: center; gap: 4px; color: var(--text); }
+.chip--person .icon svg { width: 14px; height: 14px; }
+.chip__role { color: var(--text-muted); font-weight: 400; }
+.chip__role::before { content: '·'; margin: 0 4px 0 2px; }
+
+/* Work cover: opens full size */
+.cover--zoom { display: block; padding: 0; border: 0; font: inherit; cursor: zoom-in; }
+.cover--zoom:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.lightbox { position: fixed; inset: 0; z-index: 1000; display: flex; align-items: center; justify-content: center; padding: 24px;
+  background: rgba(0, 0, 0, .85); cursor: zoom-out; animation: fade-in .15s ease-out; }
+.lightbox__img { max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 4px; box-shadow: 0 10px 40px rgba(0, 0, 0, .5); }
+.lightbox__close { position: absolute; top: 12px; right: 12px; color: #fff; background: rgba(0, 0, 0, .4); }
+.lightbox__close:hover { background: rgba(255, 255, 255, .15); }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .lightbox { animation: none; } }
 
 /* ---- Identify: several picks ---- */
 .identify__item.is-selected { background: var(--primary-soft); }

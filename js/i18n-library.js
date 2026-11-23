@@ -1326,7 +1326,7 @@
   // Rename files
   add('en', {
     'nav.rename': 'Rename files', 'ren.intro': 'Finds book files whose names don’t follow the usual format and suggests new names. Review the list and rename the ones you pick; reading progress and read lists follow the files.',
-    'ren.rulesTitle': 'Naming rules', 'ren.rulesHelp': 'Files named chapter/chap/ch/c, volume/vol/v, episode/ep or issue + a number (1, 1.1, 1x1), optionally followed by a name, get a capitalized name. Other names are left alone.',
+    'ren.rulesTitle': 'Naming rules', 'ren.rulesHelp': 'Files named chapter/chap/ch/c, volume/vol/v, episode/ep or issue + a number, optionally followed by a name, get a capitalized name: numbers lose their leading zeros (001 → 1), "x" between numbers becomes a point (1x1 → 1.1) and a name without spaces uses its dashes as spaces (chapter-83-the-end → Chapter 83 - The End). Other names are left alone.',
     'ren.library': 'Library', 'ren.check': 'Check', 'ren.start': 'Choose a library and press Check.',
     'ren.summary': '{checked} files checked · {count} to rename · {conflicts} with conflicts',
     'ren.allGoodTitle': 'Nothing to rename', 'ren.allGood': 'Every file already follows the naming format.',
@@ -1338,7 +1338,7 @@
   });
   add('es', {
     'nav.rename': 'Renombrar archivos', 'ren.intro': 'Busca archivos de libros cuyos nombres no siguen el formato habitual y propone nombres nuevos. Revisa la lista y renombra los que elijas; el progreso de lectura y las listas de lectura siguen a los archivos.',
-    'ren.rulesTitle': 'Reglas de nombres', 'ren.rulesHelp': 'Los archivos llamados chapter/chap/ch/c, volume/vol/v, episode/ep o issue + un número (1, 1.1, 1x1), opcionalmente seguido de un nombre, reciben un nombre con mayúsculas. Los demás nombres no se tocan.',
+    'ren.rulesTitle': 'Reglas de nombres', 'ren.rulesHelp': 'Los archivos llamados chapter/chap/ch/c, volume/vol/v, episode/ep o issue + un número, opcionalmente seguido de un nombre, reciben un nombre con mayúsculas: los números pierden los ceros iniciales (001 → 1), la "x" entre números pasa a ser un punto (1x1 → 1.1) y un nombre sin espacios usa sus guiones como espacios (chapter-83-the-end → Chapter 83 - The End). Los demás nombres no se tocan.',
     'ren.library': 'Biblioteca', 'ren.check': 'Comprobar', 'ren.start': 'Elige una biblioteca y pulsa Comprobar.',
     'ren.summary': '{checked} archivos comprobados · {count} para renombrar · {conflicts} con conflictos',
     'ren.allGoodTitle': 'Nada que renombrar', 'ren.allGood': 'Todos los archivos siguen ya el formato.',
@@ -1350,7 +1350,7 @@
   });
   add('fr', {
     'nav.rename': 'Renommer des fichiers', 'ren.intro': 'Trouve les fichiers dont le nom ne suit pas le format habituel et propose de nouveaux noms. Vérifiez la liste et renommez ceux que vous choisissez ; la progression de lecture et les listes de lecture suivent les fichiers.',
-    'ren.rulesTitle': 'Règles de nommage', 'ren.rulesHelp': 'Les fichiers nommés chapter/chap/ch/c, volume/vol/v, episode/ep ou issue + un numéro (1, 1.1, 1x1), éventuellement suivi d’un nom, reçoivent un nom avec majuscules. Les autres noms ne sont pas modifiés.',
+    'ren.rulesTitle': 'Règles de nommage', 'ren.rulesHelp': 'Les fichiers nommés chapter/chap/ch/c, volume/vol/v, episode/ep ou issue + un numéro, éventuellement suivi d’un nom, reçoivent un nom avec majuscules : les numéros perdent leurs zéros initiaux (001 → 1), le « x » entre deux nombres devient un point (1x1 → 1.1) et un nom sans espaces utilise ses tirets comme espaces (chapter-83-the-end → Chapter 83 - The End). Les autres noms ne sont pas modifiés.',
     'ren.library': 'Bibliothèque', 'ren.check': 'Vérifier', 'ren.start': 'Choisissez une bibliothèque et appuyez sur Vérifier.',
     'ren.summary': '{checked} fichiers vérifiés · {count} à renommer · {conflicts} en conflit',
     'ren.allGoodTitle': 'Rien à renommer', 'ren.allGood': 'Tous les fichiers suivent déjà le format.',
@@ -1362,7 +1362,7 @@
   });
   add('de', {
     'nav.rename': 'Dateien umbenennen', 'ren.intro': 'Findet Buchdateien, deren Namen nicht dem üblichen Format folgen, und schlägt neue Namen vor. Prüfe die Liste und benenne die gewählten um; Lesefortschritt und Leselisten folgen den Dateien.',
-    'ren.rulesTitle': 'Namensregeln', 'ren.rulesHelp': 'Dateien namens chapter/chap/ch/c, volume/vol/v, episode/ep oder issue + Nummer (1, 1.1, 1x1), optional gefolgt von einem Namen, bekommen einen großgeschriebenen Namen. Andere Namen bleiben unverändert.',
+    'ren.rulesTitle': 'Namensregeln', 'ren.rulesHelp': 'Dateien mit dem Namen chapter/chap/ch/c, volume/vol/v, episode/ep oder issue + eine Nummer, optional gefolgt von einem Namen, bekommen einen großgeschriebenen Namen: Nummern verlieren führende Nullen (001 → 1), ein „x“ zwischen Zahlen wird zum Punkt (1x1 → 1.1) und ein Name ohne Leerzeichen nutzt seine Bindestriche als Leerzeichen (chapter-83-the-end → Chapter 83 - The End). Andere Namen bleiben unverändert.',
     'ren.library': 'Bibliothek', 'ren.check': 'Prüfen', 'ren.start': 'Wähle eine Bibliothek und drücke Prüfen.',
     'ren.summary': '{checked} Dateien geprüft · {count} umzubenennen · {conflicts} mit Konflikten',
     'ren.allGoodTitle': 'Nichts umzubenennen', 'ren.allGood': 'Alle Dateien folgen bereits dem Format.',
@@ -1374,7 +1374,7 @@
   });
   add('pt', {
     'nav.rename': 'Renomear arquivos', 'ren.intro': 'Encontra arquivos cujos nomes não seguem o formato habitual e sugere nomes novos. Revise a lista e renomeie os que escolher; o progresso de leitura e as listas de leitura acompanham os arquivos.',
-    'ren.rulesTitle': 'Regras de nomes', 'ren.rulesHelp': 'Arquivos chamados chapter/chap/ch/c, volume/vol/v, episode/ep ou issue + um número (1, 1.1, 1x1), opcionalmente seguido de um nome, ganham um nome com maiúsculas. Os outros nomes não mudam.',
+    'ren.rulesTitle': 'Regras de nomes', 'ren.rulesHelp': 'Arquivos chamados chapter/chap/ch/c, volume/vol/v, episode/ep ou issue + um número, opcionalmente seguido de um nome, recebem um nome com maiúsculas: os números perdem os zeros à esquerda (001 → 1), o "x" entre números vira ponto (1x1 → 1.1) e um nome sem espaços usa os hifens como espaços (chapter-83-the-end → Chapter 83 - The End). Os outros nomes não mudam.',
     'ren.library': 'Biblioteca', 'ren.check': 'Verificar', 'ren.start': 'Escolha uma biblioteca e clique em Verificar.',
     'ren.summary': '{checked} arquivos verificados · {count} para renomear · {conflicts} com conflitos',
     'ren.allGoodTitle': 'Nada para renomear', 'ren.allGood': 'Todos os arquivos já seguem o formato.',
@@ -1425,5 +1425,65 @@
     'cover.help': 'Escolha qualquer imagem encontrada para esta obra ou envie uma. A imagem escolhida vira a capa própria da obra.',
     'cover.auto': 'Automática', 'cover.firstPage': 'Primeira página', 'cover.downloaded': 'Baixada ({name})', 'cover.custom': 'Capa própria atual', 'cover.uploaded': 'Imagem enviada',
     'cover.upload': 'Enviar imagem', 'cover.downloadedPlain': 'Baixada', 'edit.commas': 'Separe com vírgulas.', 'cover.searching': 'Procurando mais capas nos sites de metadados…', 'err.notAnImage': 'Esse arquivo não é uma imagem.', 'err.coverDownloadFailed': 'O site não enviou essa imagem. Tente outra.'
+  });
+  add('en', {
+    "proc.onDemand": "No scan processes right now: they start when a scan begins and close when there’s nothing left to scan.",
+    "proc.rename": "File renaming",
+    "proc.renameProgress": "{done} of {total} files",
+    "proc.renameLast": "Last run",
+    "proc.renameLastValue": "{files} files, {when} ago",
+    "proc.renameHelp": "Renaming runs in its own process, started for each batch and closed when it’s done.",
+    "err.renameBusy": "Files are already being renamed. Try again when that’s done.",
+    "filter.person": "People",
+    "lib.sortRating": "Score",
+    "series.coverZoom": "Show the cover full size"
+  });
+  add('es', {
+    "proc.onDemand": "Ahora no hay procesos de escaneo: se inician cuando empieza un escaneo y se cierran cuando no queda nada por escanear.",
+    "proc.rename": "Renombrado de archivos",
+    "proc.renameProgress": "{done} de {total} archivos",
+    "proc.renameLast": "Última vez",
+    "proc.renameLastValue": "{files} archivos, hace {when}",
+    "proc.renameHelp": "El renombrado se ejecuta en su propio proceso, que se inicia para cada lote y se cierra al terminar.",
+    "err.renameBusy": "Ya se están renombrando archivos. Inténtalo cuando termine.",
+    "filter.person": "Personas",
+    "lib.sortRating": "Puntuación",
+    "series.coverZoom": "Ver la portada a tamaño completo"
+  });
+  add('fr', {
+    "proc.onDemand": "Aucun processus d’analyse pour le moment : ils démarrent au début d’une analyse et se ferment quand il n’y a plus rien à analyser.",
+    "proc.rename": "Renommage de fichiers",
+    "proc.renameProgress": "{done} sur {total} fichiers",
+    "proc.renameLast": "Dernière fois",
+    "proc.renameLastValue": "{files} fichiers, il y a {when}",
+    "proc.renameHelp": "Le renommage tourne dans son propre processus, lancé pour chaque lot et fermé une fois terminé.",
+    "err.renameBusy": "Des fichiers sont déjà en cours de renommage. Réessayez quand ce sera fini.",
+    "filter.person": "Personnes",
+    "lib.sortRating": "Note",
+    "series.coverZoom": "Afficher la couverture en grand"
+  });
+  add('de', {
+    "proc.onDemand": "Gerade keine Scan-Prozesse: Sie starten, wenn eine Suche beginnt, und werden beendet, wenn nichts mehr zu durchsuchen ist.",
+    "proc.rename": "Dateien umbenennen",
+    "proc.renameProgress": "{done} von {total} Dateien",
+    "proc.renameLast": "Zuletzt",
+    "proc.renameLastValue": "{files} Dateien, vor {when}",
+    "proc.renameHelp": "Das Umbenennen läuft in einem eigenen Prozess, der für jeden Stapel gestartet und danach beendet wird.",
+    "err.renameBusy": "Es werden bereits Dateien umbenannt. Versuche es danach noch einmal.",
+    "filter.person": "Personen",
+    "lib.sortRating": "Bewertung",
+    "series.coverZoom": "Cover in voller Größe zeigen"
+  });
+  add('pt', {
+    "proc.onDemand": "Nenhum processo de análise agora: eles começam quando uma análise começa e fecham quando não há mais nada para analisar.",
+    "proc.rename": "Renomear arquivos",
+    "proc.renameProgress": "{done} de {total} arquivos",
+    "proc.renameLast": "Última vez",
+    "proc.renameLastValue": "{files} arquivos, há {when}",
+    "proc.renameHelp": "A renomeação roda em um processo próprio, iniciado para cada lote e fechado ao terminar.",
+    "err.renameBusy": "Já há arquivos sendo renomeados. Tente de novo quando terminar.",
+    "filter.person": "Pessoas",
+    "lib.sortRating": "Nota",
+    "series.coverZoom": "Ver a capa em tamanho real"
   });
 })();

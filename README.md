@@ -11,7 +11,7 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   becomes a **series**; each file is a **book**. The first scan reads everything; after that, quick scans at
   startup and on a schedule (default hourly) only look into folders that changed, and only new or changed
   files are opened again. Full scans run only when you ask. Each library has a **default order** (A–Z,
-  recently added or recently updated), a default chapter layout and a default reading mode.
+  recently added, recently updated or score), a default chapter layout and a default reading mode.
 - **Metadata** from `ComicInfo.xml` inside CBZ files (title, number, summary, authors, publisher,
   genres, release date, manga reading direction, webtoon format). Administrators can override any of it;
   their edits survive rescans.
@@ -23,11 +23,12 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   Metadata sources page. See [Metadata sources page and folder sources](#metadata-sources-page-and-folder-sources).
 - **Browse**: Home (*Keep reading*, *On deck* = next book in series you've started, recently added),
   per-library grids with text search, sort, read status and an **advanced search** (*Search & filters*): every
-  type, status, genre, tag and metadata state can be **included or excluded** (click once to include, twice to
-  exclude), combined with a year range and an author. Works need all included genres/tags and none of the
-  excluded ones; for type, status and metadata any included value matches. Each value shows how many works
-  have it, the chosen criteria show as removable chips, and the address keeps them (bookmarkable). Genre/tag
-  chips on a work page open the library filtered by them. Global search covers series, books, authors,
+  type, status, genre, tag, person (writers, artists, … in any role) and metadata state can be **included or
+  excluded** (click once to include, twice to exclude), combined with a year range and an author. Works need all
+  included genres/tags/people and none of the excluded ones; for type, status and metadata any included value matches. Each value shows how many works
+  have it, the chosen criteria show as removable chips, and the address keeps them (bookmarkable). Genre, tag
+  and people chips on a work page open the library filtered by them. Works can also be sorted by **score**
+  (best first, works without one last). Click a work's cover to see it full size. Global search covers series, books, authors,
   genres, tags, collections and read lists.
 - **Page cache**: pages you've opened are kept in the browser. Switching between them within a minute needs
   no request at all; after that, or after something changed, the page shows at once and refreshes in the
@@ -140,7 +141,8 @@ if a modified file isn't picked up. The library card says which kind of scan ran
 scheduled, requested…) and, for quick scans, how many folders were unchanged.
 
 **Scanning runs in its own processes: the scan service.** Walking folders and opening archives happens in a
-pool of long-running Node processes with the lowest CPU priority, so browsing and reading stay fast during
+pool of Node processes with the lowest CPU priority, started when a scan begins and closed a few seconds after
+the last one ends (no idle processes; `THOTH_WORKER_IDLE_MS` sets the wait, default 10000), so browsing and reading stay fast during
 big scans. A scan lists the library's files in one process, then spreads the new/changed files over all of
 them in small batches, each process reading several files at once. Libraries are scanned one at a time
 (others show *Waiting…*). If the processes can't be started, scans run inside the server instead; set
@@ -150,13 +152,14 @@ them in small batches, each process reading several files at once. Libraries are
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each). Changing it restarts the scan service. |
+| Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each, only while scanning). Changing it during a scan restarts the scan with the new number. |
 | Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
 | Works looked up at once | 3 | Metadata lookups running in parallel (1–8). Each site still gets a pause between requests. |
 | Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
-**Processes page (administrators).** Shows the web server, the scan service and the metadata lookups:
+**Processes page (administrators).** Shows the web server, the scan service, the metadata lookups and file
+renaming (a process started for each batch of renames and closed when it's done):
 process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting. Scans and
 metadata batches show a **progress bar with the time left**, estimated from the speed so far (scans: finding
 files → reading new/changed files *x of y* → saving; metadata: works done of the batch, and which site each
@@ -191,12 +194,19 @@ order them with the arrows.
   (the folder name without its version suffix). Results are compared with **all** the titles the work is known
   by (its alternative titles from your edits, folder-source JSON, `ComicInfo.xml` or an earlier match) and the best
   comparison counts; if the main title finds nothing, the site is searched again with up to two alternative titles. A result counts only if its title (or an alternative title)
-  is a close match; the publication year from the books breaks ties. The **first** good match fills each field
-  (summary, status, year, type, publisher, authors, genres, tags, rating, cover, reading direction, age rating);
-  later sources only fill fields still empty. It stops once the main fields are filled. **Genres** (Action,
-  Romance, …) are kept apart from **tags** (themes like *Time Travel*), both from the sites and from
-  `ComicInfo.xml` (`<Genre>` vs `<Tags>`).
-- **What wins.** Your edits (series *Edit*) > the files' `ComicInfo.xml` > online metadata. Titles always stay
+  is a close match; the publication year from the books breaks ties. Every enabled source is asked. The **first**
+  good match fills each field (summary, status, year, type, publisher, authors, rating, cover, reading direction,
+  age rating); later sources only fill fields still empty. **Genres, tags and alternative titles are combined**
+  from every source: what one site has and another doesn't is added. **Genres** (Action, Romance, …) are kept
+  apart from **tags** (themes like *Time Travel*), both from the sites and from `ComicInfo.xml` (`<Genre>` vs
+  `<Tags>`).
+- **One name per genre/tag.** Different spellings and synonyms become one name everywhere (sites, files, folder
+  sources, filters): *Sci Fi*, *SciFi*, *Science Fiction* → **Sci-Fi**; *Shonen* → *Shounen*; *Humor* →
+  *Comedy*; *Yaoi*/*BL* → *Boys' Love*; case, accents, spaces, dashes and plurals (*Pirates* = *Pirate*) don't
+  matter. A genre isn't repeated as a tag. Filtering by any spelling finds the same works. The list of known
+  synonyms is in `library/metadata/terms.js`.
+- **What wins.** Your edits (series *Edit*) > folder sources > the files' `ComicInfo.xml` > online metadata.
+  Genres and tags are the exception: those of every source are combined (your edited list replaces them). Titles always stay
   the library's, so versions keep grouping and works stay recognizable.
 - **When.** With *Fetch metadata automatically* on (default), works that were never looked up are queued
   after each scan. Each library's card has **Update metadata** (the delta: only works never looked up, works
@@ -345,20 +355,25 @@ follow the usual format and suggests new names:
 | --- | --- |
 | `chapter-0.cbz` | `Chapter 0.cbz` |
 | `chapter-1.1.cbz` | `Chapter 1.1.cbz` |
-| `chapter-1x1.cbz` | `Chapter 1x1.cbz` |
+| `chapter-1x1.cbz` | `Chapter 1.1.cbz` |
+| `Chapter 001.cbz` | `Chapter 1.cbz` |
+| `chapter-83-the-end.cbz` | `Chapter 83 - The End.cbz` |
 | `chapter-1-chapter name.cbz` | `Chapter 1 - Chapter Name.cbz` |
 | `ch_12_the_end.cbz` / `Ch 12.cbz` | `Chapter 12 - The End.cbz` / `Chapter 12.cbz` |
 | `vol.3.cbz`, `ep-4.pdf`, `iss_5.cbz` | `Volume 3.cbz`, `Episode 4.pdf`, `Issue 5.cbz` |
 
 Names starting with chapter/chap/ch/c, volume/vol/v, episode/ep or issue + a number (`1`, `1.1`, `1x1`),
 optionally followed by a name, get the word capitalized and spelled out and the name in title case; anything
-else is left alone. The list is grouped by work; pick what to rename (all proposals are selected at first) and
+else is left alone. Numbers lose leading zeros (`007` → `7`) and an `x` between numbers becomes a point
+(`1x1` → `1.1`). In a file name without spaces the dashes are spaces (`the-end` → `The End`); a name that has
+spaces keeps its dashes (`Chapter 5 - Spider-Man`). The list is grouped by work; pick what to rename (all proposals are selected at first) and
 click *Rename selected*. Proposals whose new name already exists, or that two files would share, are shown
 but never applied.
 
 Renaming keeps everything attached to the book: reading progress and read lists move to the new name, and with
 *Also rename matching JSON files of folder sources* (on by default) `chapter-1.json` becomes `Chapter 1.json` so
-it still matches. A quick scan runs afterwards to put chapters in order. Files the server may not rename
+it still matches. The files are renamed by a separate low-priority process, started for the batch and closed
+afterwards (one batch at a time). A quick scan runs afterwards to put chapters in order. Files the server may not rename
 (read-only library folders) are reported.
 
 ### Editing a work
@@ -381,7 +396,7 @@ server, so the browser never contacts the metadata sites.
 
 | Setting | Library (Manage libraries → Edit) | Work (its page → Edit) |
 | --- | --- | --- |
-| Default order of works | Title A–Z (default), Recently added or Recently updated (readers can still change it on the page) | — |
+| Default order of works | Title A–Z (default), Recently added, Recently updated or Score (readers can still change it on the page) | — |
 | Chapters shown as | Tiles (default) or List | Library default, Tiles or List |
 | Chapter order | First chapter first (default) or Last chapter first | Library default, either (readers can flip it on the page) |
 | Reading mode | Automatic (default: `ComicInfo.xml`, then online metadata, else left to right), or a fixed mode for every work | Library default/automatic, Left to right, Right to left, Continuous |
