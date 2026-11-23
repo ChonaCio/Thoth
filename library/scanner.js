@@ -49,59 +49,143 @@ function normalizeOneshotFolder(value) {
   return parts.join(path.sep);
 }
 
-/* ---------------- the worker process ---------------- */
-let activeChild = null;
-process.on('exit', () => { if (activeChild) try { activeChild.kill(); } catch { /* gone */ } });
+/* ---------------- the scan service (a long-running worker process) ----------------
+ * state: 'running' | 'starting' (restarting after a crash) | 'stopped' | 'crashed' (gave up after repeated crashes)
+ * mode:  'process' (separate process) | 'inline' (inside the server: THOTH_SCAN_IN_PROCESS=1 or fork unavailable)
+ * Whether it should run is saved (settings.scanServiceEnabled), so a stopped service stays stopped after a restart.
+ */
+const service = {
+  mode: IN_PROCESS ? 'inline' : 'process',
+  state: 'stopped', child: null, pid: null, startedAt: null,
+  restarts: 0, crashTimes: [], lastError: null, stats: null
+};
+let activeWorkerJob = null; // { jobId, resolve, reject, status } — the scan the worker is doing now
+let jobSeq = 0;
+const cancelled = () => Object.assign(new Error('Scan stopped'), { code: 'cancelled' });
 
-function collectInWorker(root, known, status) {
-  return new Promise((resolve, reject) => {
-    let child, settled = false;
-    const done = (fn, v) => { if (!settled) { settled = true; activeChild = null; fn(v); } };
-    try {
-      child = fork(WORKER, [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], serialization: 'advanced' });
-    } catch (e) {
-      return reject(Object.assign(e, { forkFailed: true }));
-    }
-    activeChild = child;
-    // Lowest CPU priority so the web server always wins (nice 19 / idle priority on Windows)
-    try { os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW); } catch { /* not allowed here */ }
-    status.worker = child.pid;
-    child.on('message', m => {
-      if (m.type === 'progress') { status.filesSeen = m.filesSeen; status.analyzed = m.analyzed; }
-      else if (m.type === 'result') done(resolve, m.result);
-      else if (m.type === 'error') done(reject, Object.assign(new Error(m.message), { code: m.code }));
-    });
-    child.on('error', e => done(reject, Object.assign(e, { forkFailed: true })));
-    child.on('exit', code => done(reject, new Error(`Scan process stopped unexpectedly (exit code ${code})`)));
-    child.send({ type: 'scan', root, known });
-  });
+process.on('exit', () => { if (service.child) try { service.child.kill(); } catch { /* gone */ } });
+
+function setEnabled(enabled) {
+  store.db.settings.scanServiceEnabled = enabled;
+  store.saveLibrary();
+}
+function serviceEnabled() { return store.db.settings.scanServiceEnabled !== false; }
+
+function startService({ persist = true } = {}) {
+  if (persist) setEnabled(true);
+  if (service.state === 'running') return;
+  // An admin starting it clears the last problem; an automatic restart after a crash keeps it visible
+  if (persist) service.lastError = null;
+  if (service.mode === 'inline') {
+    Object.assign(service, { state: 'running', pid: process.pid, startedAt: new Date().toISOString() });
+    pump();
+    return;
+  }
+  let child;
+  try {
+    child = fork(WORKER, [], { stdio: ['ignore', 'inherit', 'inherit', 'ipc'], serialization: 'advanced' });
+  } catch (e) {
+    console.warn(`[library] couldn't start the scan process (${e.message}); scanning inside the server`);
+    service.mode = 'inline';
+    service.lastError = e.message;
+    return startService({ persist: false });
+  }
+  // Lowest CPU priority so the web server always wins (nice 19 / idle priority on Windows)
+  try { os.setPriority(child.pid, os.constants.priority.PRIORITY_LOW); } catch { /* not allowed here */ }
+  Object.assign(service, { child, pid: child.pid, state: 'running', startedAt: new Date().toISOString(), stats: null });
+  child.on('message', m => onWorkerMessage(child, m));
+  child.on('error', e => { service.lastError = e.message; });
+  child.on('exit', code => onWorkerExit(child, code));
+  console.log(`[library] scan service started (pid ${child.pid})`);
+  pump();
 }
 
-async function collect(lib, known, status) {
-  const progress = p => { status.filesSeen = p.filesSeen; status.analyzed = p.analyzed; };
-  status.mode = 'server';
-  if (IN_PROCESS) return core.collect(lib.root, known, progress);
-  try {
-    status.mode = 'worker';
-    return await collectInWorker(lib.root, known, status);
-  } catch (e) {
-    if (!e.forkFailed) throw e;
-    console.warn(`[library] couldn't start the scan process (${e.message}); scanning in the server process`);
-    status.mode = 'server';
-    return core.collect(lib.root, known, progress);
+function stopService({ persist = true } = {}) {
+  if (persist) setEnabled(false);
+  const child = service.child;
+  Object.assign(service, { state: 'stopped', child: null, pid: null, startedAt: null, stats: null });
+  // The scan in progress is cancelled and put back at the front of the queue
+  if (activeWorkerJob) { const j = activeWorkerJob; activeWorkerJob = null; j.reject(cancelled()); }
+  if (child) {
+    child.removeAllListeners('exit');
+    child.on('exit', () => {});
+    try { child.kill(); } catch { /* already gone */ }
+    console.log(`[library] scan service stopped (pid ${child.pid})`);
   }
 }
 
+function restartService() {
+  stopService({ persist: false });
+  service.restarts++;
+  startService({ persist: true });
+}
+
+function onWorkerMessage(child, m) {
+  if (child !== service.child) return;
+  if (m.type === 'stats') { service.stats = { rss: m.rss, heapUsed: m.heapUsed, cpuMs: m.cpuMs, at: new Date().toISOString() }; return; }
+  const j = activeWorkerJob;
+  if (!j || m.jobId !== j.jobId) return;
+  if (m.type === 'progress') { j.status.filesSeen = m.filesSeen; j.status.analyzed = m.analyzed; }
+  else if (m.type === 'result') { activeWorkerJob = null; j.resolve(m.result); }
+  else if (m.type === 'error') { activeWorkerJob = null; j.reject(Object.assign(new Error(m.message), { code: m.code })); }
+}
+
+// The worker died on its own: fail the scan it was doing, then restart (unless it keeps crashing)
+function onWorkerExit(child, code) {
+  if (child !== service.child) return;
+  const msg = `Scan process stopped unexpectedly (exit code ${code})`;
+  console.error(`[library] ${msg}`);
+  Object.assign(service, { child: null, pid: null, startedAt: null, stats: null, lastError: msg });
+  if (activeWorkerJob) { const j = activeWorkerJob; activeWorkerJob = null; j.reject(new Error(msg)); }
+  const now = Date.now();
+  service.crashTimes = service.crashTimes.filter(t => now - t < 60000).concat(now);
+  if (service.crashTimes.length >= 3) {
+    service.state = 'crashed';
+    console.error('[library] scan service crashed 3 times in a minute; not restarting it automatically');
+    return;
+  }
+  service.state = 'starting';
+  setTimeout(() => {
+    if (service.state !== 'starting') return; // stopped meanwhile
+    service.state = 'stopped';
+    service.restarts++;
+    startService({ persist: false });
+  }, 1000).unref();
+}
+
+function collectInWorker(root, known, status) {
+  return new Promise((resolve, reject) => {
+    if (!service.child) return reject(cancelled());
+    const jobId = ++jobSeq;
+    activeWorkerJob = { jobId, resolve, reject, status };
+    status.worker = service.pid;
+    service.child.send({ type: 'scan', jobId, root, known });
+  });
+}
+
+function collect(lib, known, status) {
+  if (service.mode === 'inline') {
+    status.mode = 'server';
+    return core.collect(lib.root, known, p => { status.filesSeen = p.filesSeen; status.analyzed = p.analyzed; });
+  }
+  status.mode = 'worker';
+  return collectInWorker(lib.root, known, status);
+}
+
 /* ---------------- applying a scan to the database ---------------- */
-async function runScan(libraryId, status) {
+async function runScan(job) {
+  const { libraryId, status } = job;
   const lib = store.db.libraries[libraryId];
   if (!lib) throw Object.assign(new Error('Library not found'), { status: 404, code: 'notFound' });
   const started = Date.now();
   try {
-    // What the database already knows, so the worker only re-reads new or changed files
+    // What the database already knows, so the worker only re-reads new or changed files.
+    // A full scan sends nothing, so every file is read again.
     const known = {};
-    for (const b of Object.values(store.db.books)) {
-      if (b.libraryId === libraryId) known[b.relPath] = [b.size, b.fileModified];
+    if (!job.full) {
+      for (const b of Object.values(store.db.books)) {
+        if (b.libraryId === libraryId) known[b.relPath] = [b.size, b.fileModified];
+      }
     }
     const found = await collect(lib, known, status);
     if (!store.db.libraries[libraryId]) throw Object.assign(new Error('Library was removed'), { code: 'notFound' });
@@ -193,7 +277,7 @@ async function runScan(libraryId, status) {
 
     store.reindex();
     lib.lastScan = {
-      at: new Date().toISOString(), durationMs: Date.now() - started, mode: status.mode,
+      at: new Date().toISOString(), durationMs: Date.now() - started, mode: status.mode, full: Boolean(job.full),
       series: seenSeries.size, books: seenBooks.size, added, updated, removed,
       unsupported: found.unsupported.length, unsupportedExamples: found.unsupported.slice(0, 5),
       errors: found.errors.slice(0, 20),
@@ -204,6 +288,7 @@ async function runScan(libraryId, status) {
     console.log(`[library] scanned "${lib.name}": ${seenSeries.size} series, ${seenBooks.size} books (+${added} new, ${updated} changed, ${removed} removed) in ${Date.now() - started} ms`);
     return lib.lastScan;
   } catch (e) {
+    if (e.code === 'cancelled') throw e; // stopped from the Processes page: not an error, it runs again later
     if (store.db.libraries[libraryId]) {
       lib.scanError = e.code === 'ENOENT' ? 'folderNotFound' : (e.code === 'EACCES' || e.code === 'EPERM') ? 'folderNoAccess' : e.message;
       store.saveLibrary();
@@ -215,40 +300,62 @@ async function runScan(libraryId, status) {
 
 /* ---------------- the queue: one scan at a time ---------------- */
 const queue = [];
-let running = false;
+let currentJob = null;
 
-function scanLibrary(libraryId) {
+// full: re-read every file (otherwise only new and changed files are read)
+function scanLibrary(libraryId, { full = false } = {}) {
   if (!store.db.libraries[libraryId]) return Promise.reject(Object.assign(new Error('Library not found'), { status: 404, code: 'notFound' }));
   const existing = scanning.get(libraryId);
   if (existing) {
-    // Already queued: nothing to do. Already running: run once more afterwards (settings may have changed).
-    if (!existing.queued) existing.again = true;
+    // Waiting in line: a full scan request upgrades it. Running: run once more afterwards
+    // (settings may have changed), as a full scan if one was asked for.
+    const waiting = queue.find(j => j.libraryId === libraryId);
+    if (waiting) { waiting.full = waiting.full || full; existing.full = waiting.full; }
+    else { existing.again = true; existing.againFull = existing.againFull || full; }
     return Promise.resolve({ alreadyScheduled: true });
   }
-  const status = { queued: true, filesSeen: 0, analyzed: 0 };
+  const status = { queued: true, full, filesSeen: 0, analyzed: 0 };
   scanning.set(libraryId, status);
   return new Promise((resolve, reject) => {
-    queue.push({ libraryId, status, resolve, reject });
+    queue.push({ libraryId, full, status, resolve, reject });
     pump();
   });
 }
 
 async function pump() {
-  if (running || !queue.length) return;
-  running = true;
-  const job = queue.shift();
-  job.status.queued = false;
-  job.status.startedAt = new Date().toISOString();
-  try {
-    job.resolve(await runScan(job.libraryId, job.status));
-  } catch (e) {
-    job.reject(e);
-  } finally {
+  if (currentJob || !queue.length || service.state !== 'running') return;
+  const job = currentJob = queue.shift();
+  Object.assign(job.status, { queued: false, startedAt: new Date().toISOString(), filesSeen: 0, analyzed: 0 });
+  let result, error;
+  try { result = await runScan(job); } catch (e) { error = e; }
+  currentJob = null;
+  if (error && error.code === 'cancelled') {
+    // Service stopped: back to the front of the line, to run when it starts again
+    Object.assign(job.status, { queued: true, startedAt: null, filesSeen: 0, analyzed: 0 });
+    queue.unshift(job);
+  } else {
     scanning.delete(job.libraryId);
-    running = false;
-    if (job.status.again && store.db.libraries[job.libraryId]) scanLibrary(job.libraryId).catch(() => {});
-    pump();
+    if (error) job.reject(error); else job.resolve(result);
+    if (job.status.again && store.db.libraries[job.libraryId]) scanLibrary(job.libraryId, { full: job.status.againFull }).catch(() => {});
   }
+  pump();
+}
+
+// What the Processes page shows
+function serviceInfo() {
+  const name = id => (store.db.libraries[id] || {}).name || '';
+  return {
+    mode: service.mode, state: service.state, enabled: serviceEnabled(),
+    pid: service.pid, startedAt: service.startedAt, restarts: service.restarts, lastError: service.lastError, stats: service.stats,
+    current: currentJob ? { libraryId: currentJob.libraryId, name: name(currentJob.libraryId), full: Boolean(currentJob.full),
+      startedAt: currentJob.status.startedAt, filesSeen: currentJob.status.filesSeen, analyzed: currentJob.status.analyzed } : null,
+    queue: queue.map(j => ({ libraryId: j.libraryId, name: name(j.libraryId), full: Boolean(j.full) }))
+  };
+}
+
+// On server start: start the service unless an admin stopped it
+function init() {
+  if (serviceEnabled()) startService({ persist: false });
 }
 
 // Scan every library now, and again every N minutes (settings.scanIntervalMinutes; 0 = never)
@@ -262,4 +369,8 @@ function startSchedule() {
   if (minutes > 0) timer = setInterval(scanAll, minutes * 60 * 1000).unref();
 }
 
-module.exports = { scanLibrary, scanAll, startSchedule, scanning, imageEntries, IMAGE_TYPES, BOOK_EXT, parseComicInfo, oneshotSettings, normalizeOneshotFolder };
+module.exports = {
+  scanLibrary, scanAll, startSchedule, init, scanning, imageEntries, IMAGE_TYPES, BOOK_EXT, parseComicInfo,
+  oneshotSettings, normalizeOneshotFolder,
+  startService, stopService, restartService, serviceInfo, serviceState: () => service.state
+};

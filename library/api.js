@@ -35,7 +35,13 @@ function libraryView(lib, user) {
   const series = Object.values(db.series).filter(s => s.libraryId === lib.id).length;
   const books = Object.values(db.books).filter(b => b.libraryId === lib.id).length;
   const v = { id: lib.id, name: lib.name, seriesCount: series, booksCount: books, scanning: scanner.scanning.has(lib.id) };
-  if (isAdmin(user)) Object.assign(v, { root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, scanProgress: scanner.scanning.get(lib.id) || null, oneshots: scanner.oneshotSettings(lib) });
+  if (isAdmin(user)) {
+    const progress = scanner.scanning.get(lib.id);
+    Object.assign(v, {
+      root: lib.root, created: lib.created, lastScan: lib.lastScan || null, scanError: lib.scanError || null, oneshots: scanner.oneshotSettings(lib),
+      scanProgress: progress ? Object.assign({}, progress, { serviceStopped: progress.queued && scanner.serviceState() !== 'running' }) : null
+    });
+  }
   return v;
 }
 
@@ -311,8 +317,9 @@ async function handle(ctx) {
   if ((m = /^\/api\/libraries\/([\w-]+)\/scan$/.exec(p)) && method === 'POST') {
     requireAdmin();
     if (!db.libraries[m[1]]) throw httpError(404, 'notFound');
-    scanner.scanLibrary(m[1]).catch(() => {});
-    return send(202, { library: libraryView(db.libraries[m[1]], user) });
+    // { full: true } re-reads every file; otherwise only new and changed files are read
+    scanner.scanLibrary(m[1], { full: body.full === true }).catch(() => {});
+    return send(202, { library: libraryView(db.libraries[m[1]], user), serviceRunning: scanner.serviceState() === 'running' });
   }
   if (p === '/api/library-settings') {
     requireAdmin();

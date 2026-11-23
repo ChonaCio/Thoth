@@ -92,10 +92,23 @@ one-shot files alike. If a version is detected wrongly, an administrator can set
   Work [Raw]/                ← Raw tab
 ```
 
-**Scanning runs in its own process.** Walking folders and opening archives happens in a separate Node
-process with the lowest CPU priority, so browsing and reading stay fast during big scans. Libraries are
-scanned one at a time (others show *Waiting…*). If that process can't be started, the scan runs inside the
-server instead; set `THOTH_SCAN_IN_PROCESS=1` to force that.
+**Two kinds of scan.** *Scan changes* reads only new and changed files (by size and modification time)
+and removes books whose files are gone; it's what automatic scans do. *Full scan* reads every file again,
+which is slower but fixes anything that looks wrong. Both are on the **Manage libraries** page.
+
+**Scanning runs in its own process: the scan service.** Walking folders and opening archives happens in a
+long-running Node process with the lowest CPU priority, so browsing and reading stay fast during big scans.
+Libraries are scanned one at a time (others show *Waiting…*). If the process can't be started, scans run
+inside the server instead; set `THOTH_SCAN_IN_PROCESS=1` to force that.
+
+**Processes page (administrators).** Shows the web server and the scan service: process ID, uptime,
+memory, CPU time, what's being scanned and what's waiting.
+- **Scan service: Start / Stop / Restart.** Stopping cancels the scan in progress (it starts over later);
+  scans requested while stopped wait in line. A stopped service stays stopped across server restarts until
+  you start it. If the service crashes it restarts by itself, and gives up after 3 crashes in a minute.
+- **Restart server** works when the server runs under systemd or Docker (they start it again).
+- When the server code on disk is newer than the running server (after an update or `git pull`),
+  administrators see a notice asking to restart.
 
 The library page shows scan results: new/changed/removed books, files skipped for unsupported formats,
 and books that couldn't be opened. Removing a library from Thoth never deletes files.

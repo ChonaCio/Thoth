@@ -356,6 +356,35 @@ function walk(dir, base = dir, out = []) {
   return out;
 }
 
+// Code the running server has loaded: changing it only takes effect after a restart.
+// (index.html, css/ and js/ are sent to browsers fresh on every load; deploy/ and scripts/ aren't loaded.)
+const BROWSER_OR_TOOLING = new Set(['js', 'css', 'deploy', 'scripts']);
+function isServerCode(rel) {
+  const parts = rel.split(/[\\/]/);
+  if (parts.length > 1 && BROWSER_OR_TOOLING.has(parts[0])) return false;
+  return /\.(js|cjs|mjs|json)$/i.test(rel);
+}
+
+// Fingerprint of the server code on disk (names, sizes, modification times)
+function serverCodeFingerprint() {
+  const out = [];
+  const visit = dir => {
+    let entries = [];
+    try { entries = fs.readdirSync(path.join(ROOT, dir), { withFileTypes: true }); } catch { return; }
+    for (const e of entries) {
+      const rel = dir ? path.join(dir, e.name) : e.name;
+      if (e.isDirectory()) {
+        if (!dir && (BROWSER_OR_TOOLING.has(e.name) || PROTECTED.has(e.name) || e.name.startsWith('.') || e.name === 'media')) continue;
+        visit(rel);
+      } else if (isServerCode(rel)) {
+        try { const st = fs.statSync(path.join(ROOT, rel)); out.push(`${rel}:${st.size}:${st.mtimeMs}`); } catch { /* vanished */ }
+      }
+    }
+  };
+  visit('');
+  return out.sort().join('|');
+}
+
 async function install(channel, tag) {
   if (installing) throw httpError(409, 'busy', 'An update is already being installed.');
   installing = true;
@@ -392,10 +421,10 @@ async function install(channel, tag) {
         const before = fs.readFileSync(dst);
         const after = fs.readFileSync(src);
         if (before.equals(after)) continue;
-        if (rel === 'server.js' || rel === 'updater.js' || rel === 'package.json') serverChanged = true;
+        if (isServerCode(rel)) serverChanged = true;
         fs.mkdirSync(path.dirname(path.join(backup, rel)), { recursive: true });
         fs.writeFileSync(path.join(backup, rel), before);
-      } else if (rel === 'server.js' || rel === 'updater.js') {
+      } else if (isServerCode(rel)) {
         serverChanged = true;
       }
       fs.mkdirSync(path.dirname(dst), { recursive: true });
@@ -430,4 +459,4 @@ function httpError(status, code, message) {
   return e;
 }
 
-module.exports = { resolveVersion, runningCommit, readGitHead, check, install, extractTarGz, compareRelease, parsePush, REPO };
+module.exports = { resolveVersion, runningCommit, readGitHead, check, install, extractTarGz, compareRelease, parsePush, isServerCode, serverCodeFingerprint, REPO };

@@ -17,7 +17,11 @@ const PORT = Number(process.env.PORT) || 3000;
 // 0.0.0.0 = reachable from other devices (needed in containers/headless servers).
 // Set HOST=127.0.0.1 to allow only this machine.
 const HOST = process.env.HOST || '0.0.0.0';
-const SELF_RESTART = process.env.THOTH_SELF_RESTART === '1';
+const SELF_RESTART = process.env.THOTH_SELF_RESTART === '1'; // set by systemd unit / Docker image
+const STARTED_AT = new Date().toISOString();
+// What the server code on disk looked like when this process started; if it changes (an update or a
+// git pull), the running server is out of date until it's restarted
+const CODE_AT_START = updater.serverCodeFingerprint();
 const ROOT = __dirname;
 const TYPES = {
   '.html': 'text/html; charset=utf-8',
@@ -106,6 +110,36 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    // ---- processes: the web server and the library scan service (administrators) ----
+    if (url.pathname === '/api/processes' && method === 'GET') {
+      auth.requireAdmin(req);
+      const m = process.memoryUsage();
+      return sendJson(res, 200, {
+        server: {
+          pid: process.pid, startedAt: STARTED_AT, rss: m.rss, heapUsed: m.heapUsed,
+          cpuMs: Math.round((process.cpuUsage().user + process.cpuUsage().system) / 1000),
+          node: process.version, platform: `${os.type()} ${os.release()} (${process.arch})`,
+          supervised: SELF_RESTART, restartNeeded: updater.serverCodeFingerprint() !== CODE_AT_START
+        },
+        scanService: scanner.serviceInfo()
+      });
+    }
+    let pm;
+    if ((pm = /^\/api\/processes\/scan-service\/(start|stop|restart)$/.exec(url.pathname)) && method === 'POST') {
+      const { user } = auth.requireAdmin(req);
+      ({ start: scanner.startService, stop: scanner.stopService, restart: scanner.restartService })[pm[1]]();
+      console.log(`[processes] scan service ${pm[1]} by ${user.username}`);
+      return sendJson(res, 200, { scanService: scanner.serviceInfo() });
+    }
+    if (url.pathname === '/api/processes/server/restart' && method === 'POST') {
+      const { user } = auth.requireAdmin(req);
+      if (!SELF_RESTART) return sendJson(res, 409, { error: 'notSupervised', message: 'The server is not running under systemd or Docker.' });
+      console.log(`[processes] server restart by ${user.username}`);
+      sendJson(res, 202, { restarting: true });
+      setTimeout(shutdown, 300);
+      return;
+    }
+
     // ---- libraries, series, books, reading (signed-in users) ----
     const { user } = auth.requireUser(req);
     const handled = await library.handle({
@@ -170,6 +204,7 @@ server.listen(PORT, HOST, () => {
   // Pick up changes made while the server was off, then rescan on the configured interval
   const libs = Object.keys(libraryStore.db.libraries).length;
   console.log(`Libraries: ${libs}${libs ? ' (scanning for changes)' : ' (add one on the Libraries page)'}`);
+  scanner.init();      // start the scan service (unless an admin stopped it)
   scanner.scanAll();
   scanner.startSchedule();
 });

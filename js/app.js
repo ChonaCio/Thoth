@@ -10,6 +10,7 @@
     collections: {}, collection: {}, readlists: {}, readlist: {},
     settings: { key: 'nav.settings' },
     'manage-libraries': { adminOnly: true },
+    processes: { adminOnly: true },
     users: { adminOnly: true, key: 'nav.users' },
     updates: { adminOnly: true, key: 'nav.updates' }
   };
@@ -125,6 +126,16 @@
     renderAll();
     onRouteEnter();
     refreshLibraries();
+    // Admins: is the running server older than its code on disk?
+    if (isAdmin()) {
+      Store.request('GET', '/api/processes').then(function (r) { setRestartNeeded(r.server.restartNeeded); }, function () {});
+    }
+  }
+
+  function setRestartNeeded(needed) {
+    var changed = Boolean(needed) !== Boolean(state.restartNeeded);
+    state.restartNeeded = Boolean(needed);
+    if (changed && state.user && currentRoute() !== 'processes') { renderPage(); applyTranslations(); }
   }
 
   // Libraries shown in the sidebar (only the ones this user may see)
@@ -258,6 +269,7 @@
     items.push({ divider: true });
     if (isAdmin()) {
       items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
+      items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });
       items.push({ href: '#updates', icon: 'update', key: 'nav.updates' });
     }
@@ -492,6 +504,11 @@
       html = renderUsersPage();
     }
     if (!title && ROUTES[route] && ROUTES[route].key) title = t(ROUTES[route].key);
+    // Admins: the server code on disk is newer than the running server (after an update or git pull)
+    if (state.restartNeeded && isAdmin() && route !== 'processes') {
+      html = '<div class="banner banner--info"><span>' + esc(t('proc.restartNeeded')) + '</span>' +
+        '<a class="btn btn--primary" href="#processes">' + esc(t('proc.restartNeededLink')) + '</a></div>' + (html || '');
+    }
     $('#content').innerHTML = html || '';
     if (route === 'users') renderUsersTable();
     if (libPage && libPage.mount) libPage.mount($('#content'), info);
@@ -1021,7 +1038,7 @@
   window.App = {
     state: state, t: t, esc: esc, errMsg: errMsg, toast: toast, fmtDate: fmtDate,
     isAdmin: isAdmin, parseRoute: parseRoute, renderPage: renderPage, refreshLibraries: refreshLibraries,
-    applyTranslations: applyTranslations,
+    applyTranslations: applyTranslations, setRestartNeeded: setRestartNeeded,
     // Re-render only if the user is still on the page that asked for it
     rerenderIf: function (hash) { if (state.user && location.hash === hash) { renderPage(); applyTranslations(); } }
   };

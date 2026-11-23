@@ -319,6 +319,17 @@ a { color: var(--primary); text-decoration: none; }
 .banner p { margin: 4px 0 0; }
 .banner--ok { background: var(--ok-soft); color: var(--ok); }
 .banner--error { background: var(--danger-soft); color: var(--danger); }
+.banner--info { background: var(--primary-soft); color: var(--on-primary-soft); }
+
+/* Processes page */
+.proc-card { gap: 12px; }
+.proc-card__head { display: flex; align-items: center; gap: 12px; }
+.proc-card__head .card__title { margin: 0 0 4px; }
+.proc-facts { grid-template-columns: max-content 1fr; }
+.proc-facts dd { overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.proc-sub { margin: 4px 0 0; font-size: 13px; font-weight: 500; color: var(--text-muted); }
+.proc-queue { margin: 0; padding-left: 20px; }
+.proc-card .notice { align-items: flex-start; }
 
 /* ---- Users ---- */
 .login-card__hint--top { margin: 0 0 20px; text-align: left; }
