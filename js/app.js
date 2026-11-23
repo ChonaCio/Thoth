@@ -122,6 +122,7 @@
     applyTheme();
     $('#login-view').hidden = true;
     $('#app-view').hidden = false;
+    sizeTiles();
     $('#auth-form').reset();
     if (!location.hash) history.replaceState(null, '', '#home');
     markHistoryEntry();
@@ -250,6 +251,32 @@
     };
   }
   function currentRoute() { return parseRoute().name; }
+
+  /* ---------------- tile size ----------------
+   * Tiles fill the content area exactly: as many columns as fit at the screen's preferred tile size (larger
+   * screens, larger tiles), stretched to use the whole width. Set once on :root, so every grid and shelf on
+   * every page uses the same size; recalculated when the window or the sidebar changes. */
+  function sizeTiles() {
+    var content = $('#content');
+    if (!content || !content.clientWidth) return;
+    var cs = getComputedStyle(content);
+    var width = content.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    var vw = window.innerWidth;
+    var gap = vw <= 600 ? 12 : vw >= 1800 ? 24 : 20;
+    var preferred = vw <= 600 ? 140 : vw <= 1100 ? 160 : vw <= 1600 ? 175 : vw <= 2200 ? 195 : 215;
+    var cols = Math.max(2, Math.floor((width + gap) / (preferred + gap)));
+    var tile = Math.floor((width - gap * (cols - 1)) / cols);
+    var root = document.documentElement.style;
+    root.setProperty('--tile-cols', cols);
+    root.setProperty('--tile-w', tile + 'px');
+    root.setProperty('--tile-gap', gap + 'px');
+  }
+  if (window.ResizeObserver) {
+    var tileObserver = new ResizeObserver(function () { sizeTiles(); });
+    document.addEventListener('DOMContentLoaded', function () { var c = $('#content'); if (c) tileObserver.observe(c); sizeTiles(); });
+    if (document.readyState !== 'loading') { var c0 = $('#content'); if (c0) tileObserver.observe(c0); }
+  }
+  window.addEventListener('resize', sizeTiles);
 
   /* ---------------- scroll position per history entry ----------------
    * Every history entry gets a key (history.state.k). The scroll position is remembered per key. A new entry

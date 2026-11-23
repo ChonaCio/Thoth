@@ -500,6 +500,27 @@ async function handle(ctx) {
         const list = (Array.isArray(body[k]) ? body[k] : String(body[k] || '').split(',')).map(t => clean(t, 40)).filter(Boolean).slice(0, 50);
         if (list.length) o[k] = list; else delete o[k];
       }
+      if ('year' in body) {
+        const y = String(body.year == null ? '' : body.year).trim();
+        if (y && !/^\d{4}$/.test(y)) throw httpError(400, 'invalid');
+        if (y) o.year = Number(y); else delete o.year;
+      }
+      if ('altTitles' in body) {
+        // One per line (titles can contain commas)
+        const list = (Array.isArray(body.altTitles) ? body.altTitles : String(body.altTitles || '').split(/\r?\n|;/)).map(t => clean(t, 200)).filter(Boolean).slice(0, 20);
+        if (list.length) o.altTitles = list; else delete o.altTitles;
+      }
+      if ('authors' in body) {
+        // Names; a name already credited keeps its role(s), a new one is a writer
+        const names = (Array.isArray(body.authors) ? body.authors : String(body.authors || '').split(',')).map(t => clean(t, 120)).filter(Boolean).slice(0, 30);
+        const current = store.seriesMeta(s).authors;
+        const list = [];
+        for (const n of names) {
+          const known = current.filter(a => a.name.toLowerCase() === n.toLowerCase());
+          if (known.length) known.forEach(a => list.push({ name: n, role: a.role })); else list.push({ name: n, role: 'writer' });
+        }
+        if (list.length) o.authors = list; else delete o.authors;
+      }
       s.overrides = o;
       s.updated = new Date().toISOString();
       store.saveLibrary();
@@ -529,6 +550,36 @@ async function handle(ctx) {
     if (!cover) throw httpError(404, 'noCover');
     await sendPage(req, res, cover, 1);
     return true;
+  }
+
+  // ---- a work's cover (admins, Edit dialog) ----
+  // GET  /api/series/:id/covers                 → { current, candidates: [{ id, kind, … }] }
+  // GET  /api/series/:id/cover-candidate?id=…   → the image of a candidate stored on this server (preview)
+  // POST /api/series/:id/cover { choice } | { upload: 'data:image/…;base64,…' }
+  if ((m = /^\/api\/series\/([\w-]+)\/(covers|cover-candidate|cover)$/.exec(p))) {
+    requireAdmin();
+    const s = getSeries(user, m[1]);
+    // ?search=1: also ask the online sites that weren't asked during the lookup (slower)
+    if (m[2] === 'covers' && method === 'GET') return send(200, await metadata.coverCandidates(s, { search: q.get('search') === '1' }));
+    if (m[2] === 'cover-candidate' && method === 'GET') {
+      // A site's cover: fetched by the server (some sites refuse images shown on other pages; the browser
+      // also never contacts the sites), kept in memory for a while
+      if (/^online:/.test(q.get('id') || '')) {
+        const img = await metadata.onlineCandidateImage(s, q.get('id'));
+        if (!img) throw httpError(404, 'notFound');
+        await sendImage(req, res, img.buf, img.type, `"${s.id}-${q.get('id')}-${img.buf.length}"`);
+        return true;
+      }
+      const file = metadata.candidateFile(s, q.get('id'));
+      const buf = file && await fs.promises.readFile(file).catch(() => null);
+      if (!buf) throw httpError(404, 'notFound');
+      await sendImage(req, res, buf, metadata.IMAGE_EXTS[path.extname(file).toLowerCase()] || 'application/octet-stream', `"${s.id}-cand-${buf.length}"`);
+      return true;
+    }
+    if (m[2] === 'cover' && method === 'POST') {
+      await metadata.chooseCover(s, { choice: body.choice, upload: body.upload });
+      return send(200, { series: store.seriesView(s, user, { admin }) });
+    }
   }
 
   // ---- deleting works (admins) ----

@@ -421,12 +421,16 @@ a { color: var(--primary); text-decoration: none; }
 .cover__layer--1 { transform: translate(6px, -6px) scale(.96); opacity: .7; }
 .cover__layer--2 { transform: translate(12px, -12px) scale(.92); opacity: .45; }
 
-/* Card grids & shelves: every work/book tile has the same width (--tile-w) and the same height (two title
-   lines and one subtitle line are always reserved), on every page and in every library */
-:root { --tile-w: 160px; --tile-gap: 20px; }
-@media (max-width: 600px) { :root { --tile-w: 148px; --tile-gap: 12px; } }
-.media-grid { display: grid; gap: var(--tile-gap); grid-template-columns: repeat(auto-fill, var(--tile-w)); justify-content: start; }
-.media-card { position: relative; min-width: 0; width: var(--tile-w); }
+/* Card grids & shelves: tiles fill the content width exactly. js/app.js (sizeTiles) works out from the
+   content width how many columns fit (bigger tiles on bigger screens) and sets --tile-cols and --tile-w,
+   so every grid and shelf on every page and in every library uses the same tile size. Each tile reserves
+   two title lines and one subtitle line, so all tiles are the same height. (The values below are only the
+   starting point before the script runs.) */
+:root { --tile-cols: 6; --tile-w: 160px; --tile-gap: 20px; }
+@media (max-width: 600px) { :root { --tile-cols: 2; --tile-w: 148px; --tile-gap: 12px; } }
+html { scrollbar-gutter: stable; } /* same content width whether or not the page scrolls */
+.media-grid { display: grid; gap: var(--tile-gap); grid-template-columns: repeat(var(--tile-cols), minmax(0, 1fr)); }
+.media-card { position: relative; min-width: 0; }
 .media-card__link { display: block; color: var(--text); border-radius: 10px; }
 .media-card__link:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
 .media-card__link:hover .cover { box-shadow: 0 4px 14px rgba(0,0,0,.25); }
@@ -479,6 +483,18 @@ a { color: var(--primary); text-decoration: none; }
 a.chip--filter { text-decoration: none; }
 a.chip--filter:hover { background: var(--hover); color: var(--text); }
 .chip--genre { background: var(--primary-soft); color: var(--on-primary-soft); }
+
+/* ---- Cover picker (work Edit dialog) ---- */
+.cover-picker { display: grid; gap: 10px; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); max-height: 330px; overflow-y: auto; padding: 2px; }
+.cover-pick { display: flex; flex-direction: column; gap: 4px; padding: 4px; border: 2px solid transparent; border-radius: 10px; background: none; color: var(--text); cursor: pointer; font: inherit; text-align: center; min-width: 0; }
+.cover-pick:hover { background: var(--hover); }
+.cover-pick.is-selected { border-color: var(--primary); background: var(--primary-soft); }
+.cover-pick__img { display: flex; align-items: center; justify-content: center; aspect-ratio: 2 / 3; border-radius: 6px; overflow: hidden; background: var(--bg-alt); color: var(--text-muted); }
+.cover-pick__img img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.cover-pick__label { font-size: 11px; line-height: 1.3; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cover-pick.is-selected .cover-pick__label { color: var(--on-primary-soft); font-weight: 500; }
+.cover-picker__actions { display: flex; gap: 8px; margin-top: 6px; }
+.cover-picker__upload { cursor: pointer; }
 
 /* ---- Advanced search (library pages) ---- */
 .adv-active { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }

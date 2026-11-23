@@ -161,6 +161,23 @@ function seriesMeta(s) {
     altTitles: Array.isArray(m.altTitles) ? m.altTitles : []
   };
 }
+// Where each shown value of a work comes from (for the Edit dialog): { field: { kind, name? } } with kind
+// 'edit' (an administrator's), 'folder' (a folder source, name), 'files' (ComicInfo.xml), 'online' (a site
+// id in name) or 'books' (taken from its books). Same precedence as seriesMeta.
+const EDIT_FIELDS = ['title', 'sortTitle', 'summary', 'status', 'publisher', 'type', 'year', 'genres', 'tags', 'altTitles', 'authors', 'readingDirection'];
+function fieldSources(s) {
+  const has = v => v != null && v !== '' && !(Array.isArray(v) && !v.length);
+  const o = s.overrides || {}, l = (s.local && s.local.merged) || {}, f = s.meta || {}, p = (s.provider && s.provider.merged) || {};
+  const out = {};
+  for (const k of EDIT_FIELDS) {
+    if (has(o[k])) out[k] = { kind: 'edit' };
+    else if (has(l[k])) out[k] = { kind: 'folder', name: ((db.metadataSources[(s.local.fields || {})[k]] || {}).name) || '' };
+    else if (has(f[k])) out[k] = { kind: 'files' };
+    else if (has(p[k]) && k !== 'title') out[k] = { kind: 'online', name: ((s.provider.sources || {})[k]) || '' };
+    else if ((k === 'year' || k === 'authors') && has(fromBooks(s)[k])) out[k] = { kind: 'books' };
+  }
+  return out;
+}
 // The earliest release year and the authors (up to 12) of a work's books
 function fromBooks(s) {
   let year = null;
@@ -285,10 +302,11 @@ function seriesView(s, user, { admin = false } = {}) {
     hidden: s.hidden ? { at: s.hidden.at, by: admin ? s.hidden.by : undefined } : null,
     localSources: s.local ? (s.local.sourceIds || []).map(id => ({ id, name: (db.metadataSources[id] || {}).name || id })) : [],
     localCover: Boolean(s.local && s.local.coverPath),
+    customCover: s.customCover ? { from: s.customCover.from, at: s.customCover.at } : null,
     localFile: admin && s.local ? s.local.file || null : undefined,
     overrides: s.overrides || {}
   }, seriesCounts(s, user));
-  if (admin) v.path = s.relPath;
+  if (admin) { v.path = s.relPath; v.fieldSources = fieldSources(s); }
   if (online) v.coverV = metadataCover(s).version;
   return v;
 }
@@ -296,12 +314,15 @@ function seriesView(s, user, { admin = false } = {}) {
 // The cover image a work's metadata offers: a folder source's image (e.g. "One Piece.jpg" next to its
 // JSON) first, else the one downloaded from an online site. { file (absolute path), version } or null.
 function metadataCover(s) {
+  // A cover chosen or uploaded in the work's Edit dialog always wins
+  if (s.customCover && s.customCover.file) return { file: path.join(DATA_DIR, 'covers', s.customCover.file), version: Math.round(Date.parse(s.customCover.at || 0) / 1000), source: 'custom' };
   if (s.local && s.local.coverPath) return { file: s.local.coverPath, version: s.local.coverVersion || 0, source: 'local' };
   if (s.provider && s.provider.coverFile) return { file: path.join(DATA_DIR, 'covers', s.provider.coverFile), version: Math.round(Date.parse(s.provider.fetchedAt || 0) / 1000), source: 'online' };
   return null;
 }
 function coverFromMetadata(s) {
   if (!metadataCover(s)) return false;
+  if (s.customCover && s.customCover.file) return true;
   const choice = (s.overrides || {}).cover; // the work's own choice wins
   if (choice === 'metadata') return true;
   if (choice === 'file') return !(booksBySeries.get(s.id) || []).some(b => b.format === 'cbz' && b.pageCount);

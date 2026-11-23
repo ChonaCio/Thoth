@@ -94,6 +94,16 @@ const byTitle = (items, t) => items.find(s => s.workTitle === t || s.title === t
   ok(manga.some(s => s.workTitle === 'One Piece') && !manga.some(s => s.workTitle === 'Solo Leveling'), 'filter by type');
   ok((await all('&q=oda')).some(s => s.workTitle === 'One Piece'), 'library filter finds works by author name');
 
+  // ---- cover picker: every matched site's cover is a choice ----
+  const cands = (await call('GET', `/api/series/${op.id}/covers?search=1`)).data.candidates; // also asks the sites not asked during the lookup
+  const online = cands.filter(x => x.kind === 'online');
+  ok(online.length >= 2 && online.some(x => x.provider === 'anilist'), `covers of every matched site are offered (${online.map(x => x.provider).join(', ')})`);
+  const pickOnline = online.find(x => x.provider !== 'anilist') || online[0];
+  ok((await call('POST', `/api/series/${op.id}/cover`, { choice: pickOnline.id })).status === 200, `pick ${pickOnline.provider}’s cover`);
+  const opNow = (await call('GET', `/api/series/${op.id}`)).data.series;
+  ok(opNow.coverSource === 'metadata' && opNow.customCover.from === pickOnline.id, 'it is downloaded and used as the work’s own cover');
+  await call('POST', `/api/series/${op.id}/cover`, { choice: 'auto' });
+
   // ---- delta: unchanged results don't count as an update; "Update metadata" only re-checks what needs it ----
   const before = (await call('GET', `/api/series/${sl.id}`)).data.series;
   await wait(1100);

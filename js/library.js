@@ -1388,6 +1388,15 @@
       else if (f.type === 'folder') input = '<div class="folder-input"><input id="' + id + '" name="' + f.name + '" value="' + esc(f.value || '') + '" placeholder="' + esc(f.placeholder || '') + '" spellcheck="false" />' +
         '<button type="button" class="btn btn--outline" data-fd="browse">' + icon('folder_open') + esc(t('manage.browse')) + '</button></div>' +
         '<div class="folder-browser" id="folder-browser" hidden></div>';
+      else if (f.type === 'covers') {
+        // Cover picker: thumbnails of every available image (filled in by loadCoverPicker) + upload
+        return '<div class="field" data-field="' + f.name + '"><span class="field__label">' + esc(f.label) + '</span>' +
+          '<div class="cover-picker" id="cover-picker" role="radiogroup" aria-label="' + esc(f.label) + '">' + spinner + '</div>' +
+          '<input type="hidden" name="' + f.name + '" value="" />' +
+          '<div class="cover-picker__actions"><label class="btn btn--outline btn--small cover-picker__upload">' + icon('add') + esc(t('cover.upload')) +
+            '<input type="file" accept="image/jpeg,image/png,image/webp,image/gif" id="cover-upload" hidden /></label></div>' +
+          (f.help ? '<small class="field__help">' + esc(f.help) + '</small>' : '') + '</div>';
+      }
       else if (f.type === 'providers') {
         // Ordered list: checkbox = use it; arrows = priority (the first match fills each field)
         return '<div class="field" data-field="' + f.name + '"><span class="field__label">' + esc(f.label) + '</span>' +
@@ -1498,20 +1507,46 @@
     return (l && l.defaults) || {};
   }
   function libraryLayoutOf(s) { return libraryDefaultsOf(s).bookLayout || 'tiles'; }
+  // "From AniList", "From the files (ComicInfo.xml)", "Your edit", … for a field of the work's Edit dialog
+  function sourceHint(s, k) {
+    var f = s.fieldSources && s.fieldSources[k];
+    if (!f) return '';
+    return f.kind === 'edit' ? t('src.edit') : f.kind === 'folder' ? t('src.folder', { name: f.name }) : f.kind === 'files' ? t('src.files')
+      : f.kind === 'online' ? t('src.online', { name: providerName(f.name) }) : f.kind === 'books' ? t('src.books') : '';
+  }
   function editSeries(id) {
     var s = cache.series[id].series, o = s.overrides || {};
     var dir = function (v) { return { value: v, label: t('series.direction.' + v) }; };
+    // The form opens with the values the work has now (its own edits, the folder sources, ComicInfo.xml or
+    // the matched online metadata); only fields that are changed are saved, so the rest keep following
+    // their source. Clearing a field goes back to the automatic value.
+    var names = [];
+    (s.authors || []).forEach(function (a) { if (names.indexOf(a.name) === -1) names.push(a.name); });
+    var current = {
+      title: s.title || '', sortTitle: s.sortTitle && s.sortTitle !== s.title ? s.sortTitle : '', summary: s.summary || '', publisher: s.publisher || '',
+      year: s.year ? String(s.year) : '', genres: (s.genres || []).join(', '), tags: (s.tags || []).join(', '),
+      altTitles: (s.altTitles || []).join('\n'), authors: names.join(', ')
+    };
+    var withHint = function (k, help) { var h = sourceHint(s, k); return [h, help].filter(Boolean).join(' · '); };
+    var autoLabel = function (shown) { return t('edit.auto') + (shown ? ' (' + shown + ')' : ''); };
     openForm({
       title: t('edit.seriesTitle'),
-      note: t('edit.blankKeeps'),
+      note: t('edit.prefilledNote'),
       fields: [
-        { name: 'title', label: t('edit.title'), value: o.title || '', placeholder: s.title },
-        { name: 'sortTitle', label: t('edit.sortTitle'), value: o.sortTitle || '', placeholder: s.sortTitle },
-        { name: 'summary', label: t('edit.summary'), type: 'textarea', value: o.summary || '', placeholder: s.summary },
-        { name: 'status', label: t('edit.status'), type: 'select', value: o.status || '', options: [{ value: '', label: t('edit.auto') }].concat(['ongoing', 'ended', 'hiatus', 'abandoned'].map(function (v) { return { value: v, label: t('series.status.' + v) }; })) },
-        { name: 'publisher', label: t('edit.publisher'), value: o.publisher || '', placeholder: s.publisher },
-        { name: 'type', label: t('meta.type'), type: 'select', value: o.type || '',
-          options: [{ value: '', label: t('edit.auto') + (!o.type && s.type ? ' (' + t('type.' + s.type) + ')' : '') }].concat(WORK_TYPES.map(function (ty) { return { value: ty, label: t('type.' + ty) }; })) },
+        { name: 'title', label: t('edit.title'), value: current.title, help: withHint('title') },
+        { name: 'sortTitle', label: t('edit.sortTitle'), value: current.sortTitle, placeholder: s.title },
+        { name: 'altTitles', label: t('edit.altTitles'), type: 'textarea', rows: 2, value: current.altTitles, help: withHint('altTitles', t('edit.onePerLine')) },
+        { name: 'summary', label: t('edit.summary'), type: 'textarea', rows: 5, value: current.summary, help: withHint('summary') },
+        { name: 'authors', label: t('edit.authors'), value: current.authors, help: withHint('authors', t('edit.commas')) },
+        { name: 'year', label: t('edit.year'), value: current.year, help: withHint('year') },
+        { name: 'status', label: t('edit.status'), type: 'select', value: o.status || '', help: withHint('status'),
+          options: [{ value: '', label: autoLabel(s.status && s.status !== 'unknown' ? t('series.status.' + s.status) : '') }].concat(['ongoing', 'ended', 'hiatus', 'abandoned'].map(function (v) { return { value: v, label: t('series.status.' + v) }; })) },
+        { name: 'publisher', label: t('edit.publisher'), value: current.publisher, help: withHint('publisher') },
+        { name: 'type', label: t('meta.type'), type: 'select', value: o.type || '', help: withHint('type'),
+          options: [{ value: '', label: autoLabel(!o.type && s.type ? t('type.' + s.type) : '') }].concat(WORK_TYPES.map(function (ty) { return { value: ty, label: t('type.' + ty) }; })) },
+        { name: 'genres', label: t('edit.genres'), value: current.genres, help: withHint('genres', t('edit.commas')) },
+        { name: 'tags', label: t('edit.tags'), value: current.tags, help: withHint('tags', t('edit.tagsHelp')) },
+        { name: 'coverChoice', label: t('edit.cover'), type: 'covers', help: t('cover.help') },
         // Reading mode: blank = the library's default (a fixed mode) or, if it has none, what was detected
         { name: 'readingDirection', label: t('edit.direction'), type: 'select', value: o.readingDirection || '', help: t('edit.directionHelp'),
           options: [{ value: '', label: s.libraryDirection
@@ -1523,17 +1558,94 @@
         { name: 'bookOrder', label: t('order.label'), type: 'select', value: o.bookOrder || '',
           options: [{ value: '', label: t('edit.libraryDefault', { value: t('order.' + (libraryDefaultsOf(s).bookOrder || 'asc')) }) },
             { value: 'asc', label: t('order.asc') }, { value: 'desc', label: t('order.desc') }] },
-        { name: 'cover', label: t('edit.cover'), type: 'select', value: o.cover || '', help: s.metadata && s.metadata.cover ? '' : t('edit.coverNoDownload'),
-          options: [{ value: '', label: t('edit.coverAuto') }, { value: 'file', label: t('edit.coverFile') }, { value: 'metadata', label: t('edit.coverMetadata') }] },
         { name: 'edition', label: t('edit.edition'), type: 'select', value: o.edition || '', help: t('edit.editionHelp'),
-          options: [{ value: '', label: t('edit.auto') + (o.edition ? '' : ' (' + editionLabel(s.edition) + ')') }].concat(['base', 'colored', 'raw', 'uncensored', 'animated'].map(function (e) { return { value: e, label: editionLabel(e) }; })) },
-        { name: 'genres', label: t('edit.genres'), value: (o.genres || []).join(', '), placeholder: (s.genres || []).join(', '), help: t('edit.tagsHelp') },
-        { name: 'tags', label: t('edit.tags'), value: (o.tags || []).join(', '), placeholder: s.tags.join(', '), help: t('edit.tagsHelp') }
+          options: [{ value: '', label: t('edit.auto') + (o.edition ? '' : ' (' + editionLabel(s.edition) + ')') }].concat(['base', 'colored', 'raw', 'uncensored', 'animated'].map(function (e) { return { value: e, label: editionLabel(e) }; })) }
       ],
       onSubmit: function (v) {
-        return api('PATCH', '/api/series/' + id, v).then(function () { invalidate(); A().toast(t('edit.saved')); refreshCurrent(); });
+        // Only what changed: text fields against the values the form opened with, selects against their start
+        var patch = {};
+        Object.keys(current).forEach(function (k) { if (k in v && v[k] !== current[k].trim()) patch[k] = v[k]; });
+        ['status', 'type', 'readingDirection', 'bookLayout', 'bookOrder', 'edition'].forEach(function (k) { if (k in v && v[k] !== (o[k] || '')) patch[k] = v[k]; });
+        var coverPick = v.coverChoice && v.coverChoice !== coverStart.current ? v.coverChoice : '';
+        var steps = Object.keys(patch).length ? api('PATCH', '/api/series/' + id, patch) : Promise.resolve();
+        return steps.then(function () {
+          if (!coverPick) return;
+          return api('POST', '/api/series/' + id + '/cover', coverPick === 'upload' ? { upload: pendingUpload } : { choice: coverPick });
+        }).then(function () { pendingUpload = null; invalidate(); markStale(cache.series); A().toast(t('edit.saved')); refreshCurrent(); });
       }
     });
+    loadCoverPicker(s);
+  }
+
+  /* Cover picker (work Edit dialog) */
+  var coverStart = { current: 'auto' }, pendingUpload = null;
+  function coverPreview(s, c) {
+    if (c.kind === 'auto') return '';
+    if (c.kind === 'file') return '/api/books/' + c.bookId + '/thumbnail';
+    if (c.kind === 'upload') return pendingUpload;
+    return '/api/series/' + s.id + '/cover-candidate?id=' + encodeURIComponent(c.id) + '&v=' + (s.coverV || 0);
+  }
+  function coverCaption(c) {
+    return c.kind === 'auto' ? t('cover.auto') : c.kind === 'file' ? t('cover.firstPage')
+      : c.kind === 'downloaded' ? (c.provider ? t('cover.downloaded', { name: providerName(c.provider) }) : t('cover.downloadedPlain')) : c.kind === 'online' ? providerName(c.provider)
+      : c.kind === 'local' ? c.sourceName + ' · ' + c.rel : c.kind === 'custom' ? t('cover.custom') : t('cover.uploaded');
+  }
+  function renderCoverPicker(s, list, selected) {
+    var box = $('#cover-picker');
+    if (!box) return;
+    box.innerHTML = list.map(function (c) {
+      var src = coverPreview(s, c);
+      return '<button type="button" class="cover-pick' + (c.id === selected ? ' is-selected' : '') + '" role="radio" aria-checked="' + (c.id === selected) + '" data-pick="' + esc(c.id) + '" title="' + esc(coverCaption(c)) + '">' +
+        '<span class="cover-pick__img">' + (src ? '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="' + esc(src) + '" />' : icon('sync')) + '</span>' +
+        '<span class="cover-pick__label">' + esc(coverCaption(c)) + '</span></button>';
+    }).join('');
+    renderIcons(box);
+    var input = $('#form-dialog-fields input[name="coverChoice"]');
+    if (input) input.value = selected;
+  }
+  function loadCoverPicker(s) {
+    pendingUpload = null;
+    api('GET', '/api/series/' + s.id + '/covers').then(function (r) {
+      coverStart = { current: r.current, list: r.candidates, series: s };
+      renderCoverPicker(s, r.candidates, r.current);
+      // Then ask the online sites that weren't asked during the lookup, and add what they have
+      var status = document.createElement('p');
+      status.className = 'muted small cover-picker__more';
+      status.innerHTML = '<span class="spinner spinner--sm"></span> ' + esc(t('cover.searching'));
+      var box = $('#cover-picker');
+      if (box) box.after(status);
+      return api('GET', '/api/series/' + s.id + '/covers?search=1').then(function (r2) {
+        status.remove();
+        if (coverStart.series !== s || !$('#cover-picker')) return;
+        var input = $('#form-dialog-fields input[name="coverChoice"]');
+        coverStart.list = r2.candidates;
+        pickCover(input && input.value ? input.value : r2.current);
+      }, function () { status.remove(); });
+    }, function (e) { var box = $('#cover-picker'); if (box) box.innerHTML = '<p class="notice notice--error small">' + esc(A().errMsg(e)) + '</p>'; });
+  }
+  function pickCover(id) {
+    if (!coverStart.list) return;
+    var list = coverStart.list.concat(pendingUpload ? [{ id: 'upload', kind: 'upload' }] : []);
+    renderCoverPicker(coverStart.series, list, id);
+  }
+  // An uploaded image is scaled down in the browser (longest side 1600 px) and sent with Save
+  function readCoverFile(file) {
+    if (!file || !/^image\//.test(file.type)) return;
+    var reader = new FileReader();
+    reader.onload = function () {
+      var img = new Image();
+      img.onload = function () {
+        var scale = Math.min(1, 1600 / Math.max(img.width, img.height));
+        var canvas = document.createElement('canvas');
+        canvas.width = Math.round(img.width * scale); canvas.height = Math.round(img.height * scale);
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        pendingUpload = file.type === 'image/png' && file.size < 2 * 1024 * 1024 && scale === 1 ? reader.result : canvas.toDataURL('image/jpeg', 0.9);
+        pickCover('upload');
+      };
+      img.onerror = function () { formError(t('err.notAnImage')); };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
   }
   function editBook(id) {
     var b = cache.book[id].book, o = b.overrides || {};
@@ -1928,8 +2040,13 @@
         $('#identify-error').textContent = A().errMsg(err); $('#identify-error').hidden = false;
       });
     });
-    $('#form-dialog-fields').addEventListener('change', syncShowWhen);
+    $('#form-dialog-fields').addEventListener('change', function (e) {
+      if (e.target.id === 'cover-upload') { readCoverFile(e.target.files && e.target.files[0]); e.target.value = ''; return; }
+      syncShowWhen();
+    });
     $('#form-dialog-fields').addEventListener('click', function (e) {
+      var pick = e.target.closest('[data-pick]');
+      if (pick) return pickCover(pick.dataset.pick);
       var b = e.target.closest('[data-fd]');
       if (!b) return;
       if (b.dataset.fd === 'prov-up' || b.dataset.fd === 'prov-down') {

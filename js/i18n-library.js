@@ -1290,4 +1290,46 @@
     'del.hiddenLink': 'Obras ocultas ({count})', 'del.hiddenTitle': 'Obras ocultas', 'del.hiddenIntro': 'Obras excluídas ocultando-as. Abra uma para restaurá-la.',
     'err.confirmMismatch': 'O título digitado não confere.'
   });
+
+  // Edit dialog with current values, cover picker
+  add('en', {
+    'edit.prefilledNote': 'The fields show the work’s current values, wherever they come from. Change what you need: only changed fields are saved, the rest keep following their source. Clearing a field goes back to the automatic value.',
+    'edit.altTitles': 'Alternative titles', 'edit.onePerLine': 'one per line', 'edit.authors': 'Authors', 'edit.year': 'Year',
+    'src.edit': 'Your edit', 'src.folder': 'From {name}', 'src.files': 'From the files (ComicInfo.xml)', 'src.online': 'From {name}', 'src.books': 'From its books',
+    'cover.help': 'Pick any image found for this work, or upload one. A picked image is saved as the work’s own cover.',
+    'cover.auto': 'Automatic', 'cover.firstPage': 'First page', 'cover.downloaded': 'Downloaded ({name})', 'cover.custom': 'Current own cover', 'cover.uploaded': 'Uploaded image',
+    'cover.upload': 'Upload image', 'cover.downloadedPlain': 'Downloaded', 'edit.commas': 'Separate with commas.', 'cover.searching': 'Looking for more covers on the metadata sites…', 'err.notAnImage': 'That file isn’t an image.', 'err.coverDownloadFailed': 'The site didn’t send that image. Try another one.'
+  });
+  add('es', {
+    'edit.prefilledNote': 'Los campos muestran los valores actuales de la obra, vengan de donde vengan. Cambia lo que necesites: solo se guardan los campos cambiados y el resto sigue su origen. Vaciar un campo vuelve al valor automático.',
+    'edit.altTitles': 'Títulos alternativos', 'edit.onePerLine': 'uno por línea', 'edit.authors': 'Autores', 'edit.year': 'Año',
+    'src.edit': 'Tu edición', 'src.folder': 'De {name}', 'src.files': 'De los archivos (ComicInfo.xml)', 'src.online': 'De {name}', 'src.books': 'De sus libros',
+    'cover.help': 'Elige cualquier imagen encontrada para esta obra o sube una. La imagen elegida se guarda como portada propia de la obra.',
+    'cover.auto': 'Automática', 'cover.firstPage': 'Primera página', 'cover.downloaded': 'Descargada ({name})', 'cover.custom': 'Portada propia actual', 'cover.uploaded': 'Imagen subida',
+    'cover.upload': 'Subir imagen', 'cover.downloadedPlain': 'Descargada', 'edit.commas': 'Separa con comas.', 'cover.searching': 'Buscando más portadas en los sitios de metadatos…', 'err.notAnImage': 'Ese archivo no es una imagen.', 'err.coverDownloadFailed': 'El sitio no envió esa imagen. Prueba otra.'
+  });
+  add('fr', {
+    'edit.prefilledNote': 'Les champs affichent les valeurs actuelles de l’œuvre, d’où qu’elles viennent. Modifiez ce qu’il faut : seuls les champs modifiés sont enregistrés, les autres suivent leur source. Vider un champ revient à la valeur automatique.',
+    'edit.altTitles': 'Titres alternatifs', 'edit.onePerLine': 'un par ligne', 'edit.authors': 'Auteurs', 'edit.year': 'Année',
+    'src.edit': 'Votre modification', 'src.folder': 'Depuis {name}', 'src.files': 'Depuis les fichiers (ComicInfo.xml)', 'src.online': 'Depuis {name}', 'src.books': 'Depuis ses livres',
+    'cover.help': 'Choisissez une image trouvée pour cette œuvre ou envoyez-en une. L’image choisie devient la couverture propre de l’œuvre.',
+    'cover.auto': 'Automatique', 'cover.firstPage': 'Première page', 'cover.downloaded': 'Téléchargée ({name})', 'cover.custom': 'Couverture propre actuelle', 'cover.uploaded': 'Image envoyée',
+    'cover.upload': 'Envoyer une image', 'cover.downloadedPlain': 'Téléchargée', 'edit.commas': 'Séparez par des virgules.', 'cover.searching': 'Recherche d’autres couvertures sur les sites de métadonnées…', 'err.notAnImage': 'Ce fichier n’est pas une image.', 'err.coverDownloadFailed': 'Le site n’a pas envoyé cette image. Essayez-en une autre.'
+  });
+  add('de', {
+    'edit.prefilledNote': 'Die Felder zeigen die aktuellen Werte des Werks, egal woher sie kommen. Ändere, was nötig ist: Nur geänderte Felder werden gespeichert, der Rest folgt weiter seiner Quelle. Ein geleertes Feld kehrt zum automatischen Wert zurück.',
+    'edit.altTitles': 'Alternative Titel', 'edit.onePerLine': 'einer pro Zeile', 'edit.authors': 'Autoren', 'edit.year': 'Jahr',
+    'src.edit': 'Deine Änderung', 'src.folder': 'Aus {name}', 'src.files': 'Aus den Dateien (ComicInfo.xml)', 'src.online': 'Von {name}', 'src.books': 'Aus seinen Büchern',
+    'cover.help': 'Wähle ein für dieses Werk gefundenes Bild oder lade eines hoch. Das gewählte Bild wird als eigenes Cover des Werks gespeichert.',
+    'cover.auto': 'Automatisch', 'cover.firstPage': 'Erste Seite', 'cover.downloaded': 'Heruntergeladen ({name})', 'cover.custom': 'Aktuelles eigenes Cover', 'cover.uploaded': 'Hochgeladenes Bild',
+    'cover.upload': 'Bild hochladen', 'cover.downloadedPlain': 'Heruntergeladen', 'edit.commas': 'Mit Kommas trennen.', 'cover.searching': 'Weitere Cover auf den Metadaten-Seiten werden gesucht…', 'err.notAnImage': 'Diese Datei ist kein Bild.', 'err.coverDownloadFailed': 'Die Seite hat dieses Bild nicht geliefert. Versuche ein anderes.'
+  });
+  add('pt', {
+    'edit.prefilledNote': 'Os campos mostram os valores atuais da obra, venham de onde vierem. Mude o que precisar: só os campos alterados são salvos, o resto continua seguindo a origem. Esvaziar um campo volta ao valor automático.',
+    'edit.altTitles': 'Títulos alternativos', 'edit.onePerLine': 'um por linha', 'edit.authors': 'Autores', 'edit.year': 'Ano',
+    'src.edit': 'Sua edição', 'src.folder': 'De {name}', 'src.files': 'Dos arquivos (ComicInfo.xml)', 'src.online': 'De {name}', 'src.books': 'Dos seus livros',
+    'cover.help': 'Escolha qualquer imagem encontrada para esta obra ou envie uma. A imagem escolhida vira a capa própria da obra.',
+    'cover.auto': 'Automática', 'cover.firstPage': 'Primeira página', 'cover.downloaded': 'Baixada ({name})', 'cover.custom': 'Capa própria atual', 'cover.uploaded': 'Imagem enviada',
+    'cover.upload': 'Enviar imagem', 'cover.downloadedPlain': 'Baixada', 'edit.commas': 'Separe com vírgulas.', 'cover.searching': 'Procurando mais capas nos sites de metadados…', 'err.notAnImage': 'Esse arquivo não é uma imagem.', 'err.coverDownloadFailed': 'O site não enviou essa imagem. Tente outra.'
+  });
 })();

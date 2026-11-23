@@ -4,7 +4,7 @@ Read this before changing anything. **Keep it up to date**: whenever a change la
 sections it touches (what exists, conventions, known gaps, recent changes). User-facing documentation
 lives in [README.md](README.md); this file is for whoever develops Thoth next.
 
-_Last updated: 2026-11-23 (advanced search, deleting works, page cache, chapter order, JSON lists in memory)_
+_Last updated: 2026-11-23 (full-width responsive tiles, Edit dialog with current values, cover picker)_
 
 ## What Thoth is
 
@@ -55,6 +55,7 @@ from GitHub (`ChonaCio/Thoth`).
 - `series[id]` (one per folder, or per loose file = one-shot): `{ id, libraryId, relPath, name, oneshot, meta (from ComicInfo), overrides (admin edits: title, summary, status, type, readingDirection, bookLayout, cover: 'file'|'metadata', edition, genres, tags, …), provider (online: { merged, sources, matches, links, locked, coverFile, coverUrl, coverProvider, errors, fetchedAt (last change), checkedAt (last check) }), local (folder sources: { merged, fields, sourceIds, file, coverPath, coverVersion }) }`
 - `books[id]`: `{ id, seriesId, libraryId, relPath, fileName, format, pageCount, size, fileModified, meta, local ({ merged, sourceId, file }), overrides, index, readVersion }`
 - Works can be hidden: `series.hidden = { at, by }` (logical delete). `api.js` filters hidden works/books out of every list for everyone (`shown`/`bookShown`); admins open them and list them with `?deleted=1`. Physical delete: `deleteWorkFiles` (unlink inside the library folder only, empty folder removed, failures reported).
+- `series.customCover = { file, from ('upload' | 'online:<site>' | 'local:<source>:<path>'), at }`: the cover picked in the Edit dialog (`data/covers/custom-<id>-<t>.<ext>`); removed with the work.
 - `metadataSources[id]` (folder sources): `{ id: 'folder-…', name, folder (absolute), match: 'path'|'name', created, updated }`. `s.local`/`b.local` are recomputed from the JSON files by `applyLocal` (after every scan, Refresh, source/library changes), so they can always be thrown away.
 - `data/scan-index/<library>.json` (not in library.json): `{ version: 1, root, dirs: { relDir: { mtimeMs, files: [[name, size, modified]], dirs, unsupported } } }` from the last scan; safe to delete (the next scan is then a "changes" scan).
 - IDs are stable hashes of library + path, so rescans and one-shot setting changes keep progress.
@@ -95,7 +96,7 @@ through `/api/setup`, and use the browser.
 - Advanced search: client state `st.inc[f]`/`st.exc[f]` for type/status/genre/tag/metadata + yearFrom/yearTo/author; API params are repeated keys (`genre=a&genre=b&xgenre=c`). genre/tag = all included and none excluded; single-valued fields = any included, none excluded.
 - Library pages keep their state (search, sort, filters, loaded works) in `cache.libs`; `invalidate()` marks it
   `stale` instead of dropping it, and `enter()` reloads as many works as were loaded, so Back keeps the place.
-- Work tiles: one size everywhere (`--tile-w` in `styles.css`; titles reserve two lines). Card grids for
+- Work tiles: `sizeTiles()` in `js/app.js` sets `--tile-cols`/`--tile-w`/`--tile-gap` on `:root` from the content width (ResizeObserver), so grids fill rows exactly and every page/library uses the same tile size; `scrollbar-gutter: stable` keeps the width the same with or without a scrollbar. Titles reserve two lines. Card grids for
   libraries/sources share `.lib-list`; metadata sources use `.msrc-grid` (equal heights).
 - Anything long-running reports progress the same way: `{ percent | null, etaMs | null, elapsedMs, … }`, shown
   with `progressBar()` in `js/library.js`.
@@ -125,6 +126,8 @@ through `/api/setup`, and use the browser.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+
+- **2026-11-23** — Full-width tiles sized from the content width (same everywhere); work Edit dialog prefilled with current values + per-field source (`seriesView.fieldSources`, admins), saves only changed fields, new editable year/altTitles/authors; cover picker (`GET /api/series/:id/covers[?search=1]`, `/cover-candidate`, `POST /cover` with choice or base64 upload; `series.customCover` wins in `metadataCover`; `provider.coverCandidates` keeps every matched site's cover; site previews proxied + cached in memory). Oversized request bodies now get a 413 answer instead of a cut connection. New suite `tests/test-covers.js`.
 
 - **2026-11-23** — Chapter order (library `defaults.bookOrder` + work `overrides.bookOrder` + per-browser toggle); advanced search with include/exclude, year range and author (replaces the single filter selects); hiding (`series.hidden`) and physically deleting works, hidden-works view with restore; page cache with freshness (no requests when switching pages within 60 s); folder sources keep parsed JSON in memory (`indexCache`; unchanged files reused, matching purely in memory, `applyLocal` reports `jsonRead`/`jsonReused`); JSON `title` lists (main + alternative titles; a work's main title is now displayed), `tags`/`artists` lists, book tags/genres/alt titles; a work without its own year/authors takes them from its books (`fromBooks`). New suite `tests/test-works.js`.
 

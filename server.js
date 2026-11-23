@@ -59,16 +59,23 @@ function sendJson(res, status, body, headers) {
   res.end(JSON.stringify(body));
 }
 
-function readBody(req) {
+function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
-    const chunks = [];
-    let size = 0;
+    let chunks = [];
+    let size = 0, tooLarge = false;
     req.on('data', c => {
       size += c.length;
-      if (size > MAX_BODY) { reject(auth.httpError(413, 'tooLarge', 'Request too large.')); req.destroy(); return; }
+      // Too large: keep reading but drop the data, then answer 413 (cutting the connection would leave the
+      // browser with a network error instead of a message). Give up on absurd sizes.
+      if (size > limit) {
+        tooLarge = true; chunks = [];
+        if (size > limit * 4) { reject(auth.httpError(413, 'tooLarge', 'Request too large.')); req.destroy(); }
+        return;
+      }
       chunks.push(c);
     });
     req.on('end', () => {
+      if (tooLarge) return reject(auth.httpError(413, 'tooLarge', 'Request too large.'));
       const text = Buffer.concat(chunks).toString('utf8');
       try { resolve(text ? JSON.parse(text) : {}); } catch { reject(auth.httpError(400, 'badJson', 'Invalid JSON.')); }
     });
@@ -93,7 +100,8 @@ async function handleApi(req, res, url) {
       if (!(req.headers['content-type'] || '').startsWith('application/json')) {
         return sendJson(res, 415, { error: 'unsupported', message: 'Expected JSON.' });
       }
-      body = await readBody(req);
+      // A cover upload (image as base64 in JSON) may be bigger than other requests
+      body = await readBody(req, /^\/api\/series\/[\w-]+\/cover$/.test(url.pathname) ? 12 * 1024 * 1024 : MAX_BODY);
       if (!body || typeof body !== 'object' || Array.isArray(body)) body = {};
     }
 

@@ -38,7 +38,9 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   left empty; files the server can't delete — read-only mounts, no permission — are reported and kept). With
   several versions you choose this version or all of them.
 - **Going back** (browser Back or the back link) returns to exactly where you were: same scroll position, the
-  same works loaded with *Load more*, same search, order and filters. All work tiles have the same size.
+  same works loaded with *Load more*, same search, order and filters.
+- **Layout**: pages use the whole width. Tiles fill each row exactly: the number of columns follows the screen
+  size (bigger screens, bigger tiles), and the tile size is the same on every page and in every library.
 - **Work page**: chapters as **tiles or a list**, **first or last chapter first** (both: library default,
   changeable per work; readers can flip the order on the page, remembered per work). A one-shot shows
   its **pages** instead, each opening the reader at that page.
@@ -320,6 +322,22 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
   -v thoth-app:/app -v /srv/comics:/media:ro thoth
 ```
 
+### Editing a work
+
+The work's *Edit* dialog opens with its **current values**, wherever they come from (its own edits, a folder
+source, `ComicInfo.xml`, the matched online metadata, or its books for year/authors), and each field says
+where its value comes from. Only the fields you change are saved; the others keep following their source
+(so later metadata updates still reach them). Clearing a field goes back to the automatic value. Editable:
+title, sort title, alternative titles (one per line), summary, authors, year, status, publisher, type,
+genres, tags, cover, reading mode, chapter layout and order, version.
+
+**Cover**: the picker shows every image available for the work: *Automatic* (library setting), the first
+page, the downloaded cover, the cover of **each** matched site (the sites not asked during the lookup are
+searched when the picker opens), images in folder sources that belong to the work, and the current own cover.
+**Upload image** adds your own (scaled to at most 1600 px in the browser). A picked or uploaded image is saved
+as the work's own cover (`data/covers/custom-…`) and always used. Previews of site covers go through the
+server, so the browser never contacts the metadata sites.
+
 ### Library and work settings
 
 | Setting | Library (Manage libraries → Edit) | Work (its page → Edit) |
@@ -328,7 +346,7 @@ docker run -d --name thoth --restart unless-stopped -p 3000:3000 \
 | Chapters shown as | Tiles (default) or List | Library default, Tiles or List |
 | Chapter order | First chapter first (default) or Last chapter first | Library default, either (readers can flip it on the page) |
 | Reading mode | Automatic (default: `ComicInfo.xml`, then online metadata, else left to right), or a fixed mode for every work | Library default/automatic, Left to right, Right to left, Continuous |
-| Cover | Metadata covers: only when missing (default), always, never | Library setting, First page, Downloaded |
+| Cover | Metadata covers: only when missing (default), always, never | Pick any image: automatic, first page, each matched site's cover, folder-source images, or upload one |
 
 ## Tests
 

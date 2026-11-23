@@ -290,6 +290,160 @@ async function downloadCover(seriesId, url) {
 }
 function removeCover(s) {
   if (s.provider && s.provider.coverFile) fs.rmSync(path.join(COVERS_DIR, s.provider.coverFile), { force: true });
+  removeCustomCover(s);
+}
+
+/* ---------------- choosing a work's cover (Edit dialog) ----------------
+ * Candidates: automatic (library setting), the first page of its files, each matched site's cover image,
+ * the downloaded cover, images in folder sources that belong to the work, and the cover chosen/uploaded
+ * before. Choosing an image (site, folder, upload) stores a copy as the work's own cover
+ * (data/covers/custom-<id>.<ext>), which then always wins (store.metadataCover). */
+const IMAGE_TYPES = { 'image/jpeg': '.jpg', 'image/png': '.png', 'image/webp': '.webp', 'image/gif': '.gif' };
+const IMAGE_EXTS = { '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.png': 'image/png', '.webp': 'image/webp', '.gif': 'image/gif' };
+function removeCustomCover(s) {
+  if (s.customCover && s.customCover.file) fs.rmSync(path.join(COVERS_DIR, s.customCover.file), { force: true });
+  delete s.customCover;
+}
+function saveCustomCover(s, buf, ext, from) {
+  if (buf.length > MAX_COVER) throw Object.assign(new Error('Image is too large (8 MB at most)'), { status: 413, code: 'tooLarge' });
+  removeCustomCover(s);
+  fs.mkdirSync(COVERS_DIR, { recursive: true });
+  const file = `custom-${s.id}-${Date.now().toString(36)}${ext}`;
+  fs.writeFileSync(path.join(COVERS_DIR, file), buf);
+  s.customCover = { file, from, at: new Date().toISOString() }; // (its date refreshes browser caches)
+  store.saveLibrary();
+}
+// Images in the library's enabled folder sources that belong to this work: an image named like the work
+// (or its JSON), anything inside the work's folder (same structure), the cover the JSON points to
+async function localCoverImages(s) {
+  const lib = db.libraries[s.libraryId];
+  const out = [];
+  for (const p of librarySettings(lib).providers) {
+    const src = p.enabled && db.metadataSources[p.id];
+    if (!src) continue;
+    const index = indexCache.get(src.id) || await sourceIndex(src);
+    const { pathKeys, nameKey } = local.seriesKeys(s);
+    const base = pathKeys[0];
+    for (const img of index.images) {
+      const key = local.keyOf(path.relative(src.folder, img));
+      const name = key.split('/').pop();
+      const mine = key === base || key.startsWith(base + '/') || (src.match === 'name' && name === nameKey) ||
+        (s.local && s.local.coverPath === img);
+      if (mine && out.length < 40) out.push({ sourceId: src.id, sourceName: src.name, rel: relOf(src, img), file: img });
+    }
+  }
+  return out;
+}
+// The picker's second step: the enabled online sites that weren't asked during the lookup (it stops once
+// the main fields are filled) are searched now for this work's title, in parallel, a few seconds at most.
+// Found covers are remembered with the work's other candidates.
+async function searchMoreCovers(s) {
+  const p = s.provider = s.provider || {};
+  const have = new Set((p.coverCandidates || []).map(c => c.provider));
+  const query = queryFor(s), year = yearHint(s);
+  const ids = librarySettings(db.libraries[s.libraryId]).providers.filter(x => x.enabled && BY_ID[x.id] && !have.has(x.id)).map(x => x.id);
+  const found = [];
+  await Promise.all(ids.map(async pid => {
+    const provider = BY_ID[pid];
+    if (provider.needsKey && !keys()[provider.needsKey]) return;
+    try {
+      const best = await Promise.race([bestMatch(provider, query, year), new Promise(resolve => setTimeout(() => resolve(null), 8000))]);
+      if (best && best.cover) found.push({ provider: pid, url: best.cover });
+    } catch { /* that site is unavailable; skip it */ }
+  }));
+  if (found.length) {
+    p.coverCandidates = (p.coverCandidates || []).concat(found);
+    store.saveLibrary();
+  }
+  return found.length;
+}
+async function coverCandidates(s, { search = false } = {}) {
+  if (search) await searchMoreCovers(s);
+  const out = [{ id: 'auto', kind: 'auto' }];
+  const firstPage = store.booksOf(s.id).find(b => b.format === 'cbz' && b.pageCount);
+  if (firstPage) out.push({ id: 'file', kind: 'file', bookId: firstPage.id });
+  const p = s.provider || {};
+  if (p.coverFile) out.push({ id: 'downloaded', kind: 'downloaded', provider: p.coverProvider || null });
+  const seen = new Set();
+  for (const c of p.coverCandidates || (p.coverUrl ? [{ provider: p.coverProvider, url: p.coverUrl }] : [])) {
+    if (!c.url || seen.has(c.url)) continue;
+    seen.add(c.url);
+    out.push({ id: 'online:' + c.provider, kind: 'online', provider: c.provider, url: c.url });
+  }
+  for (const img of await localCoverImages(s)) out.push({ id: 'local:' + img.sourceId + ':' + img.rel, kind: 'local', sourceName: img.sourceName, rel: img.rel });
+  if (s.customCover) out.push({ id: 'custom', kind: 'custom', from: s.customCover.from });
+  // Which one is in use now
+  const o = s.overrides || {};
+  const current = s.customCover ? 'custom' : o.cover === 'file' ? 'file' : o.cover === 'metadata' ? 'downloaded' : 'auto';
+  return { current, candidates: out };
+}
+// The file behind a candidate that lives on this server (for previews): downloaded, custom, local
+function candidateFile(s, id) {
+  if (id === 'downloaded' && s.provider && s.provider.coverFile) return path.join(COVERS_DIR, s.provider.coverFile);
+  if (id === 'custom' && s.customCover) return path.join(COVERS_DIR, s.customCover.file);
+  const m = /^local:([\w-]+):(.+)$/.exec(id || '');
+  if (m) {
+    const src = db.metadataSources[m[1]];
+    if (!src) return null;
+    const file = path.resolve(src.folder, m[2]);
+    if (!file.startsWith(path.resolve(src.folder) + path.sep) || !IMAGE_EXTS[path.extname(file).toLowerCase()]) return null;
+    const index = indexCache.get(src.id);
+    return !index || index.images.has(file) ? file : null;
+  }
+  return null;
+}
+// Preview of a site's cover candidate, fetched by the server; the last 60 are kept in memory
+const previewCache = new Map(); // url → { buf, type }
+async function fetchImage(url) {
+  if (previewCache.has(url)) return previewCache.get(url);
+  const res = await fetch(url, { headers: { 'User-Agent': 'Thoth-Library-Server/1.0' }, signal: AbortSignal.timeout(20000) });
+  const type = (res.headers.get('content-type') || '').split(';')[0].trim();
+  if (!res.ok || !IMAGE_TYPES[type]) throw Object.assign(new Error('The site didn’t send an image'), { status: 502, code: 'coverDownloadFailed' });
+  const buf = Buffer.from(await res.arrayBuffer());
+  if (buf.length > MAX_COVER) throw Object.assign(new Error('Image is too large'), { status: 413, code: 'tooLarge' });
+  previewCache.set(url, { buf, type });
+  if (previewCache.size > 60) previewCache.delete(previewCache.keys().next().value);
+  return { buf, type };
+}
+async function onlineCandidateImage(s, id) {
+  const provider = String(id).replace(/^online:/, '');
+  const c = ((s.provider && s.provider.coverCandidates) || []).find(x => x.provider === provider) ||
+    (s.provider && s.provider.coverProvider === provider && s.provider.coverUrl ? { url: s.provider.coverUrl } : null);
+  if (!c) return null;
+  try { return await fetchImage(c.url); } catch { return null; }
+}
+// Apply a choice from the Edit dialog. choice: a candidate id; upload: 'data:image/…;base64,…'
+async function chooseCover(s, { choice, upload }) {
+  const o = s.overrides = s.overrides || {};
+  if (upload) {
+    const m = /^data:(image\/(?:jpeg|png|webp|gif));base64,([A-Za-z0-9+/=\s]+)$/.exec(String(upload));
+    if (!m) throw Object.assign(new Error('Not an image'), { status: 400, code: 'notAnImage' });
+    delete o.cover;
+    saveCustomCover(s, Buffer.from(m[2], 'base64'), IMAGE_TYPES[m[1]], 'upload');
+    return;
+  }
+  const { candidates } = await coverCandidates(s);
+  const c = candidates.find(x => x.id === choice);
+  if (!c) throw Object.assign(new Error('Unknown cover'), { status: 400, code: 'invalid' });
+  if (c.kind === 'custom') return; // keep it
+  if (c.kind === 'auto' || c.kind === 'file' || c.kind === 'downloaded') {
+    removeCustomCover(s);
+    if (c.kind === 'auto') delete o.cover; else o.cover = c.kind === 'file' ? 'file' : 'metadata';
+    store.saveLibrary();
+    return;
+  }
+  if (c.kind === 'online') {
+    const img = await fetchImage(c.url); // (reuses the preview the picker just showed)
+    delete o.cover;
+    saveCustomCover(s, img.buf, IMAGE_TYPES[img.type], c.id);
+    return;
+  }
+  if (c.kind === 'local') {
+    const file = candidateFile(s, c.id);
+    if (!file) throw Object.assign(new Error('Image not found'), { status: 404, code: 'notFound' });
+    delete o.cover;
+    saveCustomCover(s, await fs.promises.readFile(file), path.extname(file).toLowerCase().replace('.jpeg', '.jpg'), c.id);
+  }
 }
 function coverPath(s) {
   return s.provider && s.provider.coverFile ? path.join(COVERS_DIR, s.provider.coverFile) : null;
@@ -367,6 +521,7 @@ async function refreshSeries(seriesId, cur) {
       query, locked: locked || null, matches, sources, errors,
       merged: Object.fromEntries(Object.entries(merged).filter(([k]) => k !== 'cover')),
       coverUrl: coverUrl || null, coverFile: coverFile || null, coverProvider: coverProvider || null,
+      coverCandidates: covers, // every matched site's cover image (choices in the Edit dialog)
       links: matches.map(x => ({ provider: x.provider, url: x.url })).filter(x => x.url)
     };
     // Delta: the work only counts as updated (sort "Recently updated", cover cache) when something changed
@@ -525,6 +680,6 @@ function forgetSeries(s) { removeCover(s); const i = queue.indexOf(s.id); if (i 
 
 module.exports = {
   TYPES, COVER_MODES, MATCH_MODES: local.MATCH_MODES, providerList, librarySettings, parseLibrarySettings,
-  applyLocal, applyLocalEverywhere, sourceView, testSearch, folderSources, createSource, updateSource, removeSource, checkSource, BY_ID,
+  applyLocal, applyLocalEverywhere, sourceView, testSearch, coverCandidates, candidateFile, chooseCover, onlineCandidateImage, IMAGE_EXTS, folderSources, createSource, updateSource, removeSource, checkSource, BY_ID,
   refreshSeries, searchForSeries, identify, clear, enqueueLibrary, afterScan, info, coverPath, forgetSeries
 };
