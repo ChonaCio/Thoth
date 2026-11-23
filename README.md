@@ -175,9 +175,16 @@ them in small batches, each process reading several files at once. Libraries are
 | Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
 | Works looked up at once | 3 | Metadata lookups running in parallel (1–8). Each site still gets a pause between requests. |
 | Sources crawled at once | 2 | External catalog crawls running at the same time (1–8), each its own process; others wait in line. |
+| Keep task logs (days) | 30 | Each task's log file (Logs page) is deleted after this many days; checked every hour. |
 | Works read at once per crawl | 3 | Works one crawl reads at the same time (1–8), for sources without their own *Works at once*. Requests to one site still start no faster than its pause, so more only helps when pages are slow to answer. |
 | Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
+
+**Tasks tab (Processes page).** Every long-running thing the server does — library scans, metadata lookups, file
+jobs, catalog crawls — is a **task**: the running ones with their progress bar and time left, *Show output* (the
+end of their log, live), *Stop* where it can be stopped (crawls), and the ones that ended lately with their result.
+Each task writes its own **log file** (data/logs/); the **Logs** page (sidebar) lists them by kind, shows one
+(live while it runs) and downloads it. Logs are deleted after *Keep task logs* days (Server settings).
 
 **Processes page (administrators).** Shows the web server, the scan service, the metadata lookups, file
 management jobs (their queue, what the running job is doing, and a process that exists only while jobs run),
@@ -479,8 +486,13 @@ sites added as **sources**, with its metadata and chapter list.
   by the site's link, e.g. the same MangaDex entry, else by title). A work's page shows each source's chapter
   list (with links to the site) and, for a work you have, **the chapters your library doesn't have**.
 - **Merge tab (administrators):** the same work found on several sites (or twice on one) can become one catalog
-  entry: the main one's title, cover and summary, every site's chapters. Suggestions come from the same MangaDex
-  entry or the same title/alternative title; *Not the same* hides one; a merged entry can be separated again.
+  entry: the main one's title, cover and summary, every site's chapters. **Certain matches are merged without
+  asking**, after every crawl: the same MangaDex entry, or the same title *and* an author or another title in
+  common (never two works of different kinds). Other likely matches (same title or alternative title) are
+  **suggestions**, shown with each work's cover, other titles, authors, source and chapters to compare;
+  *Not the same* hides one. The tab also lists the **merged works** (marked *merged automatically* and why), where
+  one source's entry can be **split off** (also from the work's page) or the whole group separated; works split
+  apart are never merged automatically again. Both lists can be **filtered by source**.
 - **Adding a source: a name and the site's address, nothing else.** Thoth works out the rest, when the source is
   added and again at **every crawl** (so new sitemaps and changed addresses are picked up): it reads the site's
   **robots.txt** (its rules and the sitemaps it names) and looks for **every sitemap** at the usual places too
@@ -488,8 +500,10 @@ sites added as **sources**, with its metadata and chapter list.
   **sitemaps** (indexes followed, `.xml.gz` too) to learn the address pattern of work pages and chapter pages,
   reads the home page (icon, the Madara or MangaReader theme if it runs one) and one work page. The source's card
   says what was found. *Edit* → turning off *Detect the settings automatically* shows every setting to set by hand. Sources set up this way list their works from
-  the **sitemaps**: a few requests instead of every list page, and updates only read works whose sitemap date
-  changed. Sites without a known theme use the generic reader (title, cover and summary from the page's standard
+  the **sitemaps**: a few requests instead of every list page. Every crawl keeps a **hash of each sitemap file**
+  and a fingerprint of each work in it (its date and the chapter addresses listed under it); an *Update* skips
+  sitemap files whose date in the index or whose content didn't change, and in a changed file reads only the
+  works that are new or whose entries changed (the hashes are saved again after a crawl that finished). Sites without a known theme use the generic reader (title, cover and summary from the page's standard
   tags; chapters = links whose address matches the chapter pattern).
 - **Icons:** each source shows its site's own icon (the one its pages declare, else `/favicon.ico`).
 - **Sources tab:** add a site, *Test* its settings (what the first list page and first work give),
@@ -513,6 +527,13 @@ sites added as **sources**, with its metadata and chapter list.
   the local network. Sites behind **bot protection** (e.g. Cloudflare challenges) are reported as *blocked*: Thoth
   doesn't try to get around it. Only crawl sites whose terms allow it.
 - An interrupted full crawl continues where it stopped; a complete full crawl drops works a site no longer lists.
+- **Chapter names are standardized** the way File management renames files: *Chapter 44 - The End*. Dates,
+  *3 days ago*, view counts and badges next to the name are dropped, and the number said twice (*Chapter 44 - 44*,
+  *Ch. 44 - Ch. 44*) once; the name as the site shows it is kept. Chapter lists that show only the last chapters
+  until *Show more* / *Load all* is pressed, or that come in pages, are followed to the end (other-site and Madara
+  sources). Covers and alternative titles also come from the page's standard tags (Open Graph, schema.org) and
+  rows labeled *Alternative*, *Other names*… when the theme doesn't show them.
+- The crawl's progress bar shows the **time left**, from the speed of the works read so far.
 - Covers are fetched by the server and cached (`data/cache/catalog-covers/`): browsers never contact the sites.
 - Storage: `data/catalog/<source>/` (`works.json`, chapter lists in `chapters/`, `state.json`). Removing a source
   removes them; your library is never changed by the catalog.

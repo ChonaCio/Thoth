@@ -915,3 +915,20 @@ body.is-reading { overflow: hidden; }
 /* Rename job: what it is doing, and a disk that doesn't answer */
 .ren-phase { margin: .25rem 0 0; overflow-wrap: anywhere; }
 .warn-text { color: var(--danger); margin: .25rem 0 0; }
+
+/* Catalog merge: works compared with their covers */
+.merge-row__pick { display: flex; align-items: flex-start; gap: .6rem; flex: 1; min-width: 0; }
+.merge-thumb { position: relative; flex: none; width: 48px; height: 68px; border-radius: 6px; overflow: hidden; background: var(--surface-2, rgba(127,127,127,.15)); display: grid; place-items: center; color: var(--muted, #888); }
+.merge-thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.merge-row__what { display: flex; flex-direction: column; gap: .1rem; min-width: 0; }
+.merge-row__alt { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 60ch; }
+.toolbar__field { display: inline-flex; align-items: center; gap: .4rem; }
+
+/* Tasks (Processes → Tasks) and the Logs page */
+.task-card .progress { margin: .5rem 0; }
+.task-console { width: 100%; box-sizing: border-box; margin-top: .75rem; border: 1px solid var(--border, rgba(127,127,127,.3)); border-radius: 8px; overflow: hidden; }
+.task-console__bar { display: flex; justify-content: space-between; align-items: center; gap: .5rem; flex-wrap: wrap; padding: .35rem .6rem; background: var(--surface-2, rgba(127,127,127,.1)); }
+.task-console__text { margin: 0; padding: .6rem .75rem; max-height: 320px; overflow: auto; background: #111; color: #d7d7d7; font: 12px/1.45 ui-monospace, SFMono-Regular, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+.task-console__text--tall { max-height: 70vh; border-radius: 8px; margin-top: .75rem; }
+.task-table td, .logs-table td { vertical-align: top; }
+.logs-actions { white-space: nowrap; }

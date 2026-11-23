@@ -9,6 +9,7 @@ const crypto = require('crypto');
 const { fork, spawn } = require('child_process');
 const store = require('../db');
 const cstore = require('./store');
+const tasks = require('../tasks');
 const { ADAPTERS, TYPES } = require('./adapters');
 const { publicUrl, UA } = require('./fetcher');
 const { normTitle, fromUrl } = require('../metadata/providers');
@@ -129,6 +130,7 @@ function removeSource(id) {
     g.keys = g.keys.filter(k => !k.startsWith(id + ':'));
     if (g.keys.length < 2) delete db.catalogMerges.groups[gid];
   }
+  if (db.catalogMerges.apart) db.catalogMerges.apart = db.catalogMerges.apart.filter(p => !p.split('|').some(k => k.startsWith(id + ':')));
   store.saveLibrary();
   fs.rmSync(sourceDir(id), { recursive: true, force: true });
   loaded.delete(id);
@@ -146,6 +148,7 @@ const maxCrawls = () => Math.max(1, Number(process.env.THOTH_MAX_CRAWLS) || Numb
 const crawlConcurrency = s => Math.max(1, Math.min(8, Number(s.concurrency) || Number(require('../../config').get().catalogConcurrency) || 3));
 const queue = []; // waiting crawls: { id, sourceId, mode, reason, createdAt }
 let jobSeq = 0;
+let autoMergedAtStart = false;
 const recent = new Map(); // sourceId → last finished progress (for the list of crawls)
 const proc = { child: null, pid: null, pending: new Map(), seq: 0, idleTimer: null };
 const readProgress = id => { try { return JSON.parse(fs.readFileSync(path.join(sourceDir(id), 'progress.json'), 'utf8')); } catch { return null; } };
@@ -165,7 +168,9 @@ function liveCrawl(id) {
 const jobView = (sourceId, p, queued) => queued
   ? { id: queued.id, sourceId, mode: queued.mode, status: 'queued', createdAt: queued.createdAt, progress: null, result: null, error: null }
   : p ? { id: p.jobId, sourceId, mode: p.mode, status: p.status === 'starting' ? 'running' : p.status, startedAt: p.startedAt || null, finishedAt: p.finishedAt || null,
-    pid: p.pid || null, progress: p.progress || null, result: p.result || null, error: p.error || null } : null;
+    pid: p.pid || null, progress: liveProgress(p.progress), result: p.result || null, error: p.error || null } : null;
+// The time left as of now (the crawler wrote it up to a second ago)
+const liveProgress = pr => (pr && pr.etaMs != null && pr.at ? Object.assign({}, pr, { etaMs: Math.max(0, pr.etaMs - (Date.now() - pr.at)) }) : pr || null);
 function sourceJob(id) {
   const q = queue.find(j => j.sourceId === id);
   if (q) return jobView(id, null, q);
@@ -189,8 +194,13 @@ function startCrawl(job) {
   const dir = sourceDir(s.id);
   fs.mkdirSync(dir, { recursive: true });
   const st = cstore.readState(dir);
-  fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ jobId: job.id, mode: job.mode, reason: job.reason, allowLocal: ALLOW_LOCAL, concurrency: crawlConcurrency(s),
+  // Its log (Processes → Tasks, Logs page): written by the crawler process itself
+  const startedAt = new Date();
+  const logFile = tasks.logPathFor('crawl', job.id, startedAt);
+  try { fs.mkdirSync(path.dirname(logFile), { recursive: true }); fs.writeFileSync(logFile, `# ${crawlTitle(s, job.mode)}\n`); } catch { /* best effort */ }
+  fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ jobId: job.id, mode: job.mode, reason: job.reason, allowLocal: ALLOW_LOCAL, concurrency: crawlConcurrency(s), logFile,
     source: Object.assign({}, s, { lastCrawlAt: st.lastCrawlAt || null }) }));
+  crawlTask(s.id, job.id, job.mode, logFile, startedAt);
   fs.rmSync(path.join(dir, 'stop'), { force: true });
   fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ jobId: job.id, sourceId: s.id, mode: job.mode, status: 'starting', startedAt: new Date().toISOString() }));
   const out = fs.openSync(path.join(dir, 'crawl.log'), 'a');
@@ -199,9 +209,30 @@ function startCrawl(job) {
   child.unref();
   console.log(`[catalog] ${job.mode} crawl of "${s.name}" started as its own process (pid ${child.pid})`);
 }
+// A crawl as a task (Processes → Tasks): its progress read from its progress file, Stop through the stop file
+const crawlTitle = (s, mode) => `${mode === 'update' ? 'Update' : 'Crawl'} of "${s.name}"`;
+function crawlTask(sourceId, jobId, mode, logFile, startedAt) {
+  if (tasks.find(jobId)) return;
+  const s = db.catalogSources[sourceId] || { name: sourceId };
+  tasks.start({ kind: 'crawl', id: jobId, title: crawlTitle(s, mode), logFile, startedAt, cancel: () => stopCrawl(sourceId),
+    progress: () => {
+      const j = sourceJob(sourceId), p = (j && j.progress) || {};
+      const listing = !p.phase || p.phase === 'listing';
+      return { phase: listing ? 'listing' : 'works', done: listing ? p.listed || 0 : p.done || 0, total: listing ? null : p.total || 0,
+        percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: listing ? null : p.etaMs != null ? p.etaMs : null, errors: p.errors || 0 };
+    } });
+}
 // Starts waiting crawls while there's room; notices finished ones (logged once)
 let pumpTimer = null;
 function pumpCrawls() {
+  // Crawls still running from before a server restart: their tasks again
+  for (const id of Object.keys(db.catalogSources)) {
+    const p = liveCrawl(id);
+    if (p && p.jobId && !tasks.find(p.jobId)) {
+      let job = null; try { job = JSON.parse(fs.readFileSync(path.join(sourceDir(id), 'job.json'), 'utf8')); } catch { /* none */ }
+      if (job && job.logFile && job.jobId === p.jobId) crawlTask(id, p.jobId, p.mode, job.logFile, p.startedAt);
+    }
+  }
   let running = runningCrawls().length;
   while (queue.length && running < maxCrawls()) { startCrawl(queue.shift()); running++; }
   for (const id of Object.keys(db.catalogSources)) {
@@ -210,8 +241,13 @@ function pumpCrawls() {
       const first = recent.size === 0 && !pumpTimer; // (at startup, old results aren't news)
       recent.set(id, p);
       catalogVersion++;
+      const r = p.result || {};
+      tasks.endById(p.jobId, p.status === 'done' ? 'done' : p.status === 'stopped' ? 'stopped' : 'failed',
+        p.error || `${r.listed || 0} listed, ${r.added || 0} new, ${r.read || 0} read, ${r.chapters || 0} chapters, ${r.errors || 0} errors`);
       adoptDetected(id);
       if (!first) console.log(`[catalog] crawl of "${db.catalogSources[id].name}" ${p.status}${p.error ? `: ${p.error}` : ''}`);
+      // New works may be the same as others: merge the certain ones (also once at startup)
+      if (!first || !autoMergedAtStart) { autoMergedAtStart = true; try { autoMerge(); } catch (e) { console.error('[catalog] automatic merge:', e.message); } }
     }
   }
   clearTimeout(pumpTimer);
@@ -444,9 +480,10 @@ function detail(key) {
 }
 
 /* ---------------- merging the same work found on several sites ---------------- */
-function mergeSuggestions({ limit = 200 } = {}) {
+function mergeSuggestions({ limit = 200, source = null } = {}) {
   const works = allWorks();
   const dismissed = new Set(db.catalogMerges.dismissed || []);
+  const apart = apartSet();
   const grouped = new Set(Object.values(db.catalogMerges.groups).flatMap(g => g.keys));
   const parent = new Map(works.map(w => [w.key, w.key]));
   const find = k => { while (parent.get(k) !== k) { parent.set(k, parent.get(parent.get(k))); k = parent.get(k); } return k; };
@@ -476,16 +513,27 @@ function mergeSuggestions({ limit = 200 } = {}) {
     if (members.length < 2 || open.length < 1 || members.every(m => grouped.has(m.key))) continue;
     const key = members.map(m => m.key).sort().join(',');
     if (dismissed.has(key)) continue;
+    if (source && !members.some(m => m.sourceId === source)) continue;
+    // Works an administrator separated aren't suggested together again
+    if (members.every((m, i) => members.every((o, j) => i === j || apart.has(pairKey(m.key, o.key)) || (grouped.has(m.key) && grouped.has(o.key))))) continue;
     const lib = members.map(libraryMatch).find(Boolean);
     out.push(Object.assign({ key, primary: members.slice().sort((a, b) => (b.chapterCount || 0) - (a.chapterCount || 0))[0].key,
       inLibrary: lib ? { seriesId: lib.seriesId, title: db.series[lib.seriesId] ? store.seriesMeta(db.series[lib.seriesId]).title : '' } : null,
-      works: members.map(m => ({ key: m.key, title: m.title, source: (db.catalogSources[m.sourceId] || {}).name || m.sourceId, url: m.url, chapters: m.chapterCount || 0, merged: grouped.has(m.key) })) },
+      works: members.map(m => Object.assign(workSummary(m), { merged: grouped.has(m.key) })) },
     why.get(root) || { reason: 'title', detail: {} }));
   }
   out.sort((a, b) => (a.reason === 'link' ? 0 : 1) - (b.reason === 'link' ? 0 : 1) || store.collator.compare(a.works[0].title || '', b.works[0].title || ''));
   return { total: out.length, groups: out.slice(0, limit) };
 }
-function merge(keys, primary) {
+// Works an administrator separated ("a|b", keys sorted): never merged again automatically
+const pairKey = (a, b) => (a < b ? a + '|' + b : b + '|' + a);
+function apartSet() { return new Set(db.catalogMerges.apart || []); }
+function keepApart(keys) {
+  const s = apartSet();
+  for (let i = 0; i < keys.length; i++) for (let j = i + 1; j < keys.length; j++) s.add(pairKey(keys[i], keys[j]));
+  db.catalogMerges.apart = [...s].slice(-20000);
+}
+function merge(keys, primary, { auto = null } = {}) {
   keys = [...new Set((keys || []).filter(k => typeof k === 'string'))];
   const all = new Set(allWorks().map(w => w.key));
   if (keys.length < 2 || keys.some(k => !all.has(k))) throw err(400, 'invalid');
@@ -496,16 +544,105 @@ function merge(keys, primary) {
   for (const [gid] of touched) delete groups[gid];
   const id = 'm' + crypto.randomBytes(5).toString('hex');
   groups[id] = { keys: [...merged], primary: merged.has(primary) ? primary : keys[0], at: new Date().toISOString() };
+  if (auto) groups[id].auto = auto; // { reason, detail }: merged without asking
+  // Merged by hand: works that were separated before may be merged again
+  if (!auto && db.catalogMerges.apart) { const ks = [...merged]; db.catalogMerges.apart = db.catalogMerges.apart.filter(p => { const [a, b] = p.split('|'); return !(ks.includes(a) && ks.includes(b)); }); }
   store.saveLibrary();
   catalogVersion++;
   return { groupId: id, keys: groups[id].keys };
 }
+// Separating a whole group, or taking one work out of it ("split"); either way they stay apart from then on
 function unmerge(groupId) {
-  if (!db.catalogMerges.groups[groupId]) throw err(404, 'notFound');
+  const g = db.catalogMerges.groups[groupId];
+  if (!g) throw err(404, 'notFound');
+  keepApart(g.keys);
   delete db.catalogMerges.groups[groupId];
   store.saveLibrary();
   catalogVersion++;
 }
+function splitOff(groupId, key) {
+  const g = db.catalogMerges.groups[groupId];
+  if (!g || !g.keys.includes(key)) throw err(404, 'notFound');
+  const rest = g.keys.filter(k => k !== key);
+  const s = apartSet();
+  for (const k of rest) s.add(pairKey(key, k));
+  db.catalogMerges.apart = [...s].slice(-20000);
+  if (rest.length < 2) delete db.catalogMerges.groups[groupId];
+  else { g.keys = rest; if (g.primary === key) g.primary = rest[0]; }
+  store.saveLibrary();
+  catalogVersion++;
+  return { groupId: rest.length < 2 ? null : groupId, keys: rest };
+}
+
+// Merging without asking, only when it's certain the works are the same:
+//   - the same MangaDex id, or
+//   - the same main title AND an author or another title in common (and not of different kinds: a novel and
+//     its manga share a title and an author).
+// Works separated by an administrator stay apart; titles shared by more than 6 works are too common to tell.
+const personKey = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').split(/[^\p{L}\p{N}]+/u).filter(Boolean).sort().join(' ');
+function sameWork(a, b) {
+  if (a.type && b.type && a.type !== b.type) return null;
+  const authorsA = new Set((a.authors || []).map(personKey).filter(Boolean));
+  const author = (b.authors || []).map(personKey).find(k => k && authorsA.has(k));
+  if (author) return { reason: 'titleAuthor', detail: { title: a.title, author: (b.authors || []).find(x => personKey(x) === author) } };
+  const altA = new Set((a.altTitles || []).map(normTitle).filter(k => k && k.length > 2 && k !== normTitle(a.title)));
+  const alt = (b.altTitles || []).find(t => altA.has(normTitle(t)));
+  if (alt) return { reason: 'titleAlt', detail: { title: a.title, alt } };
+  return null;
+}
+function autoMerge() {
+  const works = allWorks();
+  if (works.length < 2) return 0;
+  const groups = db.catalogMerges.groups;
+  const groupOf = new Map();
+  for (const [gid, g] of Object.entries(groups)) for (const k of g.keys) groupOf.set(k, gid);
+  const apart = apartSet();
+  const dismissed = new Set(db.catalogMerges.dismissed || []);
+  const membersOf = w => (groupOf.has(w.key) ? groups[groupOf.get(w.key)].keys : [w.key]);
+  const byLink = new Map(), byTitle = new Map();
+  const push = (m, k, w) => { if (!m.has(k)) m.set(k, []); m.get(k).push(w); };
+  for (const w of works) {
+    if (w.links && w.links.mangadex) push(byLink, String(w.links.mangadex), w);
+    const t = normTitle(w.title);
+    if (t && t.length > 2) push(byTitle, t, w);
+  }
+  const pairs = [];
+  for (const list of byLink.values()) if (list.length >= 2 && list.length <= 6) for (let i = 1; i < list.length; i++) pairs.push([list[0], list[i], { reason: 'link', detail: { title: list[0].title } }]);
+  for (const list of byTitle.values()) {
+    if (list.length < 2 || list.length > 6) continue;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) { const why = sameWork(list[i], list[j]); if (why) pairs.push([list[i], list[j], why]); }
+  }
+  let merged = 0;
+  for (const [a, b, why] of pairs) {
+    if (groupOf.has(a.key) && groupOf.get(a.key) === groupOf.get(b.key)) continue;
+    const A = membersOf(a), B = membersOf(b);
+    if (A.some(x => B.some(y => apart.has(pairKey(x, y))))) continue;
+    if ([...dismissed].some(d => d.includes(a.key) && d.includes(b.key))) continue; // ("not the same" on a suggestion)
+    const keys = [...new Set(A.concat(B))];
+    const primary = groupOf.has(a.key) ? groups[groupOf.get(a.key)].primary : groupOf.has(b.key) ? groups[groupOf.get(b.key)].primary
+      : (b.chapterCount || 0) > (a.chapterCount || 0) ? b.key : a.key;
+    const r = merge(keys, primary, { auto: why });
+    for (const k of r.keys) groupOf.set(k, r.groupId);
+    merged++;
+  }
+  if (merged) console.log(`[catalog] ${merged} work(s) merged automatically (certain matches)`);
+  return merged;
+}
+// Merged works (automatically or by hand), for the Merge tab: { groups: [{ id, auto, at, primary, works }] }
+function mergedGroups({ source } = {}) {
+  const byKey = new Map(allWorks().map(w => [w.key, w]));
+  const out = [];
+  for (const [id, g] of Object.entries(db.catalogMerges.groups)) {
+    const members = g.keys.map(k => byKey.get(k)).filter(Boolean);
+    if (members.length < 2 || (source && !members.some(m => m.sourceId === source))) continue;
+    out.push({ id, auto: g.auto || null, at: g.at || null, primary: g.primary, works: members.map(workSummary) });
+  }
+  out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));
+  return { total: out.length, groups: out.slice(0, 300) };
+}
+// What the Merge tab shows of a work to compare it: its cover, title, other titles, authors, source, chapters
+const workSummary = m => ({ key: m.key, title: m.title, altTitles: (m.altTitles || []).slice(0, 4), authors: (m.authors || []).slice(0, 3), type: m.type || null, year: m.year || null,
+  source: (db.catalogSources[m.sourceId] || {}).name || m.sourceId, sourceId: m.sourceId, url: m.url, chapters: m.chapterCount || 0, lastChapter: m.lastChapter || null, cover: Boolean(m.cover) });
 function dismiss(key) {
   db.catalogMerges.dismissed = [...new Set((db.catalogMerges.dismissed || []).concat(String(key)))].slice(-5000);
   store.saveLibrary();
@@ -585,4 +722,4 @@ function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, d
 require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
 
 module.exports = { listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
-  list, facets, detail, mergeSuggestions, merge, unmerge, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
+  list, facets, detail, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

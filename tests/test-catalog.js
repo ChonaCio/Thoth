@@ -23,7 +23,7 @@ const madaraWorks = {
   'green-field': { title: 'Green Field', alt: '', genres: ['Drama'], chapters: [1], ajax: false },
   'yellow-star': { title: 'Yellow Star', alt: '', genres: ['Comedy'], chapters: [1, 2], ajax: false, extra: true } // only in /wp-sitemap.xml, once extraSitemap is on
 };
-let extraSitemap = false;
+let extraSitemap = false, sitemapChange = false; // sitemapChange: the works sitemap lists a new chapter of Blue Moon
 // Slow work pages (to see several read at once): requests in flight, and when each work page was asked for
 let slowWorks = false, inFlight = 0, maxInFlight = 0; const workHits = [];
 const listed = () => Object.keys(madaraWorks).filter(s => !madaraWorks[s].extra);
@@ -31,7 +31,9 @@ const madaraItem = slug => `<div class="page-item-detail"><div class="item-thumb
 function madaraWork(slug) {
   const w = madaraWorks[slug];
   const chs = w.chapters.concat(extraChapter && slug === 'blue-moon' ? [5] : []);
-  const list = `<ul class="main version-chap">${chs.slice().reverse().map(n => `<li class="wp-manga-chapter"><a href="${SITE}/madara/manga/${slug}/chapter-${n}/">Chapter ${n}</a><span class="chapter-release-date"><i>Jan ${n}, 2025</i></span></li>`).join('')}</ul>`;
+  // (Green Field's chapters are named the messy way: the number twice and the views inside the link)
+  const name = n => (slug === 'green-field' ? `Ch. 00${n} - Ch. ${n} <i>1.2k views</i>` : `Chapter ${n}`);
+  const list = `<ul class="main version-chap">${chs.slice().reverse().map(n => `<li class="wp-manga-chapter"><a href="${SITE}/madara/manga/${slug}/chapter-${n}/">${name(n)}</a><span class="chapter-release-date"><i>Jan ${n}, 2025</i></span></li>`).join('')}</ul>`;
   return `<html><head><meta property="og:title" content="${w.title}"></head><body><div class="post-title"><h1>${w.title}</h1></div>
     <div class="summary_image"><img data-src="${SITE}/img/${slug}.png"></div>
     <div class="post-content_item"><div class="summary-heading"><h5>Alternative</h5></div><div class="summary-content">${w.alt}</div></div>
@@ -48,7 +50,7 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/robots.txt') return send(200, `User-agent: *\nDisallow: /custom/private/\nSitemap: ${SITE}/sitemap_index.xml\n`, 'text/plain');
   // Sitemaps: an index → the works sitemap (works and their chapters), and one that lists tags (skipped)
   if (u.pathname === '/sitemap_index.xml') return send(200, `<?xml version="1.0"?><sitemapindex><sitemap><loc>${SITE}/manga-sitemap.xml</loc></sitemap><sitemap><loc>${SITE}/tag-sitemap.xml</loc></sitemap></sitemapindex>`, 'application/xml');
-  if (u.pathname === '/manga-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${listed().map(s => `<url><loc>${SITE}/madara/manga/${s}/</loc><lastmod>2025-01-0${s.length % 9 + 1}</lastmod></url>` + madaraWorks[s].chapters.map(n => `<url><loc>${SITE}/madara/manga/${s}/chapter-${n}/</loc></url>`).join('')).join('')}</urlset>`, 'application/xml');
+  if (u.pathname === '/manga-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${listed().map(s => `<url><loc>${SITE}/madara/manga/${s}/</loc><lastmod>2025-01-0${s.length % 9 + 1}</lastmod></url>` + madaraWorks[s].chapters.concat(sitemapChange && s === 'blue-moon' ? [9] : []).map(n => `<url><loc>${SITE}/madara/manga/${s}/chapter-${n}/</loc></url>`).join('')).join('')}</urlset>`, 'application/xml');
   // A sitemap robots.txt doesn't name (found by looking in the usual places)
   if (u.pathname === '/wp-sitemap.xml' && extraSitemap) return send(200, `<?xml version="1.0"?><urlset><url><loc>${SITE}/madara/manga/yellow-star/</loc></url></urlset>`, 'application/xml');
   if (u.pathname === '/tag-sitemap.xml') return send(200, `<urlset><url><loc>${SITE}/tag/action/</loc></url></urlset>`, 'application/xml');
@@ -148,6 +150,18 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   let s1 = await crawled(madara.id);
   ok(s1.works === 3 && s1.lastStats.listed === 3 && s1.lastStats.errors === 0 && s1.lastStats.chapters === 7, `Madara site: every list page read, 3 works, 7 chapters (${JSON.stringify(s1.lastStats)})`);
   ok(hits.includes('GET /robots.txt') && hits.some(h => h.startsWith('POST /madara/manga/red-sun/ajax/chapters/')), 'robots.txt read first; chapters loaded the theme’s other way when the page has none');
+  const greenKey = (await call('GET', '/api/catalog?q=green')).data.items[0].key;
+  const greenCh = (await call('GET', `/api/catalog/work?key=${encodeURIComponent(greenKey)}`)).data.work.sources[0].chapterList[0];
+  ok(greenCh.t === 'Chapter 1' && greenCh.n === '1' && /views/.test(greenCh.raw || ''), `chapter names standardized like the renamer's ("${greenCh.raw}" → "${greenCh.t}")`);
+  // The crawl as a task, with its own log file
+  const crawlTask = await until(async () => (await call('GET', '/api/tasks')).data.recent.find(x => x.kind === 'crawl' && x.title.includes('Madara site')));
+  ok(crawlTask.status === 'done' && /listed/.test(crawlTask.summary), `the crawl is listed as a task (${crawlTask.title}: ${crawlTask.summary})`);
+  const logs = (await call('GET', '/api/logs?kind=crawl')).data.logs;
+  const logText = (await call('GET', `/api/logs/${crawlTask.log}`)).data.lines.join('\n');
+  ok(logs.some(l => l.name === crawlTask.log) && /work\(s\) listed/.test(logText) && /works read/.test(logText), 'its log file is on the Logs page, written by the crawler (works listed, works read)');
+  const dl = await fetch(`${BASE}/api/logs/${crawlTask.log}?download=1`, { headers: { Cookie: cookie } });
+  ok(dl.status === 200 && /attachment/.test(dl.headers.get('content-disposition') || '') && (await dl.text()).startsWith('# Crawl of'), 'a log can be downloaded');
+  ok((await call('GET', '/api/logs/..%2Fconfig.json')).status === 404 && (await call('GET', '/api/logs', null, bob)).status === 403, 'only log files can be read, and only by administrators');
   // Several works at once (the source's setting), still one request to the site per gapMs
   await call('PATCH', `/api/catalog/sources/${madara.id}`, { concurrency: 3 });
   slowWorks = true;
@@ -179,6 +193,16 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const sv = await crawled(viaSitemap.id);
   ok(sv.works === 3 && sv.lastStats.chapters === 7 && hits.includes('GET /manga-sitemap.xml') && !hits.includes('GET /tag-sitemap.xml') && !hits.some(h => h.includes('m_orderby')),
     'a source set up by Detect lists its works from the sitemaps (the tags sitemap skipped, no list pages)');
+  // The same works on two sources, with the same title and author: merged without asking
+  // (the server notices a finished crawl within 2 seconds, then merges)
+  const merged = await until(async () => { const gs = (await call('GET', '/api/catalog/merged')).data.groups; return gs.filter(gr => gr.auto).length >= 3 && gs; }, 15000).catch(async () => (await call('GET', '/api/catalog/merged')).data.groups);
+  const autoBlue = merged.find(gr => gr.auto && gr.works.some(w => w.title === 'Blue Moon' && w.sourceId === madara.id) && gr.works.some(w => w.sourceId === viaSitemap.id));
+  ok(autoBlue && autoBlue.auto.reason === 'titleAuthor' && merged.filter(gr => gr.auto).length === 3, `certain matches merged automatically (${merged.filter(gr => gr.auto).length} groups; Blue Moon: ${autoBlue && autoBlue.auto.reason})`);
+  const viaKey = autoBlue.works.find(w => w.sourceId === viaSitemap.id).key;
+  const split = (await call('POST', `/api/catalog/merge/${autoBlue.id}/split`, { key: viaKey })).data;
+  ok(split.groupId === null && (await call('POST', '/api/catalog/merge/auto')).data.merged === 0 && !(await call('GET', '/api/catalog/merged')).data.groups.some(gr => gr.works.some(w => w.key === viaKey)),
+    'a merged work can be split off, and isn’t merged automatically again');
+  ok((await call('GET', `/api/catalog/merged?source=${custom.id}`)).data.groups.length === 0 && (await call('GET', `/api/catalog/merged?source=${madara.id}`)).data.groups.length === 2, 'merged works can be filtered by source');
   const icon = await fetch(`${BASE}/api/catalog/sources/${viaSitemap.id}/icon`, { headers: { Cookie: cookie } });
   ok(icon.status === 200 && icon.headers.get('content-type') === 'image/png', 'the source’s icon is the site’s own (served through the server)');
   await call('DELETE', `/api/catalog/sources/${viaSitemap.id}`);
@@ -192,6 +216,15 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const autoDone = await crawled(autoSrc.id);
   const autoNow = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === autoSrc.id);
   ok(autoDone.works === 4 && autoNow.sitemaps.includes(SITE + '/wp-sitemap.xml'), `the crawl looked for every sitemap again: the new one was found and read (${autoDone.works} works; sitemaps: ${autoNow.sitemaps.map(s => s.replace(SITE, '')).join(', ')})`);
+  // Updates read only what changed in the sitemaps (their content hashes are kept)
+  await call('POST', `/api/catalog/sources/${autoSrc.id}/crawl`, { mode: 'update' });
+  const same = await crawled(autoSrc.id);
+  ok(same.lastStats.read === 0 && same.lastStats.sitemaps && same.lastStats.sitemaps.unchanged >= 1, `an update with no sitemap changes reads no work (${JSON.stringify(same.lastStats.sitemaps)})`);
+  sitemapChange = true; hits.length = 0;
+  await call('POST', `/api/catalog/sources/${autoSrc.id}/crawl`, { mode: 'update' });
+  const changed = await crawled(autoSrc.id);
+  ok(changed.lastStats.read === 1 && hits.includes('GET /madara/manga/blue-moon/') && !hits.includes('GET /madara/manga/red-sun/'), `a changed sitemap: only the work whose entries changed is read (${changed.lastStats.read} read)`);
+  sitemapChange = false;
   ok((await call('PATCH', `/api/catalog/sources/${autoSrc.id}`, { autoDetect: false })).data.source.autoDetect === false, 'automatic settings can be turned off (then set by hand)');
   extraSitemap = false;
   await call('DELETE', `/api/catalog/sources/${autoSrc.id}`);
@@ -227,6 +260,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const sug = (await call('GET', '/api/catalog/merge-suggestions')).data;
   const g = sug.groups.find(x => x.works.some(w => w.title === 'Blue Moon'));
   ok(g && g.works.length === 2 && g.reason === 'title' && g.inLibrary, 'suggested: “Blue Moon” on both sites (and the library has it)');
+  ok(g.works.every(w => 'cover' in w && 'authors' in w) && (await call('GET', `/api/catalog/merge-suggestions?source=${custom.id}`)).data.groups.some(x => x.key === g.key) && !(await call('GET', `/api/catalog/merge-suggestions?source=${guarded.id}`)).data.groups.length,
+    'suggestions carry what helps to compare (cover, authors) and can be filtered by source');
   const mg = (await call('POST', '/api/catalog/merge', { keys: g.works.map(w => w.key), primary: blue.key })).data;
   cat = (await call('GET', '/api/catalog?q=blue%20moon')).data;
   ok(cat.total === 1 && cat.items[0].sources.length === 2 && cat.items[0].chapters === 4, 'merged: one catalog entry with both sources');

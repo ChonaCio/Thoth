@@ -773,11 +773,15 @@ const status = { done: 0, covers: 0, current: [], lastError: null }; // current:
 const batch = { total: 0, done: 0, startedAt: 0 };
 let active = 0;
 
+// Each batch is a task (Processes → Tasks), logging every work looked up
+let batchTask = null;
 function enqueue(seriesIds) {
   if (!active && !queue.length) Object.assign(batch, { total: 0, done: 0, startedAt: Date.now() }); // a new batch
   let added = 0;
   for (const id of seriesIds) if (!queue.includes(id) && !running.has(id)) { queue.push(id); added++; }
   batch.total += added;
+  if (added && !batchTask) batchTask = require('../tasks').start({ kind: 'metadata', title: 'Metadata lookups', progress: batchProgress });
+  if (added && batchTask) batchTask.log(`+${added} work(s) to look up`);
   pump();
   return added;
 }
@@ -828,12 +832,14 @@ function pump() {
     const cur = { seriesId: id, title: store.seriesMeta(s).title, startedAt: new Date().toISOString(), step: 'searching', provider: null };
     status.current.push(cur);
     refreshSeries(id, cur)
-      .catch(e => { status.lastError = e.message; })
+      .then(() => { if (batchTask) batchTask.log(`"${cur.title}": ` + (db.series[id] && db.series[id].provider && (db.series[id].provider.matches || []).length ? 'matched on ' + db.series[id].provider.matches.map(m => m.provider).join(', ') : 'no match')); })
+      .catch(e => { status.lastError = e.message; if (batchTask) batchTask.log(`"${cur.title}": failed - ${e.message}`); })
       .finally(() => {
         active--;
         batch.done++;
         status.current = status.current.filter(c => c !== cur);
         pump();
+        if (!active && !queue.length && batchTask) { batchTask.end('done', `${batch.done} work(s) looked up`); batchTask = null; }
       });
   }
 }

@@ -5,7 +5,7 @@
 //   progress.json  { jobId, pid, status: 'running' | 'done' | 'failed' | 'stopped', startedAt, heartbeatAt,
 //                    finishedAt, progress, result, error } (written every second while it runs)
 //   stop           present → finish the current work, save, end (removed when it ends)
-//   crawl.log      its output
+//   crawl.log      its output (also in job.logFile, the task's log in data/logs/)
 // Lowest CPU priority; never touches the library database.
 const fs = require('fs');
 const os = require('os');
@@ -31,10 +31,15 @@ const beat = setInterval(() => {
   if (fs.existsSync(path.join(dir, 'stop')) && worker.stop()) console.log('[crawler] stop asked: saving and ending');
 }, 1000);
 
-const log = (...a) => console.log(new Date().toISOString(), ...a);
+// Its output: crawl.log (stdout) and the task's log file the server shows (job.logFile)
+const log = (...a) => {
+  console.log(new Date().toISOString(), ...a);
+  if (job.logFile) try { fs.appendFileSync(job.logFile, new Date().toISOString().replace('T', ' ').slice(0, 19) + ' ' + a.join(' ').replace(/^\[crawler\] /, '') + '\n'); } catch { /* best effort */ }
+};
 log(`[crawler] ${job.mode} crawl of "${job.source.name}" (pid ${process.pid})`);
 worker.crawl({ reqId: 1, source: job.source, dir, mode: job.mode, allowLocal: Boolean(job.allowLocal), concurrency: job.concurrency }, m => {
   if (m.type === 'progress') { state.progress = Object.assign({}, m, { type: undefined, reqId: undefined }); }
+  else if (m.type === 'log') log(m.line);
 }).then(result => {
   state.status = result.stopped ? 'stopped' : 'done';
   state.result = result;

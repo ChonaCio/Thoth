@@ -22,6 +22,7 @@ const scanner = require('./library/scanner');
 const metadata = require('./library/metadata');
 const rename = require('./library/rename');
 const media = require('./library/media');
+const tasks = require('./library/tasks');
 
 // Deleting a user also deletes their reading progress
 auth.hooks.userDeleted.push(username => libraryStore.removeUser(username));
@@ -137,6 +138,38 @@ async function handleApi(req, res, url) {
       return;
     }
 
+    // ---- tasks (Processes → Tasks) and their log files (Logs page): administrators ----
+    if (url.pathname === '/api/tasks' && method === 'GET') { auth.requireAdmin(req); return sendJson(res, 200, tasks.list()); }
+    let tm;
+    if ((tm = /^\/api\/tasks\/([\w-]+)$/.exec(url.pathname)) && method === 'GET') {
+      auth.requireAdmin(req);
+      const t = tasks.get(tm[1], { lines: Math.min(2000, Math.max(10, Number(url.searchParams.get('lines')) || 200)) });
+      return t ? sendJson(res, 200, { task: t }) : sendJson(res, 404, { error: 'notFound' });
+    }
+    if ((tm = /^\/api\/tasks\/([\w-]+)\/stop$/.exec(url.pathname)) && method === 'POST') {
+      const { user } = auth.requireAdmin(req);
+      if (!tasks.stop(tm[1])) return sendJson(res, 409, { error: 'cannotStop', message: 'That task can’t be stopped (or has ended).' });
+      console.log(`[tasks] ${tm[1]} stopped by ${user.username}`);
+      return sendJson(res, 200, { ok: true });
+    }
+    if (url.pathname === '/api/logs' && method === 'GET') {
+      auth.requireAdmin(req);
+      return sendJson(res, 200, tasks.listLogs({ kind: url.searchParams.get('kind') || null, q: url.searchParams.get('q') || '' }));
+    }
+    if ((tm = /^\/api\/logs\/([\w.-]+)$/.exec(url.pathname)) && (method === 'GET' || method === 'DELETE')) {
+      auth.requireAdmin(req);
+      const file = tasks.logFile(tm[1]);
+      if (!file) return sendJson(res, 404, { error: 'notFound' });
+      if (method === 'DELETE') { tasks.deleteLog(tm[1]); return sendJson(res, 200, { ok: true }); }
+      // ?download=1: as a file to save; else the last lines (?lines=) as JSON for the viewer
+      if (url.searchParams.get('download') === '1') {
+        res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Content-Disposition': `attachment; filename="${tm[1]}"`, 'Cache-Control': 'no-store', 'X-Content-Type-Options': 'nosniff' });
+        return fs.createReadStream(file).pipe(res);
+      }
+      const lines = Math.min(20000, Math.max(10, Number(url.searchParams.get('lines')) || 2000));
+      return sendJson(res, 200, { name: tm[1], size: fs.statSync(file).size, lines: tasks.tail(file, lines) });
+    }
+
     // ---- processes: the web server and the library scan service (administrators) ----
     if (url.pathname === '/api/processes' && method === 'GET') {
       auth.requireAdmin(req);
@@ -154,7 +187,8 @@ async function handleApi(req, res, url) {
         metadata: metadata.info(),
         rename: rename.info(),
         catalog: require('./library/catalog').info(),
-        caches: require('./library/cache/client').allInfo() // Pages, Covers, Works, Search: a process each
+        caches: require('./library/cache/client').allInfo(), // Pages, Covers, Works, Search: a process each
+        tasks: { running: tasks.list().running.length }
       });
     }
     // ---- server settings (administrators) ----
@@ -253,6 +287,7 @@ server.listen(PORT, HOST, () => {
   scanner.scanAll();
 media.scheduleWarm(15000); // work covers into the cover cache (also after every scan)
 require('./library/catalog').startSchedule(); // external catalog: scheduled crawls
+tasks.startCleanup(); // task log files older than Server settings → logRetentionDays
 
   scanner.startSchedule();
 });

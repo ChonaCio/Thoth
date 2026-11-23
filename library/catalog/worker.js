@@ -13,6 +13,19 @@ const { sitemapWorks } = require('./sitemap');
 // How a source lists its works: its sitemaps (when detected/set) or the site's own list pages
 const lister = (src, adapter) => (src.listing === 'sitemap' && src.workPattern && src.type !== 'mangadex' && src.type !== 'webtoons' ? sitemapWorks : adapter.listWorks.bind(adapter));
 
+// Chapter names the same way the file renamer names files ("Chapter 44 - The End"): dates, views and the
+// number said twice dropped (the name as the site shows it kept in `raw`, the volume in `v`)
+const { chapterTitle } = require('../naming');
+function standardChapter(c, src) {
+  // MangaDex gives the number apart from the title
+  const raw = src.type === 'mangadex' && c.n ? `Chapter ${c.n} ${c.t || ''}` : c.t;
+  const std = chapterTitle(raw, c.n);
+  const out = Object.assign({}, c, { t: std.name, n: std.n != null ? std.n : c.n });
+  if (std.v && !out.v) out.v = std.v;
+  if (c.t && c.t !== std.name) out.raw = c.t;
+  return out;
+}
+
 let current = null;
 const FIELDS = ['title', 'altTitles', 'cover', 'summary', 'authors', 'genres', 'tags', 'status', 'type', 'year', 'url', 'languages', 'links'];
 const filled = v => v != null && v !== '' && !(Array.isArray(v) && !v.length) && v !== 'unknown';
@@ -58,9 +71,13 @@ async function crawl(msg, send) {
   store.writeState(dir, state);
   const stats = { listed: 0, added: 0, updated: 0, read: 0, errors: 0, chapters: 0, removed: 0, partial: 0, requests: 0, mode, resumed: Boolean(resume) };
   const report = extra => send(Object.assign({ type: 'progress', reqId: msg.reqId }, stats, extra));
+  const say = line => send({ type: 'log', reqId: msg.reqId, line }); // (a line in the task's log)
+  say(`listing the works (${src.listing === 'sitemap' ? 'from ' + ((src.sitemaps || []).length || 1) + ' sitemap(s)' : 'from the list pages'}${incremental ? ', recent changes only' : ''})`);
   let lastFlush = Date.now();
   const flush = () => { store.writeWorks(dir, { sourceId: src.id, works }); chapters.flush(); lastFlush = Date.now(); send({ type: 'flushed', reqId: msg.reqId }); };
-  const ctx = { src, get: (u, o) => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.get(u, o); }, incremental };
+  const ctx = { src, get: (u, o) => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.get(u, o); }, incremental,
+    sitemapState: store.readSitemapState(dir) }; // (what the sitemaps held at the last crawl: an update reads only what changed)
+  const failed = new Set(); // works whose page couldn't be read: looked at again next time
   const queue = [];
   let listingComplete = false, aborted = null;
   try {
@@ -80,19 +97,30 @@ async function crawl(msg, send) {
       if (Date.now() - lastFlush > 30000) flush();
     }
     listingComplete = !src.maxWorks || stats.listed < src.maxWorks;
+    const sc = ctx.sitemapCounts;
+    say(`${stats.listed} work(s) listed (${stats.added} new)` + (sc ? `; sitemaps: ${sc.files} read, ${sc.unchanged} unchanged, ${sc.notRead} not downloaded (same date)` : ''));
     // 2. Each work's details and chapter list: several works at once (msg.concurrency lanes taking the next
     // work from the list). The fetcher still spaces the requests to one site by gapMs, so more lanes only
     // help while pages are slow to answer; they never make the crawl hit the site faster than that.
     state.phase = 'works'; store.writeState(dir, state);
     const lanes = Math.max(1, Math.min(8, Number(msg.concurrency) || 1, queue.length || 1));
     stats.concurrency = lanes;
-    let done = 0, next = 0;
+    let done = 0, next = 0, readCount = 0, lastReport = 0;
+    // Time left: from the speed of the works read in this run (once a few are done), for the ones still to read
+    const worksStartedAt = Date.now();
+    const worksProgress = () => {
+      const elapsed = Date.now() - worksStartedAt, left = queue.length - done;
+      const etaMs = readCount >= 3 && elapsed >= 3000 ? Math.round(elapsed / readCount * left) : null;
+      return { phase: 'works', done, total: queue.length, concurrency: lanes, etaMs, at: Date.now() };
+    };
+    report(worksProgress());
     const readWork = async sid => {
       const w = works[sid];
       try {
         const old = chapters.get(sid);
         const known = new Set(((old && old.chapters) || []).map(c => String(c.id)));
         const full = await adapter.fetchWork(Object.assign({}, ctx, { known }), Object.assign({}, w));
+        if (full.chapters) full.chapters = full.chapters.map(c => standardChapter(c, src));
         for (const f of FIELDS) if (filled(full[f])) w[f] = full[f];
         if (full.chapters) {
           // Updating: what the site shows now + what was stored (an incremental read stops at known chapters)
@@ -114,17 +142,23 @@ async function crawl(msg, send) {
         if (e.code === 'stopped') return;
         if (e.code === 'blocked' || e.code === 'notPublic') { if (!aborted) aborted = e; return; } // the whole site
         stats.errors++;
+        failed.add(sid);
         w.error = errText(e).slice(0, 200);
+        say(`"${w.title || sid}": ${w.error}`);
       }
     };
     const lane = async () => {
       while (!run.stop && !aborted && next < queue.length) {
         const sid = queue[next++];
         const w = works[sid];
-        if (!(resume && w.detailAt && w.detailAt >= resume)) await readWork(sid);
+        const skipped = resume && w.detailAt && w.detailAt >= resume; // (read before an interruption)
+        if (!skipped) await readWork(sid);
         if (run.stop || aborted) return;
         done++;
-        if (done % 10 === 0 || done === queue.length) report({ phase: 'works', done, total: queue.length, concurrency: lanes });
+        if (!skipped) readCount++;
+        if (done % 25 === 0 || done === queue.length) say(`${done} of ${queue.length} works read (${stats.chapters} chapters, ${stats.errors} errors)`);
+        // At most once a second (the crawler saves its progress every second anyway)
+        if (Date.now() - lastReport >= 1000 || done === queue.length) { lastReport = Date.now(); report(worksProgress()); }
         if (Date.now() - lastFlush > 30000) flush();
       }
     };
@@ -139,6 +173,15 @@ async function crawl(msg, send) {
   stats.requests = fetcher.stats.requests;
   flush();
   const finished = !run.stop && !aborted;
+  if (aborted) say('stopped: ' + errText(aborted)); else if (run.stop) say('stop asked: what was read is saved');
+  // The sitemaps as they are now, for the next update (only after a crawl that read everything it listed)
+  if (ctx.sitemapNext) {
+    stats.sitemaps = ctx.sitemapCounts;
+    if (finished) {
+      for (const f of Object.values(ctx.sitemapNext.files)) for (const sid of failed) if (f.works && sid in f.works) { delete f.works[sid]; f.hash = f.lastmod = null; } // (its file is looked at again)
+      store.writeSitemapState(dir, ctx.sitemapNext);
+    }
+  }
   Object.assign(state, { running: !finished && !incremental, phase: finished ? 'done' : 'stopped', lastError: aborted ? errText(aborted) : null, stats, total: Object.keys(works).length });
   if (finished) { state.lastCrawlAt = runStartedAt; state.lastCompleteAt = new Date().toISOString(); }
   store.writeState(dir, state);

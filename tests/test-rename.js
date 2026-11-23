@@ -41,6 +41,12 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
     'chapter-1-chapter name.cbz': 'Chapter 1 - Chapter Name.cbz', 'ch_12_the_end.cbz': 'Chapter 12 - The End.cbz', 'vol.3.cbz': 'Volume 3.cbz',
     'Chapter 1.cbz': null, 'Chapter 1 - Chapter Name.cbz': null, 'Saga 001.cbz': null, 'EP-4.pdf': 'Episode 4.pdf' };
   ok(Object.entries(expect).every(([from, to]) => rules.proposedName(from) === to), 'naming rules: every example gives the expected name (and good names are left alone)');
+  // The same rules for chapter names read on sites (external catalog)
+  const { chapterTitle } = require(path.join(APP, 'library', 'naming.js'));
+  const siteNames = [['Chapter 44 - 44', 'Chapter 44'], ['Chapter 44 - Ch. 44', 'Chapter 44'], ['Ch. 044 - Ch. 44  Jan 4, 2025  1.2k views', 'Chapter 44'], ['Vol.2 Ch.15 - Escape 3 days ago', 'Chapter 15 - Escape'],
+    ['Episode 7 · 12.3k views', 'Episode 7'], ['Solo Leveling Chapter 12', 'Chapter 12'], ['12 - the end', 'Chapter 12 - The End'], ['Chapter 10.5 NEW', 'Chapter 10.5'], ['Chapter 44: Chapter 44 The End', 'Chapter 44 - The End'], ['Prologue', 'Prologue']];
+  const bad = siteNames.filter(([raw, want]) => chapterTitle(raw).name !== want).map(([raw]) => `${raw} → ${chapterTitle(raw).name}`);
+  ok(!bad.length && chapterTitle('The Beginning', '1').name === 'Chapter 1 - The Beginning' && chapterTitle('Vol.2 Ch.15').v === '2', `chapter names from sites: dates, views and repeated numbers dropped${bad.length ? ' (' + bad.join('; ') + ')' : ''}`);
 
   await start();
   cookie = (await call('POST', '/api/setup', { username: 'admin', password: 'adminpass1' })).cookie;

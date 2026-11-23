@@ -775,7 +775,10 @@ async function handle(ctx) {
       return send(202, { job: catalog.crawl(m[1], { mode: body.mode === 'update' ? 'update' : 'full' }) });
     }
     if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/stop$/.exec(p)) && method === 'POST') return send(200, { stopping: catalog.stopCrawl(m[1]) });
-    if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions());
+    if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions({ source: q.get('source') || null }));
+    if (p === '/api/catalog/merged' && method === 'GET') return send(200, catalog.mergedGroups({ source: q.get('source') || null }));
+    if (p === '/api/catalog/merge/auto' && method === 'POST') return send(200, { merged: catalog.autoMerge() });
+    if ((m = /^\/api\/catalog\/merge\/([\w-]+)\/split$/.exec(p)) && method === 'POST') return send(200, catalog.splitOff(m[1], String(body.key || '')));
     if (p === '/api/catalog/merge-suggestions/dismiss' && method === 'POST') {
       if (typeof body.key !== 'string' || !body.key) throw httpError(400, 'invalid');
       catalog.dismiss(body.key);

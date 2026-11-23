@@ -33,6 +33,9 @@ function readWorks(dir) { const d = readJson(worksFile(dir), null); return d && 
 function writeWorks(dir, data) { writeJson(worksFile(dir), Object.assign({ version: 1 }, data, { updatedAt: new Date().toISOString() })); }
 function readState(dir) { return readJson(stateFile(dir), {}); }
 function writeState(dir, state) { writeJson(stateFile(dir), state); }
+// What each sitemap file held at the last crawl (its content hash, its date in the index, a fingerprint per work)
+function readSitemapState(dir) { return readJson(path.join(dir, 'sitemaps.json'), null); }
+function writeSitemapState(dir, data) { writeJson(path.join(dir, 'sitemaps.json'), data); }
 function readShard(dir, shard) { return readJson(shardFile(dir, shard), {}); }
 function writeShard(dir, shard, data) { writeJson(shardFile(dir, shard), data); }
 
@@ -57,4 +60,4 @@ function shardCache(dir, max = 32) {
   };
 }
 
-module.exports = { replaceFile, shardOf, readWorks, writeWorks, readState, writeState, readShard, writeShard, shardCache, worksFile, stateFile };
+module.exports = { readSitemapState, writeSitemapState, replaceFile, shardOf, readWorks, writeWorks, readState, writeState, readShard, writeShard, shardCache, worksFile, stateFile };

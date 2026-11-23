@@ -15,6 +15,7 @@
     catalog: { adminOnly: true },
     rename: { adminOnly: true }, // old address of File management
     processes: { adminOnly: true },
+    logs: { adminOnly: true },
     'server-settings': { adminOnly: true },
     users: { adminOnly: true, key: 'nav.users' },
     updates: { adminOnly: true, key: 'nav.updates' }
@@ -344,6 +345,7 @@
       items.push({ href: '#files', icon: 'folder_open', key: 'nav.files', match: ['files', 'rename'] });
       items.push({ href: '#catalog', icon: 'travel_explore', key: 'nav.catalog', match: ['catalog'] });
       items.push({ href: '#processes', icon: 'memory', key: 'nav.processes' });
+      items.push({ href: '#logs', icon: 'description', key: 'nav.logs' });
       items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });
       items.push({ href: '#updates', icon: 'update', key: 'nav.updates' });

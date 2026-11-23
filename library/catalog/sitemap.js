@@ -2,6 +2,7 @@
 // learn its address patterns when a source is added), and as a source's way of listing works: polite (a few
 // files instead of every list page) and, with lastmod dates, updates only read what changed.
 const zlib = require('zlib');
+const crypto = require('crypto');
 
 const decodeXml = s => String(s).replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&apos;/g, "'").trim();
 // → { sitemaps: [{ loc, lastmod }], urls: [{ loc, lastmod }] }
@@ -12,25 +13,28 @@ function parseSitemap(text) {
   for (const m of String(text).matchAll(/<(?:\w+:)?url>([\s\S]*?)<\/(?:\w+:)?url>/gi)) { const loc = pick(m[1], 'loc'); if (loc) out.urls.push({ loc, lastmod: pick(m[1], 'lastmod') }); }
   return out;
 }
+const hashOf = text => crypto.createHash('sha1').update(String(text)).digest('hex');
 async function readSitemap(get, url) {
   const res = await get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5' });
   let text = res.text;
   if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf).toString('utf8'); // .xml.gz
-  return parseSitemap(text);
+  return Object.assign(parseSitemap(text), { hash: hashOf(text) });
 }
-// Every URL listed, following sitemap indexes (at most maxFiles files). onFile(url, n) for progress.
-async function* walk(get, roots, { maxFiles = 2000, filter } = {}) {
-  const todo = roots.slice(), seen = new Set();
+// Every URL listed, following sitemap indexes (at most maxFiles files): { file, urls, hash (of its content),
+// lastmod (its date in the index that named it) }. skip(url, lastmod): true = don't read that file at all.
+async function* walk(get, roots, { maxFiles = 2000, filter, skip } = {}) {
+  const todo = roots.map(loc => ({ loc, lastmod: null })), seen = new Set();
   let files = 0;
   while (todo.length && files < maxFiles) {
-    const url = todo.shift();
+    const { loc: url, lastmod } = todo.shift();
     if (seen.has(url)) continue;
     seen.add(url);
+    if (skip && skip(url, lastmod)) continue;
     files++;
     let sm;
     try { sm = await readSitemap(get, url); } catch (e) { if (e.code === 'blocked' || e.code === 'stopped') throw e; continue; }
-    for (const s of sm.sitemaps) if (!filter || filter(s.loc)) todo.push(s.loc);
-    if (sm.urls.length) yield { file: url, urls: sm.urls };
+    for (const s of sm.sitemaps) if (!filter || filter(s.loc)) todo.push(s);
+    if (sm.urls.length) yield { file: url, urls: sm.urls, hash: sm.hash, lastmod };
   }
 }
 
@@ -90,27 +94,60 @@ function inferPatterns(urls, hints = new Map()) {
 // "one-piece-colored" → "One Piece Colored" (a stand-in title until the work's page is read)
 const titleFromSlug = url => { const seg = pathOf(url).split('/').filter(Boolean).pop() || ''; return seg.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()).trim(); };
 
-// A source's works from its sitemaps: [{ sid, url, title, lastmod }] pages. An update only yields works whose
-// lastmod is after the last crawl (works without a date are always included).
+// A source's works from its sitemaps: [{ sid, url, title, lastmod }] pages.
+// Every crawl leaves in ctx.sitemapNext what each sitemap file held: { files: { url: { hash, lastmod, works:
+// { sid: fingerprint } } } } (a work's fingerprint: its own date plus the chapter addresses listed under it).
+// An update given the last crawl's (ctx.sitemapState) only looks at what changed:
+//   - a file whose date in its index is the same isn't even downloaded;
+//   - a file whose content hash is the same is skipped;
+//   - in a changed file, only works that are new or whose fingerprint changed are read.
+// Without a saved state, an update yields the works dated after the last crawl (undated ones always).
 async function* sitemapWorks(ctx) {
   const { src, get } = ctx;
   const re = patternRegex(src.workPattern);
   if (!re) throw Object.assign(new Error('No address pattern for the works'), { code: 'config' });
+  const chRe = patternRegex(src.chapterPattern);
   const since = ctx.incremental && src.lastCrawlAt ? Date.parse(src.lastCrawlAt) - 86400000 : 0;
   const roots = (src.sitemaps && src.sitemaps.length ? src.sitemaps : [new URL('/sitemap.xml', src.baseUrl).href]);
   // Child sitemaps that obviously list other things (tags, authors, chapters, images) are skipped
   const filter = loc => !/(tag|categor|author|artist|genre|image|video|news|page|post|chapter|episode)s?[-_]?sitemap|sitemap[-_]?(tag|categor|author|artist|genre|image|video|news|page|post|chapter|episode)/i.test(loc);
+  const prev = ctx.sitemapState && ctx.sitemapState.files ? ctx.sitemapState : null;
+  const delta = Boolean(ctx.incremental && prev);
+  const next = ctx.sitemapNext = { at: new Date().toISOString(), files: {} };
+  const counts = ctx.sitemapCounts = { files: 0, unchanged: 0, notRead: 0 };
+  const skip = delta ? (loc, lastmod) => {
+    const old = prev.files[loc];
+    if (!old || !lastmod || old.lastmod !== lastmod) return false;
+    next.files[loc] = old; counts.notRead++; return true;
+  } : null;
+  // The work a chapter address belongs to: the longest start of its path that is a work's address
+  const workOf = p => { const segs = p.split('/').filter(Boolean); for (let k = segs.length - 1; k > 0; k--) { const c = '/' + segs.slice(0, k).join('/'); if (re.test(c)) return c; } return null; };
+  const slash = /\/$/.test(src.workPattern) ? '/' : '';
   const seen = new Set();
-  for await (const { urls } of walk(get, roots, { filter })) {
-    const page = [];
+  for await (const { file, urls, hash, lastmod } of walk(get, roots, { filter, skip })) {
+    counts.files++;
+    const entries = new Map(); // sid → { url, lastmod, parts }
+    const entry = sid => { if (!entries.has(sid)) entries.set(sid, { url: null, lastmod: null, parts: [] }); return entries.get(sid); };
     for (const u of urls) {
       const p = pathOf(u.loc);
-      if (!re.test(p)) continue;
-      const sid = p.replace(/\/+$/, '');
-      if (seen.has(sid)) continue;
+      if (re.test(p)) { const e = entry(p.replace(/\/+$/, '')); e.url = u.loc; e.lastmod = u.lastmod || null; e.parts.push('=' + (u.lastmod || '')); continue; }
+      const sid = chRe && chRe.test(p) ? workOf(p) : null;
+      if (sid) entry(sid).parts.push(p + ' ' + (u.lastmod || ''));
+    }
+    const works = {};
+    for (const [sid, e] of entries) works[sid] = hashOf(e.parts.sort().join('\n')).slice(0, 16);
+    next.files[file] = { hash, lastmod: lastmod || null, works };
+    const old = prev && prev.files[file];
+    if (delta && old && old.hash === hash) { counts.unchanged++; continue; }
+    const page = [];
+    for (const [sid, e] of entries) {
+      // (a work seen only through its chapters is read only when it was listed before)
+      if (seen.has(sid) || (!e.url && !(old && old.works && sid in old.works))) continue;
       seen.add(sid);
-      if (since && u.lastmod && Date.parse(u.lastmod) < since) continue;
-      page.push({ sid, url: u.loc, title: titleFromSlug(u.loc), lastmod: u.lastmod || null });
+      if (delta && old) { if (old.works && old.works[sid] === works[sid]) continue; }
+      else if (since && e.lastmod && Date.parse(e.lastmod) < since) continue;
+      const url = e.url || new URL(sid + slash, file).href; // (only its chapters are listed here)
+      page.push({ sid, url, title: titleFromSlug(url), lastmod: e.lastmod });
     }
     for (let i = 0; i < page.length; i += 100) yield page.slice(i, i + 100);
   }

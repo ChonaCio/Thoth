@@ -75,6 +75,20 @@ function lock(file) {
   const j3 = await jobOf((await call('POST', '/api/rename/apply', { items: again })).data.job.id);
   ok(j3.renamed === 1, 'after that, the next job renames with a new rename process');
 
+  // ---- tasks and their logs ----
+  const tl = (await call('GET', '/api/tasks')).data;
+  const scanTask = tl.recent.find(x => x.kind === 'scan'), fileTask = tl.recent.find(x => x.kind === 'files' && /2 not done/.test(x.summary || ''));
+  ok(scanTask && scanTask.status === 'done' && /works/.test(scanTask.summary) && fileTask, `scans and file jobs are tasks (${scanTask && scanTask.summary}; ${fileTask && fileTask.summary})`);
+  const fileLog = (await call('GET', `/api/logs/${fileTask.log}`)).data.lines.join('\n');
+  ok(/episode-3\.cbz - stalled/.test(fileLog) && /file\(s\) to go through/.test(fileLog), 'a file job’s log says what it did and which files weren’t done, and why');
+  // Old logs are deleted after the number of days set in Server settings
+  const logDir = path.join(DATA, 'logs');
+  const old = path.join(logDir, '20200101-000000_other_old.log');
+  fs.writeFileSync(old, '# old\n'); const past = new Date(Date.now() - 3 * 86400000); fs.utimesSync(old, past, past);
+  ok((await call('GET', '/api/logs')).data.logs.some(l => l.name === '20200101-000000_other_old.log'), 'the Logs page lists every log file');
+  await call('PATCH', '/api/config', { logRetentionDays: 2 });
+  ok(!fs.existsSync(old) && fs.existsSync(path.join(logDir, fileTask.log)), 'log files older than the days set are deleted (newer ones kept)');
+
   console.log(`\n${passed} checks passed`);
   srv.kill(); if (locker) locker.kill();
   await wait(300);

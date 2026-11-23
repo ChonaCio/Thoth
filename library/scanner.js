@@ -17,6 +17,7 @@ const core = require('./scan-core');
 const store = require('./db');
 const config = require('../config');
 const metadata = require('./metadata');
+const tasks = require('./tasks');
 
 // Bump when what is read from files changes (2: ComicInfo genres kept apart from tags)
 const READ_VERSION = 2;
@@ -279,8 +280,10 @@ async function runScan(job) {
   const lib = store.db.libraries[libraryId];
   if (!lib) throw Object.assign(new Error('Library not found'), { status: 404, code: 'notFound' });
   const started = Date.now();
+  const log = (...a) => { if (job.task) job.task.log(...a); };
   try {
     status.phase = 'listing';
+    log(`listing the files of ${lib.root}`);
     // The first scan of a library is always full; a quick scan needs the saved index of the last one
     const hasBooks = Object.values(store.db.books).some(b => b.libraryId === libraryId);
     if (!hasBooks && !lib.lastScan) job.mode = 'full';
@@ -296,9 +299,14 @@ async function runScan(job) {
       const b = books.get(f.rel);
       return full || !b || b.size !== f.size || b.fileModified !== f.fileModified || (b.readVersion || 1) < READ_VERSION;
     }).map(f => f.rel);
+    log(`${listing.files.length} book files found` + (listing.stats && listing.stats.quick ? ` (${listing.stats.dirsReused || 0} of ${listing.stats.dirs || 0} folders unchanged)` : '') + `; ${toRead.length} to read`);
+    for (const e of listing.errors.slice(0, 50)) log('cannot list:', typeof e === 'string' ? e : JSON.stringify(e));
     status.phase = 'reading';
     status.readingStartedAt = Date.now();
     const analysis = new Map((await analyzeFiles(lib, toRead, status)).map(r => [r.rel, r]));
+    const unreadable = [...analysis.values()].filter(r => r.error);
+    log(`read ${analysis.size} files` + (unreadable.length ? `, ${unreadable.length} unreadable` : ''));
+    for (const r of unreadable.slice(0, 200)) log('unreadable:', r.rel, '-', r.error);
     status.phase = 'saving';
     if (!store.db.libraries[libraryId]) throw Object.assign(new Error('Library was removed'), { code: 'notFound' });
 
@@ -456,9 +464,14 @@ async function pump() {
   ensureWorkers();
   const job = currentJob = queue.shift();
   Object.assign(job.status, { queued: false, startedAt: new Date().toISOString(), filesSeen: 0, toAnalyze: 0, analyzed: 0 });
+  // A task for the Processes page's Tasks tab, with its own log file
+  const libName = (store.db.libraries[job.libraryId] || {}).name || job.libraryId;
+  job.task = tasks.start({ kind: 'scan', title: `Scan of "${libName}" (${job.mode}, ${job.reason || 'manual'})`, progress: () => progressOf(job.status) });
   let result, error;
   try { result = await runScan(job); } catch (e) { error = e; }
   currentJob = null;
+  if (error) job.task.end(error.code === 'cancelled' ? 'stopped' : 'failed', error.code === 'cancelled' ? 'the scan service was stopped; the scan runs again when it starts' : error.message);
+  else job.task.end('done', `${result.series} works, ${result.books} books (+${result.added} new, ${result.updated} changed, ${result.removed} removed; ${result.read} files read) in ${Math.round(result.durationMs / 100) / 10} s`);
   if (error && error.code === 'cancelled') {
     // Service stopped: back to the front of the line, to run when it starts again
     Object.assign(job.status, { queued: true, startedAt: null, filesSeen: 0, toAnalyze: 0, analyzed: 0 });

@@ -21,55 +21,8 @@ const local = require('./metadata/local');
 const renameWorker = require('./rename-worker');
 
 const { db } = store;
-const KINDS = [
-  { re: /^(?:chapter|chap|ch|c)$/i, word: 'Chapter' },
-  { re: /^(?:volume|vol|v)$/i, word: 'Volume' },
-  { re: /^(?:episode|ep)$/i, word: 'Episode' },
-  { re: /^(?:issue|iss)$/i, word: 'Issue' }
-];
-// "chapter-1-chapter name" → { word: 'Chapter', number: '1', name: 'chapter name' }, or null
-function parse(base) {
-  const m = /^([a-z]+)[\s._-]*(\d+(?:[.x]\d+)*)(?:[\s._-]+(.*\S))?\s*$/i.exec(base);
-  if (!m) return null;
-  const kind = KINDS.find(k => k.re.test(m[1]));
-  if (!kind) return null;
-  return { word: kind.word, number: cleanNumber(m[2]), name: m[3] ? cleanName(m[3], /\s/.test(base)) : '' };
-}
-// "001" → "1", "1x1" → "1.1", "01.50" → "1.50" (decimals kept as written)
-function cleanNumber(n) {
-  const parts = n.split(/[.x]/i);
-  parts[0] = String(parseInt(parts[0], 10));
-  return parts.join('.');
-}
-// "the-end" → "the end"; "chapter name" stays. A file name without any space uses dashes (or underscores)
-// as spaces; one that has spaces keeps its dashes ("Chapter 5 - Spider-Man", "Part 1 - Intro").
-function cleanName(s, spaced) {
-  s = s.replace(/^[\s._-]+/, '').replace(/_+/g, ' ');
-  if (!spaced) return s.replace(/-+/g, ' ').trim();
-  return s.replace(/\s+-\s+/g, ' - ').replace(/\s+/g, ' ').trim();
-}
-// Capitalize each word's first letter; the rest of the word is kept (acronyms, "McGee")
-function titleCase(s) {
-  return s.split(' ').map(w => (w ? w[0].toLocaleUpperCase() + w.slice(1) : w)).join(' ');
-}
-// The name a file should have, or null when it already does (capitalization aside: a change of case only is
-// not proposed) or doesn't follow a known pattern
-function proposedName(fileName) {
-  const ext = path.extname(fileName);
-  const base = fileName.slice(0, fileName.length - ext.length);
-  const p = parse(base);
-  if (!p) return null;
-  const name = p.name ? ' - ' + titleCase(p.name.replace(/^-\s*/, '')) : '';
-  const next = `${p.word} ${p.number}${name}${ext}`;
-  return next.toLowerCase() === fileName.toLowerCase() ? null : next;
-}
-// The name with another chapter number (the rest as proposedName would make it)
-function nameWithNumber(fileName, number) {
-  const ext = path.extname(fileName);
-  const p = parse(fileName.slice(0, fileName.length - ext.length));
-  if (!p) return null;
-  return `${p.word} ${number}${p.name ? ' - ' + titleCase(p.name.replace(/^-\s*/, '')) : ''}${ext}`;
-}
+// The naming rules (shared with the external catalog's crawls)
+const { KINDS, parse, cleanNumber, cleanName, titleCase, proposedName, nameWithNumber } = require('./naming');
 
 // A chapter number that lost its decimal point: a work with chapters 1 to 70 and a `505` most likely has 50.5
 // (the number is far past the others, and with a point it falls in the run, next to a chapter it has, on a
@@ -291,7 +244,12 @@ function runOps(ops, onProgress) {
 }
 // What a job is doing: 'waiting' (another job runs) → 'sources' (reading folder sources) → 'checking'
 // (the proposals) → 'files'
-function setPhase(job, phase, detail) { job.phase = phase; job.phaseDetail = detail || null; job.progressAt = Date.now(); }
+function setPhase(job, phase, detail) {
+  const same = job.phase === phase && !detail;
+  job.phase = phase; job.phaseDetail = detail || null; job.progressAt = Date.now();
+  if (job.task && !same) job.task.log(phase === 'sources' ? `reading the folder source "${detail.name}" (${detail.n} of ${detail.of})` : phase === 'files' ? `${job.total} file(s) to go through` : phase);
+}
+const JOB_TITLES = { rename: 'Renaming files', delete: 'Deleting files', merge: 'Merging works' };
 
 // kind 'rename': picks = [{ bookId, toName }] or { all: true, library, exclude: [bookId] } (every valid proposal)
 // kind 'delete': picks = [{ bookId, replace? }] (replace: delete the file holding this book's proposed name, then
@@ -314,9 +272,14 @@ async function pump() {
     while ((job = jobs.find(j => j.status === 'queued'))) {
       job.status = 'running';
       job.startedAt = new Date().toISOString();
+      // A task for the Processes page's Tasks tab, with its own log file
+      job.task = require('./tasks').start({ kind: 'files', title: `${JOB_TITLES[job.kind] || job.kind}` + (job.by ? ` (by ${job.by})` : ''),
+        progress: () => { const v = jobView(job); return { percent: v.progress, done: v.done, total: v.total, phase: v.phase, detail: v.file || null }; } });
       setPhase(job, 'checking');
       try { await (job.kind === 'delete' ? runDeleteJob(job) : job.kind === 'merge' ? runMergeJob(job) : runJob(job)); job.status = 'done'; } catch (e) { job.status = 'failed'; job.error = e.message; console.error('[library] rename job failed:', e.message); }
       job.finishedAt = new Date().toISOString();
+      for (const f of job.failed.slice(0, 1000)) job.task.log('not done:', f.from, '-', f.error);
+      job.task.end(job.status === 'failed' ? 'failed' : 'done', job.status === 'failed' ? job.error : [job.renamed && `renamed ${job.renamed}`, job.deleted && `deleted ${job.deleted}`, job.moved && `moved ${job.moved}`, job.failed.length && `${job.failed.length} not done`].filter(Boolean).join(', ') || 'nothing to do');
       const w = state.worker;
       state.last = { at: job.finishedAt, files: job.total, renamed: job.renamed, mode: w ? w.mode : null, pid: w ? w.pid : null, durationMs: Date.parse(job.finishedAt) - Date.parse(job.startedAt) };
       job.process = w ? { mode: w.mode, pid: w.pid } : null;

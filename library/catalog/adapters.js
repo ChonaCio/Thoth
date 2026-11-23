@@ -26,6 +26,67 @@ function pick(doc, spec, base, all = false) {
   }
   return all ? [] : null;
 }
+// What most work pages carry besides the theme's own markup: the cover (Open Graph / Twitter / schema.org image)
+// and other titles (schema.org alternateName, a row labeled "Alternative", "Also known as", "Other names"…).
+// Fills only what the adapter didn't find.
+const ALT_LABEL = /^\s*(?:alternative(?: titles?| names?)?|alt(?:ernate)?\.? ?(?:titles?|names?)|other names?|also known as|aka|associated names?|synonyms?|nombres? alternativos?|t[ií]tulos? alternativos?|autres? (?:titres?|noms?)|alternativtitel|t[ií]tulos? alternativos?)\s*:?\s*/i;
+function enrich(doc, work, base) {
+  const meta = p => (doc.first(`meta[property="${p}"]`) || doc.first(`meta[name="${p}"]`) || { attr: () => null }).attr('content');
+  let ld = [];
+  for (const s of doc.select('script[type="application/ld+json"]')) {
+    try { const j = JSON.parse(s.textBlock()); ld = ld.concat(Array.isArray(j) ? j : j['@graph'] || [j]); } catch { /* not JSON */ }
+  }
+  const book = ld.find(x => x && /Book|Comic|Series|CreativeWork/i.test([].concat(x['@type'] || []).join())) || {};
+  if (!work.cover) {
+    const img = [].concat(book.image || [])[0];
+    work.cover = abs((img && (img.url || img)) || meta('og:image') || meta('twitter:image') || pick(doc, '[itemprop=image]@src || [itemprop=image]@content', base), base) || work.cover || null;
+  }
+  if (!work.altTitles || !work.altTitles.length) {
+    let alt = [].concat(book.alternateName || book.alternativeHeadline || []);
+    if (!alt.length) {
+      // A labeled row: "<b>Alternative:</b> A, B" or "<dt>Other names</dt><dd>A; B</dd>"
+      const row = doc.select('li, tr, p, div.info-item, .post-content_item, dl, .imptdt, span.alt, div').find(el => el.el.children.length < 12 && ALT_LABEL.test(el.text()) && el.text().length < 600);
+      if (row) alt = splitAlt(row.text().replace(ALT_LABEL, ''));
+    }
+    work.altTitles = list(alt).filter(t => t !== work.title).slice(0, 30);
+  }
+  return work;
+}
+
+// Chapter lists that show only the last chapters until "Show more" / "Load all" is pressed, or that come in
+// pages: the links or buttons that lead to the rest (an address in href, data-url or data-href), followed up to
+// maxPages times. readPage(doc, url) → chapters of that page. Returns the chapters of every page, once each.
+const MORE_TEXT = /show (?:all|more)|load (?:all|more)|view all|see all|all chapters|more chapters|ver (?:todos|m[aá]s)|cargar m[aá]s|voir (?:tout|plus)|alle anzeigen|mehr laden/i;
+const MORE_CLASS = /load-?more|show-?more|view-?all|see-?all|readmore|chapter-?more|btn-more/i;
+async function withHiddenChapters(ctx, doc, url, readPage, { maxPages = 20 } = {}) {
+  const seen = new Set(), out = [];
+  const add = list => { for (const c of list) if (c && !seen.has(c.id)) { seen.add(c.id); out.push(c); } };
+  add(readPage(doc, url));
+  const visited = new Set([url.replace(/#.*$/, '')]);
+  const moreLinks = (d, base) => d.select('a[href], button, [data-url], [data-href], [data-load]').map(el => {
+    const text = el.text(), cls = (el.attr('class') || '') + ' ' + (el.attr('id') || '');
+    const rel = (el.attr('rel') || '').toLowerCase();
+    if (!(MORE_TEXT.test(text) || MORE_CLASS.test(cls) || (rel === 'next' && el.el.tag === 'a'))) return null;
+    const href = el.attr('data-url') || el.attr('data-href') || el.attr('data-load') || el.attr('href');
+    if (!href || /^(?:#|javascript:)/i.test(href)) return null;
+    const u = abs(href, base);
+    try { return new URL(u).origin === new URL(url).origin ? u.replace(/#.*$/, '') : null; } catch { return null; }
+  }).filter(Boolean);
+  let todo = moreLinks(doc, url);
+  for (let n = 0; todo.length && n < maxPages; n++) {
+    const next = todo.shift();
+    if (visited.has(next)) continue;
+    visited.add(next);
+    let res;
+    try { res = await ctx.get(next, { headers: { 'X-Requested-With': 'XMLHttpRequest' } }); } catch (e) { if (e.code === 'blocked' || e.code === 'stopped') throw e; continue; }
+    const d = parse(res.text);
+    const before = out.length;
+    add(readPage(d, res.url));
+    if (out.length > before) todo = todo.concat(moreLinks(d, res.url)); // (a page that brought nothing new ends that path)
+  }
+  return out;
+}
+
 // Stop listing a site once a page brings nothing new (sites repeat their last page past the end)
 function freshOnly(seen, items) { const out = items.filter(x => x.sid && !seen.has(x.sid)); out.forEach(x => seen.add(x.sid)); return out; }
 
@@ -206,8 +267,10 @@ const madara = {
       genres: pick(doc, '.genres-content a', res.url, true), altTitles: splitAlt(item('Alternative')),
       status: STATUS(item('Status')), type: (/(manhwa|manhua|manga|webtoon|comic)/i.exec(item('Type')) || [])[1] ? item('Type').toLowerCase().replace('webtoon', 'webcomic') : null
     });
+    enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
     let rows = doc.select('li.wp-manga-chapter');
+    const fromPage = rows.length > 0;
     if (!rows.length) {
       // Newer Madara: chapters come from {work}/ajax/chapters/; older: admin-ajax.php with the manga id
       try { rows = parse((await get(stub.url.replace(/\/?$/, '/') + 'ajax/chapters/', { method: 'POST', headers: { 'X-Requested-With': 'XMLHttpRequest' } })).text).select('li.wp-manga-chapter'); } catch (e) { if (e.code === 'blocked') throw e; }
@@ -221,12 +284,14 @@ const madara = {
         }
       }
     }
-    work.chapters = rows.map(li => {
+    const madaraRows = (list, base) => list.map(li => {
       const a = li.first('a');
-      const u = a && abs(a.attr('href'), res.url);
+      const u = a && abs(a.attr('href'), base);
       const t = a ? a.text() : '';
       return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: (li.first('.chapter-release-date') || { text: () => '' }).text(), l: langs(src)[0] || null } : null;
     }).filter(Boolean);
+    // (a list on the page itself may go on in other pages or behind "show more")
+    work.chapters = fromPage ? await withHiddenChapters(ctx, doc, res.url, (d, base) => madaraRows(d.select('li.wp-manga-chapter'), base)) : madaraRows(rows, res.url);
     return work;
   }
 };
@@ -271,6 +336,7 @@ const mangareader = {
       authors: splitAlt(info('Author') + ',' + info('Artist')), status: STATUS(info('Status')),
       type: (/(manhwa|manhua|manga|comic)/i.exec(info('Type')) || [])[1] ? info('Type').toLowerCase() : null
     });
+    enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
     work.chapters = doc.select('#chapterlist li, .eplister li').map(li => {
       const a = li.first('a');
@@ -317,35 +383,36 @@ const custom = {
     const meta = p => (doc.first(`meta[property="${p}"]`) || { attr: () => null }).attr('content');
     const work = Object.assign({}, stub, {
       title: pick(doc, s.workTitle, res.url) || meta('og:title') || pick(doc, 'h1', res.url) || stub.title,
-      cover: pick(doc, s.workCover, res.url) || meta('og:image') || stub.cover,
+      cover: pick(doc, s.workCover, res.url) || abs(meta('og:image'), res.url) || stub.cover,
       summary: s.summary ? (doc.first(s.summary) || { textBlock: () => '' }).textBlock() : (meta('og:description') || ''),
       genres: pick(doc, s.genres, res.url, true), authors: pick(doc, s.authors, res.url, true),
       altTitles: s.altTitles ? splitAlt(pick(doc, s.altTitles, res.url)) : [], status: STATUS(pick(doc, s.status, res.url))
     });
+    enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
     if (!s.chapter) {
       // No chapter selector: every link on the page whose address matches the chapters' pattern
       const re = src.chapterPattern ? require('./sitemap').patternRegex(src.chapterPattern) : null;
       if (!re) return work;
       const seen = new Set();
-      work.chapters = doc.select('a[href]').map(a => {
-        const u = abs(a.attr('href'), res.url);
+      work.chapters = await withHiddenChapters(ctx, doc, res.url, (d, base) => d.select('a[href]').map(a => {
+        const u = abs(a.attr('href'), base);
         let p; try { p = decodeURI(new URL(u).pathname); } catch { return null; }
         if (!u || !re.test(p) || seen.has(p)) return null;
         seen.add(p);
         const t = a.text() || p.split('/').filter(Boolean).pop().replace(/[-_]+/g, ' ');
         return { id: p.replace(/\/+$/, ''), n: chapterNum(t) || chapterNum(p.split('/').filter(Boolean).pop()), t, u, d: '', l: langs(src)[0] || null };
-      }).filter(Boolean);
+      }).filter(Boolean));
       return work;
     }
-    work.chapters = doc.select(s.chapter).map(li => {
+    work.chapters = await withHiddenChapters(ctx, doc, res.url, (d, base) => d.select(s.chapter).map(li => {
       const link = s.chapterLink || 'a@href';
       const [lsel, lat] = link.includes('@') ? link.split('@') : [link, 'href'];
       const a = lsel ? li.first(lsel) : li;
-      const u = a && abs(a.attr(lat || 'href'), res.url);
-      const t = s.chapterTitle ? pick(li, s.chapterTitle, res.url) : (a ? a.text() : li.text());
-      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, res.url) || '' : '', l: langs(src)[0] || null } : null;
-    }).filter(Boolean);
+      const u = a && abs(a.attr(lat || 'href'), base);
+      const t = s.chapterTitle ? pick(li, s.chapterTitle, base) : (a ? a.text() : li.text());
+      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null } : null;
+    }).filter(Boolean));
     return work;
   }
 };

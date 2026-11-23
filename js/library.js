@@ -1546,7 +1546,9 @@
       var rows = all ? s.chapterList : s.chapterList.slice(0, 50);
       return '<section class="card card--wide cat-source">' +
         '<div class="cat-source__head"><h2 class="card__title cat-source__title">' + sourceIconHtml(s.sourceId, 'src-icon--sm') + esc(s.name) + '</h2>' +
-          (s.url ? '<a class="btn btn--text btn--small" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + esc(t('cat.openOnSite')) + '</a>' : '') + '</div>' +
+          (s.url ? '<a class="btn btn--text btn--small" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + esc(t('cat.openOnSite')) + '</a>' : '') +
+          // A merged work: this source's entry can be split off (it becomes its own work again)
+          (isAdmin() && w.groupId && w.sources.length > 1 ? '<button class="btn btn--text btn--small" data-lib="cat-split" data-id="' + esc(w.groupId) + '" data-key="' + esc(s.key) + '" title="' + esc(t('cat.splitHelp')) + '">' + esc(t('cat.split')) + '</button>' : '') + '</div>' +
         (s.title && s.title !== w.title ? '<p class="small"><strong>' + esc(s.title) + '</strong></p>' : '') +
         (s.error ? '<p class="notice notice--error small">' + esc(s.error) + '</p>' : '') +
         (s.partial ? '<p class="notice notice--info small">' + esc(t('cat.partial')) + '</p>' : '') +
@@ -1576,46 +1578,79 @@
       '</div>' + missingList + sources;
   }
 
-  // Merge suggestions (admins): the same work on several sites
+  // Merge tab (admins): the same work on several sites. Suggestions to confirm, and the works merged already
+  // (by hand or automatically, when it was certain) with a way to split them. Filter: one source's works.
   function catMergeState() {
-    if (!cache.catMerge) cache.catMerge = { data: null, loading: false, error: null, choice: {} };
+    if (!cache.catMerge) cache.catMerge = { data: null, merged: null, sources: null, source: '', loading: false, error: null, choice: {} };
     return cache.catMerge;
   }
   function loadCatMerge() {
     var st = catMergeState();
     st.loading = true; st.error = null;
     if (isCatalogRoute()) A().renderPage();
-    return api('GET', '/api/catalog/merge-suggestions').then(function (r) {
-      st.data = r; st.choice = {};
-      r.groups.forEach(function (g) { var inc = {}; g.works.forEach(function (w) { inc[w.key] = true; }); st.choice[g.key] = { primary: g.primary, include: inc }; });
+    var qs = st.source ? '?source=' + encodeURIComponent(st.source) : '';
+    return Promise.all([api('GET', '/api/catalog/merge-suggestions' + qs), api('GET', '/api/catalog/merged' + qs), st.sources ? Promise.resolve(null) : api('GET', '/api/catalog/facets')]).then(function (r) {
+      st.data = r[0]; st.merged = r[1]; if (r[2]) st.sources = r[2].sources; st.choice = {};
+      r[0].groups.forEach(function (g) { var inc = {}; g.works.forEach(function (w) { inc[w.key] = true; }); st.choice[g.key] = { primary: g.primary, include: inc }; });
     }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isCatalogRoute()) A().renderPage(); });
+  }
+  // One work as compared: cover, title (link), source, chapters, other titles, authors
+  function mergeWorkHtml(w) {
+    var facts = [w.source, t('cat.chapters', { count: w.chapters })].concat(w.lastChapter ? [t('cat.lastChapter', { n: w.lastChapter })] : []).concat(w.type ? [w.type] : []).concat(w.year ? [String(w.year)] : []);
+    return '<span class="merge-thumb">' + (w.cover ? '<img alt="" loading="lazy" src="' + esc(catCover(w.key)) + '" onerror="this.remove()" />' : '') + icon('menu_book') + '</span>' +
+      '<span class="merge-row__what"><a href="#catalog/work?key=' + encodeURIComponent(w.key) + '">' + esc(w.title || '—') + '</a>' +
+        (w.merged ? ' <span class="badge">' + esc(t('cat.alreadyMerged')) + '</span>' : '') +
+        '<span class="muted small merge-row__facts">' + esc(facts.join(' · ')) + '</span>' +
+        (w.authors && w.authors.length ? '<span class="muted small">' + esc(t('cat.by', { people: w.authors.join(', ') })) + '</span>' : '') +
+        (w.altTitles && w.altTitles.length ? '<span class="muted small merge-row__alt">' + esc(w.altTitles.join(' · ')) + '</span>' : '') +
+      '</span>';
+  }
+  var MERGE_WHY = { link: 'cat.reason.link', titleAuthor: 'cat.reason.titleAuthor', titleAlt: 'cat.reason.titleAlt' };
+  function mergeWhyText(why) {
+    var d = (why && why.detail) || {};
+    return t(MERGE_WHY[why && why.reason] || 'files.reason.title', { title: d.title || '', author: d.author || '', alt: d.alt || '' });
   }
   function catalogMerge() {
     var st = catMergeState();
+    var sources = st.sources || [];
     var head = catalogTabs('merge') + '<p class="page-lead">' + esc(t('cat.mergeIntro')) + '</p>' +
-      '<div class="toolbar"><div class="toolbar__group"><button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button></div></div>';
+      '<div class="toolbar"><div class="toolbar__group">' +
+        '<select class="select select--compact" data-lib-change="cat-merge-source" aria-label="' + esc(t('cat.filterSource')) + '">' +
+          '<option value="">' + esc(t('cat.allSources')) + '</option>' +
+          sources.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === st.source ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') +
+        '</select>' +
+        '<button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button>' +
+        '<button class="btn btn--outline btn--pill" data-lib="cat-merge-auto"' + (st.loading ? ' disabled' : '') + ' title="' + esc(t('cat.autoMergeHelp')) + '">' + icon('collections') + esc(t('cat.autoMerge')) + '</button>' +
+      '</div></div>';
     if (st.error) return head + errorBanner(st.error);
     if (st.loading || !st.data) return head + spinner;
-    if (!st.data.groups.length) return head + emptyState('check', t('files.noSuggestionsTitle'), t('cat.noSuggestions'));
-    return head + '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
+    var suggestions = st.data.groups.length ? '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
       var ch = st.choice[g.key];
       var n = g.works.filter(function (w) { return ch.include[w.key]; }).length;
-      var why = g.reason === 'link' ? t('cat.reason.link') : t('files.reason.title', { title: (g.detail || {}).title || '' });
       return '<section class="card card--wide merge-group">' +
-        '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(why) + '</span>' +
+        '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(mergeWhyText(g)) + '</span>' +
           (g.inLibrary ? ' <a class="badge badge--ok" href="#series/' + g.inLibrary.seriesId + '">' + esc(t('cat.inLibrary')) + '</a>' : '') + '</p>' +
         '<ul class="merge-list">' + g.works.map(function (w) {
           var main = w.key === ch.primary;
           return '<li class="merge-row' + (main ? ' is-target' : '') + '">' +
             '<label class="merge-row__keep" title="' + esc(t('cat.primaryTitle')) + '"><input type="radio" name="p-' + esc(g.key) + '" value="' + esc(w.key) + '" data-cat-primary="' + esc(g.key) + '"' + (main ? ' checked' : '') + ' /><span class="small">' + esc(t('cat.primary')) + '</span></label>' +
-            '<label class="checkbox"><input type="checkbox" data-cat-include="' + esc(g.key) + '" value="' + esc(w.key) + '"' + (ch.include[w.key] || main ? ' checked' : '') + (main ? ' disabled' : '') + ' />' +
-              '<span class="merge-row__what"><a href="#catalog/work?key=' + encodeURIComponent(w.key) + '">' + esc(w.title) + '</a> <span class="muted small">' + esc([w.source, t('cat.chapters', { count: w.chapters })].join(' · ')) + '</span>' +
-              (w.merged ? ' <span class="badge">' + esc(t('cat.alreadyMerged')) + '</span>' : '') + '</span></label></li>';
+            '<label class="checkbox merge-row__pick"><input type="checkbox" data-cat-include="' + esc(g.key) + '" value="' + esc(w.key) + '"' + (ch.include[w.key] || main ? ' checked' : '') + (main ? ' disabled' : '') + ' />' + mergeWorkHtml(w) + '</label></li>';
         }).join('') + '</ul>' +
         '<div class="merge-actions"><button class="btn btn--primary" data-lib="cat-merge-go" data-key="' + esc(g.key) + '"' + (n < 2 ? ' disabled' : '') + '>' + icon('collections') + esc(t('cat.mergeN', { count: n })) + '</button>' +
           '<button class="btn btn--text" data-lib="cat-merge-dismiss" data-key="' + esc(g.key) + '">' + esc(t('files.notSame')) + '</button></div>' +
       '</section>';
-    }).join('');
+    }).join('') : emptyState('check', t('files.noSuggestionsTitle'), t('cat.noSuggestions'));
+    var merged = st.merged && st.merged.groups.length ? '<h2 class="section-title">' + esc(t('cat.mergedTitle', { count: st.merged.total })) + '</h2>' + st.merged.groups.map(function (g) {
+      return '<section class="card card--wide merge-group">' +
+        '<p class="merge-group__why">' + icon('collections') + '<span>' + esc(g.auto ? t('cat.mergedAuto', { why: mergeWhyText(g.auto) }) : t('cat.mergedByHand')) + '</span></p>' +
+        '<ul class="merge-list">' + g.works.map(function (w) {
+          return '<li class="merge-row' + (w.key === g.primary ? ' is-target' : '') + '"><span class="merge-row__pick">' + mergeWorkHtml(w) + '</span>' +
+            '<button class="btn btn--text btn--small" data-lib="cat-split" data-id="' + esc(g.id) + '" data-key="' + esc(w.key) + '" title="' + esc(t('cat.splitHelp')) + '">' + esc(t('cat.split')) + '</button></li>';
+        }).join('') + '</ul>' +
+        '<div class="merge-actions"><button class="btn btn--text btn--danger" data-lib="cat-unmerge-group" data-id="' + esc(g.id) + '">' + esc(t('cat.unmerge')) + '</button></div>' +
+      '</section>';
+    }).join('') : '';
+    return head + suggestions + merged;
   }
 
   // Sources (admins): add/edit/delete, crawl, follow the crawl, test the settings
@@ -1641,7 +1676,8 @@
     if (!j) return '';
     var p = j.progress || {};
     var listing = !p.phase || p.phase === 'listing';
-    var bar = { percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: null, elapsedMs: j.startedAt ? Date.now() - Date.parse(j.startedAt) : 0 };
+    // (the time left comes from the crawl: the speed of the works read so far)
+    var bar = { percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: listing ? null : p.etaMs != null ? p.etaMs : null, elapsedMs: j.startedAt ? Date.now() - Date.parse(j.startedAt) : 0 };
     return progressBar(bar, t(j.status === 'queued' ? 'cat.crawlQueued' : listing ? 'cat.crawlListing' : 'cat.crawlReading'),
       listing ? t('cat.crawlListed', { count: p.listed || 0 }) : t('cat.crawlProgress', { done: p.done || 0, total: p.total || 0, errors: p.errors || 0 }));
   }
@@ -1793,6 +1829,7 @@
         var tg = e.target, st = catMergeState(), k;
         if ((k = tg.dataset.catPrimary)) { st.choice[k].primary = tg.value; st.choice[k].include[tg.value] = true; return A().renderPage(); }
         if ((k = tg.dataset.catInclude)) { st.choice[k].include[tg.value] = tg.checked; return A().renderPage(); }
+        if (tg.dataset.libChange === 'cat-merge-source') { st.source = tg.value; return loadCatMerge(); }
       });
     },
     enter: function (route) {
@@ -2174,9 +2211,14 @@
 
   var processes = {
     title: function () { return t('nav.processes'); },
-    render: function () {
+    render: function (route) {
       var p = cache.processes;
-      var head = '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1><p class="page-lead">' + esc(t('proc.intro')) + '</p>';
+      var running = p && p.tasks ? p.tasks.running : 0;
+      if (route && route.param === 'tasks') {
+        var td = tasksState().data;
+        return '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1>' + procTabs('tasks', td ? td.running.length : running) + tasksTab(p);
+      }
+      var head = '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1>' + procTabs('overview', running) + '<p class="page-lead">' + esc(t('proc.intro')) + '</p>';
       if (!p) return head + spinner;
       if (p.error) return head + errorBanner(p.error);
       return head + '<div class="cards">' + PROC_SECTIONS.map(function (section) {
@@ -2186,8 +2228,21 @@
         return card ? procCard(card) : '';
       }).join('') + '</div>';
     },
+    mount: function (el, route) {
+      if (!route || route.param !== 'tasks') return;
+      scrollTaskOutputs();
+      el.addEventListener('change', function (e) { if (e.target.hasAttribute('data-task-follow')) { tasksState().follow = e.target.checked; scrollTaskOutputs(); } });
+    },
     enter: function (route) {
       clearTimeout(procTimer);
+      if (route.param === 'tasks') {
+        // Live: every 2 seconds while the tab is open
+        return loadTasks().then(function () {
+          if (location.hash !== route.hash) return;
+          A().renderPage();
+          procTimer = setTimeout(function () { if (location.hash === route.hash) processes.enter(route); }, 2000);
+        });
+      }
       load(route.hash, function () {
         return api('GET', '/api/processes').then(function (r) {
           cache.processes = r;
@@ -2205,13 +2260,154 @@
     }
   };
 
+  /* ================= TASKS (Processes → Tasks) and LOGS (admins) ================= */
+  // Everything long-running as one list: running tasks with their progress and live output (the end of their
+  // log file), and the ones that ended lately. Each task's log is on the Logs page.
+  function procTabs(active, running) {
+    var tab = function (id, href, ic, label) {
+      return '<a class="tab' + (active === id ? ' is-active' : '') + '" href="' + href + '"' + (active === id ? ' aria-current="page"' : '') + '>' + icon(ic) + esc(label) + '</a>';
+    };
+    return '<nav class="tabs files-tabs" aria-label="' + esc(t('nav.processes')) + '">' +
+      tab('overview', '#processes', 'memory', t('proc.tabOverview')) +
+      tab('tasks', '#processes/tasks', 'list', running ? t('proc.tabTasksN', { count: running }) : t('proc.tabTasks')) +
+      tab('logs', '#logs', 'description', t('nav.logs')) + '</nav>';
+  }
+  var TASK_ICON = { scan: 'sync', metadata: 'download', files: 'folder_open', crawl: 'travel_explore', covers: 'collections', other: 'memory' };
+  var TASK_BADGE = { running: 'badge--primary', done: 'badge--ok', failed: 'badge--danger', stopped: '' };
+  function tasksState() { if (!cache.tasks) cache.tasks = { data: null, error: null, open: {}, output: {}, follow: true }; return cache.tasks; }
+  function fmtSpan(ms) { return ms == null ? '—' : fmtTime(Math.max(0, ms)); }
+  function taskProgressHtml(tk) {
+    var p = tk.progress || {};
+    var bar = { percent: p.percent != null ? p.percent : null, etaMs: p.etaMs != null ? p.etaMs : null, elapsedMs: Date.now() - Date.parse(tk.startedAt) };
+    var detail = p.total ? t('proc.task.doneOf', { done: p.done || 0, total: p.total }) : p.done ? t('proc.task.done', { count: p.done }) : '';
+    if (p.detail) detail += (detail ? ' · ' : '') + p.detail;
+    if (p.errors) detail += (detail ? ' · ' : '') + t('proc.task.errors', { count: p.errors });
+    var phase = p.phase ? (t('proc.task.phase.' + p.phase) !== 'proc.task.phase.' + p.phase ? t('proc.task.phase.' + p.phase) : p.phase) : t('proc.task.working');
+    return progressBar(bar, phase, detail);
+  }
+  function taskOutputHtml(tk, st) {
+    var out = st.output[tk.id];
+    if (!st.open[tk.id]) return '';
+    return '<div class="task-console">' +
+      '<div class="task-console__bar"><span class="small muted">' + esc(t('proc.task.output', { name: tk.log })) + '</span>' +
+        '<label class="checkbox small"><input type="checkbox" data-task-follow' + (st.follow ? ' checked' : '') + ' /><span>' + esc(t('proc.task.follow')) + '</span></label></div>' +
+      '<pre class="task-console__text" id="task-out-' + esc(tk.id) + '" tabindex="0">' + esc(out ? out.join('\n') : t('common.loading')) + '</pre></div>';
+  }
+  function tasksTab(p) {
+    var st = tasksState(), d = st.data;
+    if (st.error) return errorBanner(st.error);
+    if (!d) return spinner;
+    var running = d.running.length ? d.running.map(function (tk) {
+      return '<section class="card card--wide task-card" data-task="' + esc(tk.id) + '">' +
+        '<div class="proc-card__head"><span class="lib-card__icon">' + icon(TASK_ICON[tk.kind] || 'memory') + '</span>' +
+          '<div><h2 class="card__title">' + esc(tk.title) + '</h2><span class="badge ' + TASK_BADGE.running + '">' + esc(t('proc.task.kind.' + tk.kind)) + '</span></div></div>' +
+        taskProgressHtml(tk) +
+        '<div class="lib-card__actions">' +
+          '<button class="btn btn--outline btn--pill" data-lib="task-output" data-id="' + esc(tk.id) + '" aria-expanded="' + (st.open[tk.id] ? 'true' : 'false') + '">' + icon('terminal') + esc(t(st.open[tk.id] ? 'proc.task.hideOutput' : 'proc.task.showOutput')) + '</button>' +
+          (tk.canStop ? '<button class="btn btn--outline btn--pill" data-lib="task-stop" data-id="' + esc(tk.id) + '">' + icon('stop') + esc(t('proc.stop')) + '</button>' : '') +
+          '<a class="btn btn--text" href="#logs?name=' + encodeURIComponent(tk.log) + '">' + esc(t('proc.task.openLog')) + '</a>' +
+        '</div>' + taskOutputHtml(tk, st) +
+      '</section>';
+    }).join('') : '<p class="muted">' + esc(t('proc.task.none')) + '</p>';
+    var recent = d.recent.length ? '<div class="table-wrap"><table class="table task-table"><thead><tr><th>' + esc(t('proc.status')) + '</th><th>' + esc(t('proc.task.what')) + '</th><th>' + esc(t('proc.task.started')) + '</th><th>' + esc(t('proc.task.took')) + '</th><th></th></tr></thead><tbody>' +
+      d.recent.map(function (tk) {
+        return '<tr><td><span class="badge ' + (TASK_BADGE[tk.status] || '') + '">' + esc(t('proc.task.status.' + tk.status)) + '</span></td>' +
+          '<td><strong>' + esc(tk.title) + '</strong>' + (tk.summary ? '<div class="muted small">' + esc(tk.summary) + '</div>' : '') + '</td>' +
+          '<td class="small">' + esc(A().fmtDate(tk.startedAt)) + '</td><td class="small">' + esc(fmtSpan(Date.parse(tk.finishedAt) - Date.parse(tk.startedAt))) + '</td>' +
+          '<td><a class="btn btn--text btn--small" href="#logs?name=' + encodeURIComponent(tk.log) + '">' + esc(t('proc.task.openLog')) + '</a></td></tr>';
+      }).join('') + '</tbody></table></div>' : '<p class="muted small">' + esc(t('proc.task.noneRecent')) + '</p>';
+    return '<h2 class="section-title">' + esc(t('proc.task.running', { count: d.running.length })) + '</h2>' + running +
+      '<h2 class="section-title">' + esc(t('proc.task.recent')) + '</h2>' + recent +
+      '<p class="field__help">' + esc(t('proc.task.help', { days: d.retentionDays })) + ' <a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>';
+  }
+  function loadTasks() {
+    var st = tasksState();
+    return api('GET', '/api/tasks').then(function (r) {
+      st.data = r; st.error = null;
+      // The output of the tasks whose output is shown
+      var ids = r.running.map(function (x) { return x.id; }).filter(function (id) { return st.open[id]; });
+      return Promise.all(ids.map(function (id) {
+        return api('GET', '/api/tasks/' + encodeURIComponent(id) + '?lines=300').then(function (x) { st.output[id] = x.task.lines; }, function () {});
+      }));
+    }, function (e) { st.error = e; });
+  }
+  // After drawing: the shown outputs scrolled to their end (while following)
+  function scrollTaskOutputs() {
+    if (!tasksState().follow) return;
+    Array.prototype.forEach.call(document.querySelectorAll('.task-console__text'), function (pre) { pre.scrollTop = pre.scrollHeight; });
+  }
+
+  // Logs page: every task's log file (kept Server settings → logRetentionDays days), shown or downloaded
+  function logsState() { if (!cache.logs) cache.logs = { data: null, error: null, kind: '', q: '', view: null }; return cache.logs; }
+  function fmtLogSize(n) { return n < 1024 ? n + ' B' : fmtSize(n); }
+  function logsList(st) {
+    var d = st.data;
+    var head = '<div class="toolbar"><label class="search-field">' + icon('search') + '<input type="search" id="logs-q" placeholder="' + esc(t('logs.search')) + '" value="' + esc(st.q) + '" aria-label="' + esc(t('logs.search')) + '" /></label><div class="toolbar__group">' +
+      '<select class="select select--compact" id="logs-kind" aria-label="' + esc(t('logs.kind')) + '"><option value="">' + esc(t('logs.allKinds')) + '</option>' +
+        ((d && d.kinds) || []).map(function (k) { return '<option value="' + k + '"' + (k === st.kind ? ' selected' : '') + '>' + esc(t('proc.task.kind.' + k)) + '</option>'; }).join('') + '</select>' +
+      '</div></div>';
+    if (st.error) return head + errorBanner(st.error);
+    if (!d) return head + spinner;
+    if (!d.logs.length) return head + emptyState('description', t('logs.noneTitle'), t('logs.none'));
+    return head + '<div class="table-wrap"><table class="table logs-table"><thead><tr><th>' + esc(t('logs.when')) + '</th><th>' + esc(t('logs.kind')) + '</th><th>' + esc(t('proc.task.what')) + '</th><th>' + esc(t('logs.size')) + '</th><th></th></tr></thead><tbody>' +
+      d.logs.map(function (l) {
+        return '<tr><td class="small">' + esc(A().fmtDate(l.at)) + '</td><td><span class="badge">' + esc(t('proc.task.kind.' + l.kind)) + '</span>' + (l.running ? ' <span class="badge badge--primary">' + esc(t('proc.task.status.running')) + '</span>' : '') + '</td>' +
+          '<td><a href="#logs?name=' + encodeURIComponent(l.name) + '">' + esc(l.title || l.name) + '</a></td><td class="small">' + esc(fmtLogSize(l.size)) + '</td>' +
+          '<td class="logs-actions"><a class="btn btn--text btn--small" href="/api/logs/' + encodeURIComponent(l.name) + '?download=1" download="' + esc(l.name) + '">' + icon('download') + esc(t('logs.download')) + '</a>' +
+            (l.running ? '' : '<button class="btn btn--text btn--small btn--danger" data-lib="log-delete" data-id="' + esc(l.name) + '">' + esc(t('common.delete')) + '</button>') + '</td></tr>';
+      }).join('') + '</tbody></table></div>';
+  }
+  function logView(st, name) {
+    var v = st.view && st.view.name === name ? st.view : null;
+    var item = st.data && st.data.logs.filter(function (l) { return l.name === name; })[0];
+    return '<p><a href="#logs">' + icon('arrow_back') + esc(t('logs.back')) + '</a></p>' +
+      '<section class="card card--wide"><div class="proc-card__head"><span class="lib-card__icon">' + icon('description') + '</span><div><h2 class="card__title">' + esc((item && item.title) || name) + '</h2>' +
+        '<span class="muted small">' + esc(name) + (v ? ' · ' + fmtLogSize(v.size) : '') + '</span></div></div>' +
+        '<div class="lib-card__actions"><a class="btn btn--primary btn--pill" href="/api/logs/' + encodeURIComponent(name) + '?download=1" download="' + esc(name) + '">' + icon('download') + esc(t('logs.download')) + '</a></div>' +
+        (v && v.error ? errorBanner(v.error) : '<pre class="task-console__text task-console__text--tall" tabindex="0">' + esc(v ? v.lines.join('\n') : t('common.loading')) + '</pre>') +
+        (v && v.lines.length >= 2000 ? '<p class="muted small">' + esc(t('logs.lastLines', { count: 2000 })) + '</p>' : '') +
+      '</section>';
+  }
+  var logsPage = {
+    title: function () { return t('nav.logs'); },
+    render: function (route) {
+      var st = logsState(), name = route.query.get('name');
+      var head = '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1>' + procTabs('logs', 0) +
+        '<p class="page-lead">' + esc(t('logs.intro', { days: (st.data && st.data.retentionDays) || 30 })) + ' <a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>';
+      return head + (name ? logView(st, name) : logsList(st));
+    },
+    mount: function (el) {
+      var st = logsState();
+      var q = $('#logs-q', el), kind = $('#logs-kind', el), timer;
+      if (q) q.addEventListener('input', function () { st.q = q.value; st.focusQ = true; clearTimeout(timer); timer = setTimeout(function () { logsPage.enter(A().parseRoute()); }, 250); });
+      if (q && st.focusQ) { q.focus(); q.setSelectionRange(q.value.length, q.value.length); st.focusQ = false; } // (typing goes on after the list is redrawn)
+      if (kind) kind.addEventListener('change', function () { st.kind = kind.value; logsPage.enter(A().parseRoute()); });
+      var pre = $('.task-console__text--tall', el);
+      if (pre && st.view && st.view.follow !== false) pre.scrollTop = pre.scrollHeight;
+    },
+    enter: function (route) {
+      var st = logsState(), name = route.query.get('name');
+      clearTimeout(st.timer);
+      var list = api('GET', '/api/logs?' + Store.qs({ kind: st.kind || undefined, q: st.q || undefined })).then(function (r) { st.data = r; st.error = null; }, function (e) { st.error = e; });
+      var view = name ? api('GET', '/api/logs/' + encodeURIComponent(name) + '?lines=2000').then(function (r) { st.view = { name: name, lines: r.lines, size: r.size }; }, function (e) { st.view = { name: name, lines: [], error: e }; }) : null;
+      return Promise.all([list, view]).then(function () {
+        if (A().parseRoute().name !== 'logs') return;
+        A().renderPage();
+        // A log still being written: shown live
+        var item = name && st.data && st.data.logs.filter(function (l) { return l.name === name; })[0];
+        if (item && item.running) st.timer = setTimeout(function () { if (location.hash === route.hash) logsPage.enter(route); }, 2000);
+      });
+    }
+  };
+
   /* ================= SERVER SETTINGS (admins) ================= */
   var SETTINGS_FIELDS = [
     { key: 'scanWorkers', label: 'cfg.scanWorkers', help: 'cfg.scanWorkersHelp' },
     { key: 'scanConcurrency', label: 'cfg.scanConcurrency', help: 'cfg.scanConcurrencyHelp' },
     { key: 'metadataConcurrency', label: 'cfg.metadataConcurrency', help: 'cfg.metadataConcurrencyHelp', section: 'cfg.metadata' },
     { key: 'catalogCrawls', label: 'cfg.catalogCrawls', help: 'cfg.catalogCrawlsHelp', section: 'cfg.catalog' },
-    { key: 'catalogConcurrency', label: 'cfg.catalogConcurrency', help: 'cfg.catalogConcurrencyHelp' }
+    { key: 'catalogConcurrency', label: 'cfg.catalogConcurrency', help: 'cfg.catalogConcurrencyHelp' },
+    { key: 'logRetentionDays', label: 'cfg.logRetentionDays', help: 'cfg.logRetentionDaysHelp', section: 'cfg.logs' }
   ];
   var KEY_FIELDS = [
     { key: 'comicVineApiKey', label: 'Comic Vine', help: 'cfg.comicVineHelp', url: 'https://comicvine.gamespot.com/api/' },
@@ -2896,7 +3092,35 @@
         return api('DELETE', '/api/catalog/merge/' + encodeURIComponent(id)).then(function () {
           cache.catalog = null; cache.catMerge = null; location.hash = '#catalog';
         }, fail);
+      case 'task-output': {
+        var ts = tasksState();
+        ts.open[id] = !ts.open[id];
+        if (!ts.open[id]) return A().renderPage();
+        return loadTasks().then(function () { A().renderPage(); });
+      }
+      case 'task-stop':
+        btn.disabled = true;
+        return api('POST', '/api/tasks/' + encodeURIComponent(id) + '/stop').then(function () { A().toast(t('proc.task.stopping')); }, function (e) { btn.disabled = false; fail(e); });
+      case 'log-delete':
+        if (!confirm(t('logs.deleteConfirm'))) return;
+        return api('DELETE', '/api/logs/' + encodeURIComponent(id)).then(function () { logsPage.enter(A().parseRoute()); }, fail);
       case 'cat-merge-check': return loadCatMerge();
+      case 'cat-merge-auto':
+        btn.disabled = true;
+        return api('POST', '/api/catalog/merge/auto').then(function (r) {
+          A().toast(t('cat.autoMerged', { count: r.merged })); cache.catalog = null; loadCatMerge();
+        }, function (e) { btn.disabled = false; fail(e); });
+      case 'cat-split':
+        return api('POST', '/api/catalog/merge/' + encodeURIComponent(id) + '/split', { key: btn.dataset.key }).then(function (r) {
+          A().toast(t('cat.splitDone')); cache.catalog = null; cache.catWork = null;
+          if (A().parseRoute().param === 'merge') return loadCatMerge();
+          // On the work's page: what's left of it (the group, or the one work left)
+          var next = '#catalog/work?key=' + encodeURIComponent(r.groupId ? 'g:' + r.groupId : r.keys[0]);
+          if (location.hash === next) refreshCurrent(); else location.hash = next;
+        }, fail);
+      case 'cat-unmerge-group':
+        if (!confirm(t('cat.unmerge') + '?')) return;
+        return api('DELETE', '/api/catalog/merge/' + encodeURIComponent(id)).then(function () { cache.catalog = null; loadCatMerge(); }, fail);
       case 'cat-merge-go': {
         var cm = catMergeState(), gk = btn.dataset.key, ch = cm.choice[gk];
         var keys = Object.keys(ch.include).filter(function (k) { return ch.include[k]; });
@@ -3196,6 +3420,7 @@
     catalog: catalogPage,
     rename: renamePage,
     processes: processes,
+    logs: logsPage,
     'server-settings': serverSettings,
     read: { render: function () { return ''; }, title: function () { return t('reader.title'); } },
     reset: reset,
