@@ -78,6 +78,10 @@ const site = http.createServer((req, res) => {
     return send(200, `<div class="list"><div class="item"><a href="/custom/w/blue-moon">Blue Moon</a></div><div class="item"><a href="/custom/private/secret">Secret</a></div></div>`);
   }
   if (u.pathname === '/custom/w/blue-moon') return send(200, `<h1 class="t">Blue Moon</h1><div class="genres"><span>Fantasy</span><span>Science Fiction</span></div><ol class="chs"><li><a href="/custom/w/blue-moon/6">Ep. 6</a></li><li><a href="/custom/w/blue-moon/5">Ep. 5</a></li></ol>`);
+  // Chapters behind a tab that loads them; genres in a tab that's only hidden
+  if (u.pathname === '/tabs/list') return send(200, '<div class="w"><a href="/tabs/work">Tabbed Work</a></div>');
+  if (u.pathname === '/tabs/work') return send(200, '<h1 class="t">Tabbed Work</h1><nav><button class="info-tab">Info</button><button class="ch-tab" data-url="/tabs/work/chapters">Chapters</button></nav><div class="info" style="display:none"><span class="g">Mystery</span></div><div id="tab-body"></div>');
+  if (u.pathname === '/tabs/work/chapters') return send(200, '<ul><li class="c"><a href="/tabs/c2">Chapter 2</a></li><li class="c"><a href="/tabs/c1">Chapter 1</a></li></ul>');
   // A site behind bot protection
   if (u.pathname.startsWith('/guarded')) return send(403, '<html><title>Just a moment...</title><div id="cf-chl-widget"></div></html>');
   send(404, 'not found');
@@ -201,6 +205,18 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(pv && /Blue Moon/.test(pv.html) && !/<script/i.test(pv.html) && /Content-Security-Policy/.test(pv.html) && /data-src="http:\/\/127\.0\.0\.1:3998\/img\/blue-moon\.png"/.test(pv.html) && !/ src="http:/.test(pv.html),
     'a page for the picker is made inert: no scripts, nothing the browser would load from the site (images become placeholders)');
   ok((await call('GET', `/api/catalog/preview?url=${encodeURIComponent('ftp://x')}`)).status === 400, 'the preview takes only web addresses');
+  // ---- clicks to make before collecting ----
+  const tabbed = { name: 'Tabbed', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/tabs/list', item: 'div.w', workTitle: 'h1.t', genres: 'span.g', chapter: 'li.c' } };
+  const noClick = (await call('POST', '/api/catalog/sources/test', tabbed)).data.test;
+  const withClick = (await call('POST', '/api/catalog/sources/test', Object.assign({}, tabbed, { actions: { work: [{ selector: 'button.info-tab', mode: 'add' }], chapters: [{ selector: 'button.ch-tab', mode: 'add' }] } }))).data.test;
+  ok(noClick.work.chapterCount === 0 && withClick.work.chapterCount === 2 && withClick.work.genres.join() === 'Mystery',
+    `a click before collecting: the chapters behind a tab are read (${noClick.work.chapterCount} → ${withClick.work.chapterCount}); a tab that only hides content needs nothing loaded`);
+  const pvClick = (await call('GET', `/api/catalog/preview?url=${encodeURIComponent(SITE + '/tabs/work')}&actions=${encodeURIComponent(JSON.stringify([{ selector: 'button.info-tab', mode: 'add' }, { selector: 'button.ch-tab', mode: 'open' }, { selector: '#nope', mode: 'add' }]))}`)).data.page;
+  ok(pvClick.actions.map(a => a.result).join() === 'inPage,opened,notFound' && pvClick.url === SITE + '/tabs/work/chapters' && /Chapter 2/.test(pvClick.source),
+    `the wizard's preview makes the clicks the same way and says what each did (${pvClick.actions.map(a => a.result).join(', ')})`);
+  const saved = (await call('POST', '/api/catalog/sources', Object.assign({}, tabbed, { actions: { chapters: [{ selector: 'button.ch-tab', mode: 'sideways' }, { selector: '' }] } }))).data.source;
+  ok(saved.actions.chapters.length === 1 && saved.actions.chapters[0].mode === 'add' && !saved.actions.work, 'a source keeps its clicks (cleaned: empty ones dropped, unknown modes made "add")');
+  await call('DELETE', `/api/catalog/sources/${saved.id}`);
   // Several works at once (the source's setting) with as many requests to the site in progress, even when its
   // pages answer faster than the pause (each lane pauses between its own requests; starts staggered)
   await call('PATCH', `/api/catalog/sources/${madara.id}`, { concurrency: 3 });

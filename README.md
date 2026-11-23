@@ -533,6 +533,16 @@ sites added as **sources**, with its metadata and chapter list.
     pick that only exists after them is marked (*not in the page as the site sends it*).
   - *Wait N s before picking* — the picker waits for the page to finish loading (its images and styles), then
     that many seconds more (up to 60), with a countdown; ↻ shows the page again.
+- **Clicks before collecting.** When data is behind a tab or a button ("Chapters", "Show all", "More info"), the
+  *Works list*, *Work page* and *Chapters* steps each have **Before collecting, click**: up to 5 buttons or tabs,
+  picked in the preview, done in order before that page's data is read (the chapters' after the work page's).
+  Crawls don't run a site's scripts, so a click is acted out by what the element leads to: an address (its link,
+  a `data-url`/`data-href`/`data-load`, a GET form, an address in its `onclick`) is fetched from the same site,
+  following robots.txt — *Add what it loads* adds it to the page, *Open the page it leads to* reads that page from
+  then on; a tab that only shows what's already in the page needs nothing (its content is read as it is). The
+  preview makes the clicks the same way and says under each what it did (*Added what … loads*, *Opened …*, *Leads
+  nowhere: what it shows is in the page already*, *Not found on this page*). With *Site scripts* on, the preview
+  clicks for real instead (one every 1.5 s).
 - **Site files tab:** each source's **robots.txt** and **sitemaps** — the ones in its settings, the ones detection
   found and the ones its last crawl read (with their content hash, date and how many works each listed). Open one
   to read it now: its text, the sitemaps it lists (click to open) and its addresses (searchable).

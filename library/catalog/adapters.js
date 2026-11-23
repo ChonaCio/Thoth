@@ -361,6 +361,66 @@ const mangareader = {
   }
 };
 
+/* ---------------- clicks to make before collecting (other sites) ----------------
+ * Some data is behind a tab or a "Show all" button. src.actions = { list, work, chapters }: lists of
+ * { selector, mode } done in order on that page before its data is read. Crawls don't run the site's scripts,
+ * so a click is acted out by what the clicked element leads to:
+ *   - an address (href, data-url/-href/-load/-link/-ajax, a GET form, an address inside onclick): fetched (same site,
+ *     robots.txt followed); mode 'open' uses that page from then on, mode 'add' adds what it brought to the page;
+ *   - nothing (a tab or toggle that only shows what's already in the page): nothing to fetch, the page is read as is.
+ * → { text, url, report: [{ selector, found, url, result: 'opened'|'added'|'inPage'|'notFound'|'failed'|'otherSite', error }] } */
+const MAX_ACTIONS = 5;
+function actionUrl(el, base) {
+  const a = el.attr.bind(el);
+  for (const name of ['data-url', 'data-href', 'data-load', 'data-link', 'data-ajax', 'data-ajax-url', 'href', 'formaction']) {
+    const v = a(name);
+    if (v && !/^\s*(#|javascript:|mailto:|tel:)/i.test(v)) return abs(v.trim(), base);
+  }
+  const on = a('onclick') || '';
+  const m = /['"]((?:https?:)?\/\/[^'"\s]+|\/[^'"\s]+)['"]/.exec(on);
+  if (m) return abs(m[1], base);
+  // A button of a GET form: the form's address with its fields
+  let p = el.el.parent;
+  while (p && p.tag !== 'form' && p.tag !== '#document') p = p.parent;
+  if (p && p.tag === 'form' && !/post/i.test(p.attrs.method || '')) {
+    const fields = [];
+    const walk = n => { for (const c of n.children || []) { if (c.tag === 'input' && c.attrs.name && !/^(submit|button|file)$/i.test(c.attrs.type || '')) fields.push([c.attrs.name, c.attrs.value || '']); walk(c); } };
+    walk(p);
+    if (el.attr('name')) fields.push([el.attr('name'), el.attr('value') || '']);
+    const target = abs(p.attrs.action || base, base);
+    if (target) { const u = new URL(target); for (const [k, v] of fields) u.searchParams.set(k, v); return u.href; }
+  }
+  return null;
+}
+async function applyActions(ctx, page, actions) {
+  let text = page.text, url = page.url;
+  const report = [];
+  for (const act of (actions || []).slice(0, MAX_ACTIONS)) {
+    const selector = String((act && act.selector) || '').trim();
+    if (!selector) continue;
+    const el = parse(text).first(selector);
+    if (!el) { report.push({ selector, found: false, result: 'notFound' }); continue; }
+    const target = actionUrl(el, url);
+    if (!target) { report.push({ selector, found: true, result: 'inPage' }); continue; }
+    try { if (new URL(target).host !== new URL(url).host) { report.push({ selector, found: true, url: target, result: 'otherSite' }); continue; } } catch { report.push({ selector, found: true, result: 'inPage' }); continue; }
+    try {
+      const res = await ctx.get(target, { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      if (act.mode === 'open') { text = res.text; url = res.url; report.push({ selector, found: true, url: res.url, result: 'opened' }); }
+      else {
+        // What it loaded, added at the end of the page (a full page: its body; a fragment: as it is)
+        const body = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(res.text) || [null, res.text])[1];
+        const add = '<div data-thoth-added="' + report.length + '">' + body + '</div>';
+        text = /<\/body>/i.test(text) ? text.replace(/<\/body>(?![\s\S]*<\/body>)/i, add + '</body>') : text + add;
+        report.push({ selector, found: true, url: res.url, result: 'added' });
+      }
+    } catch (e) {
+      if (e.code === 'blocked' || e.code === 'stopped') throw e;
+      report.push({ selector, found: true, url: target, result: 'failed', error: (e.code === 'robots' ? 'robots.txt: ' : '') + e.message });
+    }
+  }
+  return { text, url, report };
+}
+
 /* ---------------- Any other site: selectors given in the source settings ---------------- */
 // src.selectors: { listUrl ("…{page}…"), firstPage, item, link, title, cover, workTitle, workCover, summary, genres,
 //   authors, altTitles, status, chapter, chapterLink, chapterTitle, chapterDate }  ("sel@attr", "a || b")
@@ -376,6 +436,7 @@ const custom = {
       const url = abs(s.listUrl.replace('{page}', page), src.baseUrl);
       let res;
       try { res = await get(url); } catch (e) { if (e.code === 'http' && e.status === 404 && page > start) return; throw e; }
+      res = await applyActions(ctx, { text: res.text, url: res.url }, (src.actions || {}).list);
       const doc = parse(res.text);
       const items = doc.select(s.item).map(it => {
         const a = s.link ? it.first(s.link.split('@')[0]) : (it.el.tag === 'a' ? it : it.first('a[href]'));
@@ -391,7 +452,8 @@ const custom = {
   async fetchWork(ctx, stub) {
     const { src, get } = ctx;
     const s = src.selectors || {};
-    const res = await get(stub.url);
+    const acts = src.actions || {};
+    const res = await applyActions(ctx, await get(stub.url).then(r => ({ text: r.text, url: r.url })), acts.work);
     const doc = parse(res.text);
     const meta = p => (doc.first(`meta[property="${p}"]`) || { attr: () => null }).attr('content');
     const work = Object.assign({}, stub, {
@@ -403,12 +465,15 @@ const custom = {
     });
     enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
+    // The chapters' own clicks (a "Chapters" tab, "Show all chapters"…), from the work page as it is now
+    const chRes = acts.chapters && acts.chapters.length ? await applyActions(ctx, res, acts.chapters) : res;
+    const chDoc = chRes === res ? doc : parse(chRes.text);
     if (!s.chapter) {
       // No chapter selector: every link on the page whose address matches the chapters' pattern
       const re = src.chapterPattern ? require('./sitemap').patternRegex(src.chapterPattern) : null;
       if (!re) return work;
       const seen = new Set();
-      work.chapters = await withHiddenChapters(ctx, doc, res.url, (d, base) => d.select('a[href]').map(a => {
+      work.chapters = await withHiddenChapters(ctx, chDoc, chRes.url, (d, base) => d.select('a[href]').map(a => {
         const u = abs(a.attr('href'), base);
         let p; try { p = decodeURI(new URL(u).pathname); } catch { return null; }
         if (!u || !re.test(p) || seen.has(p)) return null;
@@ -418,7 +483,7 @@ const custom = {
       }).filter(Boolean));
       return work;
     }
-    work.chapters = await withHiddenChapters(ctx, doc, res.url, (d, base) => d.select(s.chapter).map(li => {
+    work.chapters = await withHiddenChapters(ctx, chDoc, chRes.url, (d, base) => d.select(s.chapter).map(li => {
       const link = s.chapterLink || 'a@href';
       const [lsel, lat] = link.includes('@') ? link.split('@') : [link, 'href'];
       const a = lsel ? li.first(lsel) : li;
@@ -432,4 +497,4 @@ const custom = {
 
 const ADAPTERS = { mangadex, webtoons, madara, mangareader, custom };
 const TYPES = Object.keys(ADAPTERS);
-module.exports = { ADAPTERS, TYPES, pick, chapterNum, STATUS };
+module.exports = { ADAPTERS, TYPES, pick, chapterNum, STATUS, applyActions };

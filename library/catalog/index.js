@@ -29,6 +29,14 @@ const err = (status, code) => Object.assign(new Error(code), { status, code });
 
 /* ---------------- sources ---------------- */
 // Settings from a form/API body (validated); `current` when editing
+function cleanActions(a) {
+  const out = {};
+  for (const k of ['list', 'work', 'chapters']) {
+    const list = (Array.isArray(a && a[k]) ? a[k] : []).map(x => ({ selector: String((x && x.selector) || '').trim().slice(0, 300), mode: x && x.mode === 'open' ? 'open' : 'add' })).filter(x => x.selector).slice(0, 5);
+    if (list.length) out[k] = list;
+  }
+  return out;
+}
 function parseSource(body, current) {
   const b = body || {};
   const s = Object.assign({}, current || {});
@@ -59,6 +67,8 @@ function parseSource(body, current) {
     s.selectors = {};
     for (const k of keys) if (b.selectors[k] != null && String(b.selectors[k]).trim()) s.selectors[k] = String(b.selectors[k]).trim().slice(0, 400);
   }
+  // Clicks to make before collecting (other sites): { list, work, chapters: [{ selector, mode: 'open' | 'add' }] }
+  if ('actions' in b) s.actions = cleanActions(b.actions);
   if ('enabled' in b) s.enabled = b.enabled !== false;
   if ('autoDetect' in b) s.autoDetect = b.autoDetect !== false;
   if ('siteUrl' in b) { const u = String(b.siteUrl || '').trim().replace(/\/+$/, ''); if (u && !publicUrl(u, ALLOW_LOCAL)) throw err(400, 'invalidUrl'); if (u) s.siteUrl = u; }
@@ -348,9 +358,11 @@ function readSiteFile(id, url) {
   return ask({ type: 'siteFile', url: u.href, allowLocal: ALLOW_LOCAL });
 }
 // A page of a site, made inert, for the source wizard's element picker (any public page: administrators only)
-function previewPage(url, { inert = false } = {}) {
+// actions: clicks to make first (as crawls make them), with a report of each
+function previewPage(url, { inert = false, actions = null } = {}) {
   if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
-  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL, inert: Boolean(inert) });
+  const acts = actions ? cleanActions({ work: actions }).work || [] : [];
+  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL, inert: Boolean(inert), actions: acts });
 }
 
 // Scheduled crawls: an update when the schedule says so (a full crawl the first time or after an interruption)

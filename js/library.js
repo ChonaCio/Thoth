@@ -1759,11 +1759,21 @@
     chapter: { page: 'work', kind: 'repeat' }, chapterLink: { page: 'work', kind: 'rel', rel: 'chapter', attr: 'href' }, chapterTitle: { page: 'work', kind: 'rel', rel: 'chapter' }, chapterDate: { page: 'work', kind: 'rel', rel: 'chapter' }
   };
   var wz = null;
+  var wzCopyAct = function (a) { return { selector: a.selector || '', mode: a.mode === 'open' ? 'open' : 'add' }; };
+  // A setting being picked: a selector ('item'…) or a click ('act:work:0')
+  var WZ_CLICK = { kind: 'click' };
+  var wzSpec = function (key) { return /^act:(list|work|chapters):\d$/.test(key || '') ? WZ_CLICK : WZ_SEL[key] || null; };
+  var wzFieldLabel = function (key) { var m = /^act:(\w+):(\d)$/.exec(key || ''); return m ? t('wz.clickN', { n: Number(m[2]) + 1 }) : t('cat.sel.' + key); };
+  // The clicks the preview makes for a step (the chapters' come after the work page's)
+  var wzActionsFor = function (step) { var a = wz.draft.actions; return step === 'list' ? a.list : step === 'work' ? a.work : step === 'chapters' ? a.work.concat(a.chapters) : []; };
   function wzDraftFrom(s) {
     var d = Object.assign({ name: '', siteUrl: '', autoDetect: true, type: 'custom', baseUrl: '', languages: '', listPath: '', contentRating: 'safe,suggestive,erotica', listing: 'pages', sitemaps: '',
       workPattern: '', chapterPattern: '', includeChapters: true, maxWorks: '', gapMs: '', concurrency: '', schedule: 'manual' }, s || {});
     d.sitemaps = Array.isArray(d.sitemaps) ? d.sitemaps.join('\n') : d.sitemaps || '';
     d.selectors = Object.assign({}, (s && s.selectors) || {});
+    // Clicks to make before collecting, per page: { list, work, chapters: [{ selector, mode }] }
+    var acts = (s && s.actions) || {};
+    d.actions = { list: (acts.list || []).map(wzCopyAct), work: (acts.work || []).map(wzCopyAct), chapters: (acts.chapters || []).map(wzCopyAct) };
     if (s) { d.siteUrl = s.siteUrl || s.baseUrl || ''; d.autoDetect = s.autoDetect === true; d.maxWorks = s.maxWorks || ''; d.gapMs = s.gapMs || ''; d.concurrency = s.concurrency || ''; }
     return d;
   }
@@ -1839,17 +1849,17 @@
         out += '<p class="muted small">' + esc(t('wz.listIntro')) + '</p>' +
           wzField('sel.listUrl', t('cat.sel.listUrl'), { placeholder: 'https://site.com/manga/page/{page}/', help: t('wz.listUrlHelp') }) +
           wzField('sel.firstPage', t('wz.firstPage'), { placeholder: '1' }) +
-          sel('item', '.manga-list .item') + sel('link', 'a@href') + sel('title', 'h3') + sel('cover', 'img@src');
+          wzActionsBox('list') + sel('item', '.manga-list .item') + sel('link', 'a@href') + sel('title', 'h3') + sel('cover', 'img@src');
       }
       if (d.type === 'madara' || d.type === 'mangareader') out += wzField('listPath', t('cat.srcListPath'), { placeholder: 'manga', help: t('cat.srcListPathHelp') });
       return out;
     }
     if (step === 'work') {
-      return '<p class="muted small">' + esc(t('wz.workIntro')) + '</p>' +
+      return '<p class="muted small">' + esc(t('wz.workIntro')) + '</p>' + wzActionsBox('work') +
         sel('workTitle', 'h1') + sel('workCover', '.cover img@src') + sel('summary', '.description') + sel('genres', '.genres a') + sel('authors', '.author a') + sel('altTitles', '.alt-names') + sel('status', '.status');
     }
     if (step === 'chapters') {
-      return '<p class="muted small">' + esc(t('wz.chaptersIntro')) + '</p>' +
+      return '<p class="muted small">' + esc(t('wz.chaptersIntro')) + '</p>' + wzActionsBox('chapters') +
         sel('chapter', '.chapter-list li') + sel('chapterLink', 'a@href') + sel('chapterTitle', 'a') + sel('chapterDate', '.date') +
         wzField('chapterPattern', t('cat.srcChapterPattern'), { placeholder: '/manga/*/*/', help: t('cat.srcChapterPatternHelp') });
     }
@@ -1867,6 +1877,31 @@
       (d.autoDetect ? '<p class="muted small">' + esc(t('cat.detectNote')) + '</p>' :
         '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="test"' + (wz.test && wz.test.loading ? ' disabled' : '') + '>' + icon('play') + esc(t('cat.test')) + '</button></div>' + testReport(wz.test));
   }
+  // "Before collecting, click": the buttons or tabs to press first on this page (a tab with the chapters, "Show
+  // all"…), each picked in the preview; what each did in the preview is shown under it
+  var WZ_ACT_RESULTS = { opened: 'wz.act.opened', added: 'wz.act.added', inPage: 'wz.act.inPage', notFound: 'wz.act.notFound', failed: 'wz.act.failed', otherSite: 'wz.act.otherSite', clicked: 'wz.act.clicked', missing: 'wz.act.notFound' };
+  function wzActionsBox(group) {
+    var list = wz.draft.actions[group], pv = wz.pv;
+    // The preview's report: for this step's clicks (on the chapters step, after the work page's)
+    var offset = group === 'chapters' ? wz.draft.actions.work.length : 0;
+    var report = pv.page && pv.reportFor === wz.step ? pv.report || [] : [];
+    return '<div class="wz-clicks"><h3 class="wz-clicks__title">' + esc(t('wz.clicksTitle')) + '</h3><p class="muted small">' + esc(t('wz.clicksHelp')) + '</p>' +
+      list.map(function (a, i) {
+        var key = 'act:' + group + ':' + i, r = report[offset + i];
+        return '<div class="wz-click"><span class="wz-click__n">' + (i + 1) + '</span>' +
+          '<input type="text" id="wz-' + key.replace(/:/g, '-') + '" data-wz="' + key + '" value="' + esc(a.selector) + '" placeholder="' + esc(t('wz.clickPlaceholder')) + '" aria-label="' + esc(t('wz.clickN', { n: i + 1 })) + '" />' +
+          '<button type="button" class="btn btn--outline btn--small wz-pick' + (pv.target === key ? ' is-active' : '') + '" data-wz-pick="' + key + '" aria-pressed="' + (pv.target === key) + '" title="' + esc(t('wz.pickHelp')) + '">' + icon('ads_click') + esc(t('wz.pick')) + '</button>' +
+          '<select class="select select--compact" data-wz="actmode:' + group + ':' + i + '" aria-label="' + esc(t('wz.clickMode')) + '">' +
+            '<option value="add"' + (a.mode !== 'open' ? ' selected' : '') + '>' + esc(t('wz.clickAdd')) + '</option>' +
+            '<option value="open"' + (a.mode === 'open' ? ' selected' : '') + '>' + esc(t('wz.clickOpen')) + '</option></select>' +
+          '<button type="button" class="icon-btn" data-wz-act="act-del" data-group="' + group + '" data-i="' + i + '" aria-label="' + esc(t('wz.clickRemove')) + '">' + icon('close') + '</button>' +
+          (r ? '<p class="small wz-click__result' + (/notFound|failed|otherSite|missing/.test(r.result) ? ' is-bad' : '') + '">' + esc(t(WZ_ACT_RESULTS[r.result] || 'wz.act.inPage', { url: r.url || '', error: r.error || '' })) + '</p>' : '') +
+        '</div>';
+      }).join('') +
+      (list.length < 5 ? '<button type="button" class="btn btn--text btn--small" data-wz-act="act-add" data-group="' + group + '">' + icon('add') + esc(t('wz.clickAdd1')) + '</button>' : '') +
+    '</div>';
+  }
+
   /* -------- the preview of the site's pages (steps with selectors) --------
    * The page as the site sent it (fetched by the server), shown in a sandboxed frame that may run scripts but has
    * no access to Thoth (an opaque origin: not the app's pages, cookies or API). It loads the site's images, styles
@@ -1890,9 +1925,9 @@
       '</div>';
   }
   function wzStatusText() {
-    var pv = wz.pv, target = pv.target ? t('cat.sel.' + pv.target) : null;
+    var pv = wz.pv, target = pv.target ? wzFieldLabel(pv.target) : null;
     if (pv.loading) return t('wz.fetching');
-    if (pv.page && !pv.ready) return pv.waitLeft > 0 ? t('wz.waiting', { s: pv.waitLeft }) : t('wz.pageLoading');
+    if (pv.page && !pv.ready) return pv.clicking ? t('wz.clicking', { n: pv.clicking }) : pv.waitLeft > 0 ? t('wz.waiting', { s: pv.waitLeft }) : t('wz.pageLoading');
     if (pv.info) return pv.info;
     return pv.mode === 'navigate' ? t('wz.navigateHelp') : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField');
   }
@@ -1941,7 +1976,11 @@
       pv.tried = true;
       if (url) return wzLoadPreview(url);
     }
-    var key = pv.page ? [pv.seq, pv.images ? 1 : 0, pv.scripts ? 1 : 0, pv.wait, pv.reloads || 0].join('|') : 'empty' + (pv.loading ? '-loading' : '');
+    // The clicks of this step: made by the server (as crawls make them) — the page is fetched again when they
+    // change; with the site's scripts, made in the page itself (real clicks)
+    var acts = JSON.stringify(wzActionsFor(wz.step).filter(function (a) { return a.selector; }));
+    if (pv.page && !pv.loading && !pv.scripts && pv.page.actionsKey !== acts && pv.base) return wzLoadPreview(pv.base);
+    var key = pv.page ? [pv.seq, pv.images ? 1 : 0, pv.scripts ? 1 : 0, pv.wait, pv.reloads || 0, pv.scripts ? acts : ''].join('|') : 'empty' + (pv.loading ? '-loading' : '');
     var frame = $('#wz-frame');
     if (frame && frame.dataset.key === key) return wzSendConfig();
     holder.innerHTML = '';
@@ -1968,9 +2007,15 @@
   }
   function wzLoadPreview(url) {
     var pv = wz.pv, seq = pv.seq = (pv.seq || 0) + 1; // (only the latest page asked for is shown)
-    pv.url = url; pv.typed = null; pv.loading = true; pv.error = null; pv.info = null; pv.page = null; pv.srcDoc = null;
+    pv.url = url; pv.base = url; pv.typed = null; pv.loading = true; pv.error = null; pv.info = null; pv.page = null; pv.srcDoc = null;
+    var acts = wzActionsFor(wz.step).filter(function (a) { return a.selector; }), actsKey = JSON.stringify(acts), step = wz.step;
     wzRender();
-    api('GET', '/api/catalog/preview?' + Store.qs({ url: url, inert: pv.images ? undefined : '1' })).then(function (r) { if (pv.seq === seq) { pv.page = r.page; pv.url = r.page.url; } }, function (e) { if (pv.seq === seq) pv.error = e; })
+    api('GET', '/api/catalog/preview?' + Store.qs({ url: url, inert: pv.images ? undefined : '1', actions: acts.length && !pv.scripts ? actsKey : undefined })).then(function (r) {
+      if (pv.seq !== seq) return;
+      pv.page = r.page; pv.url = r.page.url;
+      pv.page.actionsKey = pv.scripts ? null : actsKey;
+      pv.report = r.page.actions || []; pv.reportFor = step;
+    }, function (e) { if (pv.seq === seq) pv.error = e; })
       .then(function () { if (pv.seq !== seq) return; pv.loading = false; if (wz && wz.pv === pv) wzRender(); });
   }
   // Another kind of page to show: the next render loads it
@@ -1978,7 +2023,8 @@
   // The document the frame shows: the site's page (its images, styles, and scripts if asked) + the picker
   function wzBuildDoc(page) {
     var pv = wz.pv;
-    var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: pv.target ? WZ_SEL[pv.target] : null, selectors: wz.draft.selectors };
+    var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors,
+      clicks: pv.scripts ? wzActionsFor(wz.step).map(function (a) { return a.selector; }).filter(Boolean) : [] };
     var picker = '(' + wzPickerMain.toString() + ')(' + JSON.stringify(cfg).replace(/</g, '\\u003c') + ');';
     var nonce = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
     if (!pv.images && page.html) {
@@ -2019,14 +2065,14 @@
   function wzSendConfig() {
     var frame = $('#wz-frame'), pv = wz && wz.pv;
     if (!frame || !frame.contentWindow || !pv) return;
-    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: pv.target ? WZ_SEL[pv.target] : null, selectors: wz.draft.selectors } }, '*');
+    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors } }, '*');
   }
   // Is what was picked in the page as the site sends it (what crawls read: they don't run the site's scripts)?
   function wzInSource(field, selector) {
     var pv = wz.pv;
     if (!pv.page || !pv.page.source) return true;
     if (!pv.srcDoc) pv.srcDoc = new DOMParser().parseFromString(pv.page.source, 'text/html');
-    var spec = WZ_SEL[field], css = String(selector).split('@')[0];
+    var spec = wzSpec(field), css = String(selector).split('@')[0];
     try {
       if (spec.kind === 'rel') {
         var rows = pv.srcDoc.querySelectorAll(String(wz.draft.selectors[spec.rel] || '').split('@')[0]);
@@ -2042,20 +2088,34 @@
     if (!wz || !frame || e.source !== frame.contentWindow) return;
     var m = e.data, pv = wz.pv;
     if (!m || m.thoth !== 'picker') return;
-    if (m.type === 'waiting') { pv.ready = false; pv.waitLeft = Math.max(0, Math.min(60, Number(m.left) || 0)); return wzStatus(); }
-    if (m.type === 'ready') { pv.ready = true; pv.waitLeft = 0; wzStatus(); return wzSendConfig(); }
+    if (m.type === 'waiting') { pv.ready = false; pv.clicking = 0; pv.waitLeft = Math.max(0, Math.min(60, Number(m.left) || 0)); return wzStatus(); }
+    if (m.type === 'clicking') { pv.ready = false; pv.clicking = Math.max(1, Math.min(5, Number(m.n) || 1)); return wzStatus(); }
+    if (m.type === 'clicked' && Array.isArray(m.report)) {
+      pv.report = m.report.slice(0, 15).map(function (x) { return { result: x === true ? 'clicked' : 'missing' }; }); pv.reportFor = wz.step;
+      var form = $('#wz-form'); if (form) { form.innerHTML = wzStepBody(wz.step); if (window.renderIcons) window.renderIcons(form); }
+      return;
+    }
+    if (m.type === 'ready') { pv.ready = true; pv.waitLeft = 0; pv.clicking = 0; wzStatus(); return wzSendConfig(); }
     if (m.type === 'navigate') { var href = String(m.href || ''); if (/^https?:\/\//i.test(href) && pv.mode === 'navigate') wzLoadPreview(href); return; }
     if (m.type === 'error' && WZ_PICK_ERRORS[m.code]) {
       var rel = pv.target && WZ_SEL[pv.target] && WZ_SEL[pv.target].rel;
       pv.info = t(WZ_PICK_ERRORS[m.code], { field: rel ? t('cat.sel.' + rel) : '' });
       return wzStatus();
     }
-    if (m.type === 'picked' && m.field === pv.target && WZ_SEL[m.field] && typeof m.selector === 'string' && m.selector.length <= 400) {
-      var field = m.field;
+    if (m.type === 'picked' && m.field === pv.target && wzSpec(m.field) && typeof m.selector === 'string' && m.selector.length <= 400) {
+      var field = m.field, click = /^act:(\w+):(\d)$/.exec(field);
+      if (click) {
+        // A click picked: kept, and the page shown again with it made
+        wz.draft.actions[click[1]][Number(click[2])].selector = m.selector;
+        pv.target = null;
+        pv.info = t('wz.clickPicked', { n: Number(click[2]) + 1, selector: m.selector });
+        if (!pv.scripts && pv.base) wzLoadPreview(pv.base); else wzRender();
+        return;
+      }
       wz.draft.selectors[field] = m.selector;
       if ((field === 'link' || field === 'item') && /^https?:\/\//i.test(String(m.workUrl || ''))) wz.sampleWork = String(m.workUrl);
       var samples = (Array.isArray(m.samples) ? m.samples : []).slice(0, 3).map(function (x) { return String(x).slice(0, 80); });
-      pv.info = t('wz.picked', { field: t('cat.sel.' + field), selector: m.self ? t('wz.itself') : m.selector, count: Number(m.count) || 0 }) + (samples.length ? ' — ' + samples.join(' | ') : '') +
+      pv.info = t('wz.picked', { field: wzFieldLabel(field), selector: m.self ? t('wz.itself') : m.selector, count: Number(m.count) || 0 }) + (samples.length ? ' — ' + samples.join(' | ') : '') +
         (wzInSource(field, m.selector) ? '' : ' ⚠ ' + t('wz.onlyWithScripts'));
       var input = $('#wz-sel-' + field);
       if (input) input.value = m.selector;
@@ -2099,6 +2159,15 @@
       var field = cfg.field, spec = cfg.spec, sel = cfg.selectors || {};
       if (!field || !spec) return post({ type: 'error', code: 'chooseField' });
       var attr = spec.attr ? '@' + spec.attr : '', r = null;
+      if (spec.kind === 'click') {
+        // The element that takes the click: the link, button or tab around what was clicked
+        var c = (el.closest && el.closest('a, button, summary, label, [role=tab], [role=button], [onclick], [data-url], [data-href], [data-load], [data-toggle], [data-bs-toggle], [data-target], [data-tab]')) || el;
+        var only = function (x) { try { return document.querySelector(x) === c && all(document, x).length === 1; } catch (e) { return false; } };
+        var cs = pathSelector(c, null, only);
+        if (!only(cs)) cs = pathSelector(c, null, function (x) { try { return document.querySelector(x) === c; } catch (e) { return false; } });
+        mark([c]);
+        return post({ type: 'picked', field: field, selector: cs, count: 1, samples: [(c.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60)] });
+      }
       if (spec.kind === 'repeat') {
         var cur = el;
         while (cur && cur.parentElement && !BLOCK.test(cur.tagName.toLowerCase())) cur = cur.parentElement;
@@ -2165,8 +2234,21 @@
     var start = function () {
       var left = Math.max(0, Math.min(60, Number(cfg.wait) || 0));
       var tick = function () {
-        if (left <= 0) { ready = true; cursor(); post({ type: 'ready' }); return; }
+        if (left <= 0) return clicks();
         post({ type: 'waiting', left: left }); left--; setTimeout(tick, 1000);
+      };
+      // With the site's scripts: the clicks asked for, made for real, one every 1.5 s (time to show what they load)
+      var clicks = function () {
+        var list = (cfg.clicks || []).slice(0, 15), report = [];
+        var next = function (i) {
+          if (i >= list.length) { if (list.length) post({ type: 'clicked', report: report }); ready = true; cursor(); post({ type: 'ready' }); return; }
+          post({ type: 'clicking', n: i + 1 });
+          var el = null; try { el = document.querySelector(list[i]); } catch (e) { /* not a selector */ }
+          report.push(Boolean(el));
+          if (el) { try { el.click(); } catch (e) { /* its own scripts failed */ } }
+          setTimeout(function () { next(i + 1); }, el ? 1500 : 0);
+        };
+        next(0);
       };
       tick();
     };
@@ -2191,6 +2273,14 @@
     if (e.type === 'change' && el.id === 'wz-pv-wait') { pv.wait = Math.max(0, Math.min(60, Math.round(Number(el.value) || 0))); return wzRender(); }
     if (!key) return;
     var v = el.type === 'checkbox' ? el.checked : el.value;
+    var ak = /^act(mode)?:(list|work|chapters):(\d)$/.exec(key);
+    if (ak) {
+      var a = wz.draft.actions[ak[2]][Number(ak[3])];
+      if (a) { if (ak[1]) a.mode = v === 'open' ? 'open' : 'add'; else a.selector = v; }
+      // (the page shown again with the clicks as they are now)
+      if (e.type === 'change' && wz.pv.base) wzLoadPreview(wz.pv.base);
+      return;
+    }
     if (key.indexOf('sel.') === 0) wz.draft.selectors[key.slice(4)] = v; else wz.draft[key] = v;
     // Settings that change which steps or fields apply: drawn again
     if (e.type === 'change' && ['autoDetect', 'type', 'listing', 'includeChapters'].indexOf(key) !== -1) wzRender();
@@ -2218,6 +2308,8 @@
       iconUrl: d.iconUrl || undefined, maxWorks: Number(d.maxWorks) || 0, schedule: d.schedule, concurrency: Number(d.concurrency) || 0, selectors: {} };
     if (Number(d.gapMs)) body.gapMs = Number(d.gapMs);
     Object.keys(d.selectors).forEach(function (k) { if (d.selectors[k]) body.selectors[k] = d.selectors[k]; });
+    body.actions = {};
+    ['list', 'work', 'chapters'].forEach(function (g) { var l = d.actions[g].filter(function (a) { return a.selector.trim(); }); if (l.length) body.actions[g] = l; });
     return body;
   }
   function wzClick(e) {
@@ -2241,6 +2333,8 @@
       return wzRender();
     }
     if (act === 'load') { var u = $('#wz-pv-url').value.trim(); if (u) wzLoadPreview(u); return; }
+    if (act === 'act-add') { var g = b.dataset.group, l = wz.draft.actions[g]; if (l && l.length < 5) { l.push({ selector: '', mode: 'add' }); wz.pv.target = 'act:' + g + ':' + (l.length - 1); wz.pv.mode = 'pick'; } return wzRender(); }
+    if (act === 'act-del') { var dl = wz.draft.actions[b.dataset.group]; if (dl) dl.splice(Number(b.dataset.i), 1); wz.pv.target = null; if (wz.pv.base) return wzLoadPreview(wz.pv.base); return wzRender(); }
     if (act === 'reload') { wz.pv.reloads = (wz.pv.reloads || 0) + 1; wz.pv.info = null; return wzRender(); }
     if (act === 'detect') {
       var url = String(wz.draft.siteUrl || '').trim();

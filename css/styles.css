@@ -1013,3 +1013,16 @@ body.is-reading { overflow: hidden; }
 .wz-preview__holder .wz-preview__frame { flex: 1; }
 .wz-preview__opts .checkbox { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
 .wz-preview__opts .checkbox input { width: auto; }
+
+/* Wizard: clicks to make before collecting */
+.wz-clicks { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }
+.wz-clicks__title { margin: 0; font-size: 14px; font-weight: 500; }
+.wz-clicks .muted { margin: 0; }
+.wz-click { display: grid; grid-template-columns: auto minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.wz-click .icon-btn { grid-column: 4; grid-row: 1; }
+.wz-click select { grid-column: 2 / 4; grid-row: 2; justify-self: start; }
+.wz-click input { min-width: 0; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; }
+.wz-click__n { font-size: 12px; color: var(--text-muted); width: 1.2em; text-align: right; }
+.wz-click__result { grid-column: 2 / -1; margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
+.wz-click__result.is-bad { color: var(--danger); }
+@media (max-width: 520px) { .wz-click { grid-template-columns: auto minmax(0, 1fr) auto; } .wz-click select { grid-column: 2 / 3; } }
