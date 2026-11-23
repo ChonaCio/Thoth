@@ -235,8 +235,10 @@ if (require.main === module && process.send) {
   process.on('message', async msg => {
     if (!msg) return;
     if (msg.type === 'stop') { stop(); return; }
-    if (msg.type !== 'crawl' && msg.type !== 'test' && msg.type !== 'detect') return;
-    try { send({ type: 'result', reqId: msg.reqId, result: await (msg.type === 'crawl' ? crawl(msg, send) : msg.type === 'detect' ? require('./detect').detect(msg) : test(msg)) }); }
+    if (!['crawl', 'test', 'detect', 'siteFile', 'preview'].includes(msg.type)) return;
+    const run = { crawl: () => crawl(msg, send), detect: () => require('./detect').detect(msg), test: () => test(msg),
+      siteFile: () => require('./sitefiles').readSiteFile(msg), preview: () => require('./sitefiles').previewPage(msg) }[msg.type];
+    try { send({ type: 'result', reqId: msg.reqId, result: await run() }); }
     catch (e) { send({ type: 'error', reqId: msg.reqId, code: e.code || null, message: e.message, stats: e.stats || null }); }
   });
   send({ type: 'ready' });

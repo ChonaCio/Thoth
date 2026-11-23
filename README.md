@@ -188,7 +188,7 @@ end of their log, live), *Stop* where it can be stopped (crawls), and the ones t
 Each task writes its own **log file** (data/logs/); the **Logs** tab lists them by kind, shows one
 (live while it runs) and downloads it. Logs are deleted after *Keep task logs* days (Server settings).
 
-**Processes page (administrators).** Shows the web server, the scan service, the metadata lookups, file
+**Processes page (administrators).** Its tiles are all the same width (tiles in a row share their height). Shows the web server, the scan service, the metadata lookups, file
 management jobs (their queue, what the running job is doing, and a process that exists only while jobs run),
 the **catalog crawls** (each its own process, how many at once) and the **caches** (pages, covers, works and
 search, each its own process: sizes, answers from the cache, covers read ahead):
@@ -516,6 +516,19 @@ sites added as **sources**, with its metadata and chapter list.
   works that are new or whose entries changed (the hashes are saved again after a crawl that finished). Sites without a known theme use the generic reader (title, cover and summary from the page's standard
   tags; chapters = links whose address matches the chapter pattern).
 - **Icons:** each source shows its site's own icon (the one its pages declare, else `/favicon.ico`).
+- **Adding or editing a source is a wizard:** *Site* (a name and the address; *Detect settings* reads its robots.txt,
+  sitemaps and pages; with automatic settings that's all it needs) → *Kind of site* → *Works list* → *Work page* →
+  *Chapters* → *Crawling* → *Test and save* (steps that don't apply are skipped: a known theme needs no selectors).
+  Every selector can be typed or **picked in a preview of the site**, like the browser's "select an element" tool:
+  press *Pick* next to a setting, hover the page (the element under the pointer is outlined) and click it — the
+  wizard writes a selector the crawler understands, outlines everything it matches and shows a sample (for a work
+  in the list it finds the repeating block; link, title and cover are found inside it; genres and authors match
+  all their siblings). *Navigate* mode follows the site's links instead. The preview is fetched by the server (with
+  the crawler's politeness rules) and made inert: no scripts run, and the browser loads nothing from the site (its
+  stylesheets are inlined, images are placeholders).
+- **Site files tab:** each source's **robots.txt** and **sitemaps** — the ones in its settings, the ones detection
+  found and the ones its last crawl read (with their content hash, date and how many works each listed). Open one
+  to read it now: its text, the sitemaps it lists (click to open) and its addresses (searchable).
 - **Sources tab:** add a site, *Test* its settings (what the first list page and first work give),
   *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
   Each source can update every day or week by itself. While it runs, a crawl shows how it's fetching: works at

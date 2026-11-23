@@ -1460,6 +1460,7 @@
       '<nav class="tabs files-tabs" aria-label="' + esc(t('nav.catalog')) + '">' +
         tab('browse', '#catalog', 'travel_explore', 'cat.tabBrowse') +
         tab('merge', '#catalog/merge', 'collections', 'cat.tabMerge') + tab('sources', '#catalog/sources', 'dataset', 'cat.tabSources') +
+        tab('files', '#catalog/files', 'description', 'cat.tabFiles') +
       '</nav>';
   }
   function catState() {
@@ -1743,24 +1744,389 @@
       '</section>';
     }).join('') + '</div>';
   }
-  // The settings form; the fields shown depend on the kind of site
-  // Adding a source: the site's address first; its robots.txt, sitemaps and pages fill the settings
-  // Adding a source: its name and its address. Everything else is detected (robots.txt, every sitemap, the
-  // addresses of works and chapters, the theme, the icon), now and again at every crawl.
-  function catalogDetectForm() {
-    openForm({
-      title: t('cat.addSource'), submitLabel: t('cat.addAndDetect'), note: t('cat.detectNote'),
-      fields: [{ name: 'name', label: t('manage.name'), placeholder: 'My source' },
-        { name: 'url', label: t('cat.srcUrl'), placeholder: 'https://example.com', help: t('cat.detectHelp') }],
-      onSubmit: function (v) {
-        if (!v.url) return Promise.reject({ code: 'invalidUrl' });
-        return api('POST', '/api/catalog/sources', { name: v.name, baseUrl: v.url }).then(function (r) {
-          A().toast(detectSummary(r.source.detected ? { notes: r.source.detected.notes, found: r.source.detected.found, blocked: r.source.detected.blocked, settings: r.source } : null) || t('common.saved'));
-          loadCatSources();
-        });
-      }
-    });
+  /* ---------------- Source wizard (Add / Edit a source) ----------------
+   * Step by step, everything a source needs: the site (and what Detect finds there), the kind of site, how its
+   * works are listed, what a work page holds, its chapters, how to crawl it, then a Test before saving. Steps that
+   * don't apply are skipped (a source set up automatically needs only the first and the last ones; a site with a
+   * known theme doesn't need selectors). Selectors can be typed or picked: the preview shows one of the site's
+   * pages (fetched by the server, inert: no scripts, nothing loaded from the site by the browser), where hovering
+   * shows an element and clicking it picks it — like the browser's "select an element" tool — or, in Navigate
+   * mode, follows a link. */
+  var WZ_SEL = {
+    item: { page: 'list', kind: 'repeat' }, link: { page: 'list', kind: 'rel', rel: 'item', attr: 'href' }, title: { page: 'list', kind: 'rel', rel: 'item' }, cover: { page: 'list', kind: 'rel', rel: 'item', attr: 'src' },
+    workTitle: { page: 'work', kind: 'single' }, workCover: { page: 'work', kind: 'single', attr: 'src' }, summary: { page: 'work', kind: 'single' }, genres: { page: 'work', kind: 'multi' },
+    authors: { page: 'work', kind: 'multi' }, altTitles: { page: 'work', kind: 'single' }, status: { page: 'work', kind: 'single' },
+    chapter: { page: 'work', kind: 'repeat' }, chapterLink: { page: 'work', kind: 'rel', rel: 'chapter', attr: 'href' }, chapterTitle: { page: 'work', kind: 'rel', rel: 'chapter' }, chapterDate: { page: 'work', kind: 'rel', rel: 'chapter' }
+  };
+  var wz = null;
+  function wzDraftFrom(s) {
+    var d = Object.assign({ name: '', siteUrl: '', autoDetect: true, type: 'custom', baseUrl: '', languages: '', listPath: '', contentRating: 'safe,suggestive,erotica', listing: 'pages', sitemaps: '',
+      workPattern: '', chapterPattern: '', includeChapters: true, maxWorks: '', gapMs: '', concurrency: '', schedule: 'manual' }, s || {});
+    d.sitemaps = Array.isArray(d.sitemaps) ? d.sitemaps.join('\n') : d.sitemaps || '';
+    d.selectors = Object.assign({}, (s && s.selectors) || {});
+    if (s) { d.siteUrl = s.siteUrl || s.baseUrl || ''; d.autoDetect = s.autoDetect === true; d.maxWorks = s.maxWorks || ''; d.gapMs = s.gapMs || ''; d.concurrency = s.concurrency || ''; }
+    return d;
   }
+  // The steps that apply to this draft
+  function wzSteps() {
+    var d = wz.draft, theme = d.type === 'madara' || d.type === 'mangareader';
+    if (d.autoDetect) return ['site', 'crawl', 'review'];
+    var list = ['site', 'kind'];
+    if (d.type === 'custom' || theme) list.push('list');
+    if (d.type === 'custom') { list.push('work'); if (d.includeChapters) list.push('chapters'); }
+    return list.concat(['crawl', 'review']);
+  }
+  function openSourceWizard(src) {
+    var st = catSourcesState();
+    wz = { editing: src ? src.id : null, draft: wzDraftFrom(src), step: 'site', detected: src && src.detected ? { found: src.detected.found, notes: src.detected.notes, at: src.detected.at } : null,
+      detecting: false, test: null, saving: false, error: null, pv: { url: '', page: null, loading: false, error: null, mode: 'pick', target: null, info: null }, sampleWork: (src && src.detected && src.detected.found && src.detected.found.sampleWork && src.detected.found.sampleWork.url) || '', types: st.types || [] };
+    var dlg = $('#src-wizard');
+    if (!dlg) {
+      dlg = document.createElement('dialog');
+      dlg.id = 'src-wizard'; dlg.className = 'wizard';
+      dlg.setAttribute('aria-labelledby', 'wz-title');
+      document.body.appendChild(dlg);
+      dlg.addEventListener('click', wzClick);
+      dlg.addEventListener('input', wzInput);
+      dlg.addEventListener('change', wzInput);
+      dlg.addEventListener('close', function () { wz = null; });
+    }
+    wzRender();
+    if (!dlg.open) dlg.showModal();
+  }
+  function wzField(key, label, opts) {
+    opts = opts || {};
+    var d = wz.draft, sel = key.indexOf('sel.') === 0, k = sel ? key.slice(4) : key;
+    var v = sel ? d.selectors[k] || '' : d[k];
+    var id = 'wz-' + key.replace(/\./g, '-');
+    var input;
+    if (opts.type === 'select') input = '<select class="select" id="' + id + '" data-wz="' + key + '">' + opts.options.map(function (o) { return '<option value="' + esc(o.value) + '"' + (String(o.value) === String(v) ? ' selected' : '') + '>' + esc(o.label) + '</option>'; }).join('') + '</select>';
+    else if (opts.type === 'checkbox') return '<label class="checkbox wz-check"><input type="checkbox" id="' + id + '" data-wz="' + key + '"' + (v ? ' checked' : '') + ' /><span>' + esc(label) + '</span></label>' + (opts.help ? '<small class="field__help">' + esc(opts.help) + '</small>' : '');
+    else if (opts.type === 'textarea') input = '<textarea id="' + id + '" data-wz="' + key + '" rows="' + (opts.rows || 3) + '" placeholder="' + esc(opts.placeholder || '') + '">' + esc(v) + '</textarea>';
+    else input = '<input type="text" id="' + id + '" data-wz="' + key + '" value="' + esc(v) + '" placeholder="' + esc(opts.placeholder || '') + '" autocomplete="off" />';
+    // A selector that can be picked in the preview
+    var pick = sel && WZ_SEL[k] ? '<button type="button" class="btn btn--outline btn--small wz-pick' + (wz.pv.target === k ? ' is-active' : '') + '" data-wz-pick="' + k + '" title="' + esc(t('wz.pickHelp')) + '" aria-pressed="' + (wz.pv.target === k ? 'true' : 'false') + '">' + icon('ads_click') + esc(t('wz.pick')) + '</button>' : '';
+    return '<div class="field wz-field"><label for="' + id + '">' + esc(label) + '</label><div class="wz-field__row">' + input + pick + '</div>' + (opts.help ? '<small class="field__help">' + esc(opts.help) + '</small>' : '') + '</div>';
+  }
+  var WZ_TITLES = { site: 'wz.step.site', kind: 'wz.step.kind', list: 'wz.step.list', work: 'wz.step.work', chapters: 'wz.step.chapters', crawl: 'wz.step.crawl', review: 'wz.step.review' };
+  function wzStepBody(step) {
+    var d = wz.draft, sel = function (k, ph) { return wzField('sel.' + k, t('cat.sel.' + k), { placeholder: ph }); };
+    if (step === 'site') {
+      var det = wz.detected;
+      return '<p class="muted">' + esc(t('wz.siteIntro')) + '</p>' +
+        wzField('name', t('manage.name'), { placeholder: t('cat.srcNamePlaceholder') }) +
+        wzField('siteUrl', t('cat.srcSiteUrl'), { placeholder: 'https://example.com', help: t('cat.detectHelp') }) +
+        '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="detect"' + (wz.detecting ? ' disabled' : '') + '>' + (wz.detecting ? '<span class="spinner spinner--sm"></span>' : icon('search')) + esc(t('cat.detect')) + '</button></div>' +
+        (det ? '<div class="notice notice--info wz-detected">' + esc(detectSummary(Object.assign({ settings: wz.draft }, det))) + '</div>' : '') +
+        wzField('autoDetect', t('cat.srcAuto'), { type: 'checkbox', help: t('cat.srcAutoHelp') });
+    }
+    if (step === 'kind') {
+      return wzField('type', t('cat.srcType'), { type: 'select', help: t('cat.srcTypeHelp'), options: wz.types.map(function (x) { return { value: x.type, label: x.label }; }) }) +
+        wzField('baseUrl', t('cat.srcUrl'), { placeholder: 'https://example.com', help: t('cat.srcUrlHelp') }) +
+        wzField('languages', t('cat.srcLanguages'), { placeholder: 'en, es', help: t('cat.srcLanguagesHelp') }) +
+        (d.type === 'mangadex' ? wzField('contentRating', t('cat.srcRating'), { help: t('cat.srcRatingHelp') }) : '') +
+        wzField('includeChapters', t('cat.srcChapters'), { type: 'checkbox', help: t('cat.srcChaptersHelp') });
+    }
+    if (step === 'list') {
+      var out = wzField('listing', t('cat.srcListing'), { type: 'select', help: t('cat.srcListingHelp'), options: [{ value: 'sitemap', label: t('cat.listing.sitemap') }, { value: 'pages', label: t('cat.listing.pages') }] });
+      if (d.listing === 'sitemap') {
+        out += wzField('sitemaps', t('cat.srcSitemaps'), { type: 'textarea', rows: 2, help: t('cat.srcSitemapsHelp') }) +
+          wzField('workPattern', t('cat.srcWorkPattern'), { placeholder: '/manga/*/', help: t('cat.srcPatternHelp') });
+        var pats = wz.detected && wz.detected.found && wz.detected.found.patterns;
+        if (pats && pats.length) out += '<p class="muted small">' + esc(t('wz.patternsSeen')) + ' ' + pats.slice(0, 6).map(function (p) { return p.pattern + ' (' + p.count + ')'; }).join(' · ') + '</p>';
+      } else if (d.type === 'custom') {
+        out += '<p class="muted small">' + esc(t('wz.listIntro')) + '</p>' +
+          wzField('sel.listUrl', t('cat.sel.listUrl'), { placeholder: 'https://site.com/manga/page/{page}/', help: t('wz.listUrlHelp') }) +
+          wzField('sel.firstPage', t('wz.firstPage'), { placeholder: '1' }) +
+          sel('item', '.manga-list .item') + sel('link', 'a@href') + sel('title', 'h3') + sel('cover', 'img@src');
+      }
+      if (d.type === 'madara' || d.type === 'mangareader') out += wzField('listPath', t('cat.srcListPath'), { placeholder: 'manga', help: t('cat.srcListPathHelp') });
+      return out;
+    }
+    if (step === 'work') {
+      return '<p class="muted small">' + esc(t('wz.workIntro')) + '</p>' +
+        sel('workTitle', 'h1') + sel('workCover', '.cover img@src') + sel('summary', '.description') + sel('genres', '.genres a') + sel('authors', '.author a') + sel('altTitles', '.alt-names') + sel('status', '.status');
+    }
+    if (step === 'chapters') {
+      return '<p class="muted small">' + esc(t('wz.chaptersIntro')) + '</p>' +
+        sel('chapter', '.chapter-list li') + sel('chapterLink', 'a@href') + sel('chapterTitle', 'a') + sel('chapterDate', '.date') +
+        wzField('chapterPattern', t('cat.srcChapterPattern'), { placeholder: '/manga/*/*/', help: t('cat.srcChapterPatternHelp') });
+    }
+    if (step === 'crawl') {
+      return wzField('schedule', t('cat.srcSchedule'), { type: 'select', options: ['manual', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) }) +
+        wzField('concurrency', t('cat.srcConcurrency'), { placeholder: String((catSourcesState().data && catSourcesState().data.defaultConcurrency) || 3), help: t('cat.srcConcurrencyHelp') }) +
+        (d.autoDetect ? '' : wzField('gapMs', t('cat.srcGap'), { placeholder: '1500', help: t('cat.srcGapHelp') }) + wzField('maxWorks', t('cat.srcMax'), { placeholder: '0', help: t('cat.srcMaxHelp') }));
+    }
+    // review: what will be saved, and a Test with these settings
+    var rows = d.autoDetect ? [[t('cat.srcSiteUrl'), d.siteUrl], [t('cat.srcAuto'), t('common.yes')]] :
+      [[t('cat.srcType'), (wz.types.filter(function (x) { return x.type === d.type; })[0] || {}).label || d.type], [t('cat.srcUrl'), d.baseUrl], [t('cat.srcListing'), t('cat.listing.' + d.listing)]]
+        .concat(Object.keys(d.selectors).filter(function (k) { return d.selectors[k]; }).map(function (k) { return [t('cat.sel.' + k) !== 'cat.sel.' + k ? t('cat.sel.' + k) : k, d.selectors[k]]; }));
+    rows.push([t('cat.srcSchedule'), t('cat.schedule.' + d.schedule)]);
+    return '<dl class="pref-list wz-review">' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd><code>' + esc(r[1] || '—') + '</code></dd>'; }).join('') + '</dl>' +
+      (d.autoDetect ? '<p class="muted small">' + esc(t('cat.detectNote')) + '</p>' :
+        '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="test"' + (wz.test && wz.test.loading ? ' disabled' : '') + '>' + icon('play') + esc(t('cat.test')) + '</button></div>' + testReport(wz.test));
+  }
+  // The preview of one of the site's pages, for picking (steps with selectors)
+  function wzPreviewPane(step) {
+    if (wz.draft.autoDetect || !(step === 'list' && wz.draft.type === 'custom' && wz.draft.listing !== 'sitemap') && step !== 'work' && step !== 'chapters') return '';
+    var pv = wz.pv;
+    var target = pv.target ? t('cat.sel.' + pv.target) : null;
+    return '<section class="wz-preview" aria-label="' + esc(t('wz.preview')) + '">' +
+      '<div class="wz-preview__bar">' +
+        '<input type="url" id="wz-pv-url" value="' + esc(pv.url) + '" placeholder="https://…" aria-label="' + esc(t('wz.pageAddress')) + '" />' +
+        '<button type="button" class="btn btn--outline btn--small" data-wz-act="load">' + esc(t('wz.load')) + '</button>' +
+        '<div class="seg" role="group" aria-label="' + esc(t('wz.mode')) + '">' +
+          '<button type="button" class="seg__btn' + (pv.mode === 'pick' ? ' is-active' : '') + '" data-wz-mode="pick" aria-pressed="' + (pv.mode === 'pick') + '">' + icon('ads_click') + esc(t('wz.modePick')) + '</button>' +
+          '<button type="button" class="seg__btn' + (pv.mode === 'navigate' ? ' is-active' : '') + '" data-wz-mode="navigate" aria-pressed="' + (pv.mode === 'navigate') + '">' + icon('open_in_new') + esc(t('wz.modeNavigate')) + '</button>' +
+        '</div></div>' +
+      '<p class="small wz-preview__status" role="status">' + esc(pv.loading ? t('common.loading') : pv.info ? pv.info : pv.mode === 'navigate' ? t('wz.navigateHelp') : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField')) + '</p>' +
+      (pv.error ? errorBanner(pv.error) : '') +
+      '<iframe class="wz-preview__frame" id="wz-frame" sandbox="allow-same-origin" title="' + esc(t('wz.preview')) + '"></iframe>' +
+    '</section>';
+  }
+  function wzRender() {
+    var dlg = $('#src-wizard');
+    if (!dlg || !wz) return;
+    var steps = wzSteps();
+    if (steps.indexOf(wz.step) === -1) wz.step = steps[0];
+    var i = steps.indexOf(wz.step), last = i === steps.length - 1;
+    var preview = wzPreviewPane(wz.step);
+    dlg.innerHTML = '<div class="wizard__frame">' +
+      '<header class="wizard__head"><h2 id="wz-title">' + esc(t(wz.editing ? 'cat.editSource' : 'cat.addSource')) + '</h2>' +
+        '<button type="button" class="icon-btn" data-wz-act="close" aria-label="' + esc(t('common.close')) + '">' + icon('close') + '</button></header>' +
+      '<ol class="wizard__steps">' + steps.map(function (s, k) { return '<li class="' + (k === i ? 'is-current' : k < i ? 'is-done' : '') + '"><button type="button" data-wz-go="' + s + '"' + (k === i ? ' aria-current="step"' : '') + '>' + (k + 1) + '. ' + esc(t(WZ_TITLES[s])) + '</button></li>'; }).join('') + '</ol>' +
+      '<div class="wizard__body' + (preview ? ' wizard__body--split' : '') + '"><div class="wizard__form">' + wzStepBody(wz.step) + '</div>' + preview + '</div>' +
+      '<footer class="wizard__foot"><p class="wizard__error" role="alert">' + (wz.error ? esc(A().errMsg(wz.error)) : '') + '</p>' +
+        (i > 0 ? '<button type="button" class="btn btn--text" data-wz-act="back">' + esc(t('wz.back')) + '</button>' : '') +
+        (last ? '<button type="button" class="btn btn--primary" data-wz-act="save"' + (wz.saving ? ' disabled' : '') + '>' + esc(t('common.save')) + '</button>'
+          : '<button type="button" class="btn btn--primary" data-wz-act="next">' + esc(t('wz.next')) + '</button>') +
+      '</footer></div>';
+    if (window.renderIcons) window.renderIcons(dlg);
+    if (preview) wzShowPreview();
+  }
+  // The page in the preview: shown, and made pickable
+  function wzShowPreview() {
+    var pv = wz.pv, frame = $('#wz-frame');
+    if (!frame) return;
+    if (!pv.page && !pv.loading && !pv.error) {
+      var url = wzDefaultPreviewUrl();
+      if (url) return wzLoadPreview(url);
+    }
+    if (!pv.page) { frame.srcdoc = '<p style="font:14px sans-serif;color:#777;padding:16px">' + esc(t('wz.noPage')) + '</p>'; return; }
+    frame.addEventListener('load', function () { wzHookFrame(frame); }, { once: true });
+    frame.srcdoc = pv.page.html;
+  }
+  function wzDefaultPreviewUrl() {
+    var d = wz.draft;
+    if (wz.step === 'list') {
+      var lu = d.selectors.listUrl;
+      if (lu) try { return new URL(lu.replace('{page}', d.selectors.firstPage || '1'), d.baseUrl || d.siteUrl).href; } catch (e) { /* not an address */ }
+      return d.baseUrl || d.siteUrl;
+    }
+    return wz.sampleWork || '';
+  }
+  function wzLoadPreview(url) {
+    var pv = wz.pv, seq = pv.seq = (pv.seq || 0) + 1; // (only the latest page asked for is shown)
+    pv.url = url; pv.loading = true; pv.error = null; pv.info = null; pv.page = null;
+    wzRender();
+    api('GET', '/api/catalog/preview?' + Store.qs({ url: url })).then(function (r) { if (pv.seq === seq) { pv.page = r.page; pv.url = r.page.url; } }, function (e) { if (pv.seq === seq) pv.error = e; })
+      .then(function () { if (pv.seq !== seq) return; pv.loading = false; if (wz && wz.pv === pv) wzRender(); });
+  }
+  // Another kind of page to show: the next render loads it
+  function wzResetPreview() { var pv = wz.pv; pv.seq = (pv.seq || 0) + 1; pv.page = null; pv.loading = false; pv.error = null; pv.info = null; pv.target = null; }
+  /* -------- picking an element (in the preview's page) -------- */
+  var BLOCK_TAGS = /^(li|div|article|section|tr|td|dl|dd|figure|header|ul|ol|table|tbody|main|aside|nav)$/;
+  var goodClass = function (c) { return /^[a-zA-Z][\w-]{1,40}$/.test(c) && !/\d{4,}/.test(c) && !/^(active|current|selected|hover|focus|show|open|is-|has-|js-|thoth-)/.test(c); };
+  function stepOf(el) {
+    var tag = el.tagName.toLowerCase();
+    if (el.id && /^[a-zA-Z][\w-]*$/.test(el.id) && !/\d{3,}/.test(el.id)) return tag + '#' + el.id;
+    return tag + Array.prototype.filter.call(el.classList, goodClass).slice(0, 2).map(function (c) { return '.' + c; }).join('');
+  }
+  // The shortest path of steps (from el up, at most 5) that `ok(selector)` accepts
+  function pathSelector(el, stopAt, ok) {
+    var parts = [stepOf(el)], cur = el.parentElement;
+    for (var i = 0; i < 6; i++) {
+      var s = parts.join(' ');
+      if (ok(s)) return s;
+      if (!cur || cur === stopAt || cur.tagName === 'HTML') break;
+      parts.unshift(stepOf(cur)); cur = cur.parentElement;
+    }
+    return parts.join(' ');
+  }
+  var countIn = function (root, s) { try { return root.querySelectorAll(s).length; } catch (e) { return 0; } };
+  function wzPickFor(field, el, doc) {
+    var spec = WZ_SEL[field], d = wz.draft;
+    var attr = spec.attr ? '@' + spec.attr : '';
+    if (spec.kind === 'repeat') {
+      // The repeating block around what was clicked (a row, not the link inside it)
+      var cur = el;
+      while (cur && cur.parentElement && !BLOCK_TAGS.test(cur.tagName.toLowerCase())) cur = cur.parentElement;
+      for (; cur && cur.tagName !== 'BODY'; cur = cur.parentElement) {
+        var s = pathSelector(cur, null, function (x) { var n = countIn(doc, x); return n >= 2 && n <= 2000; });
+        var n = countIn(doc, s);
+        if (n >= 2) return { selector: s, matches: doc.querySelectorAll(s) };
+      }
+      return { error: t('wz.noRepeat') };
+    }
+    if (spec.kind === 'rel') {
+      var parentSel = d.selectors[spec.rel];
+      if (!parentSel) return { error: t('wz.pickParentFirst', { field: t('cat.sel.' + spec.rel) }) };
+      var root = el.closest(parentSel.split('@')[0]);
+      if (!root) return { error: t('wz.pickInside', { field: t('cat.sel.' + spec.rel) }) };
+      var target = spec.attr === 'href' ? (el.closest('a[href]') || el.querySelector('a[href]')) : spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || (el.closest('a, div, figure') || el).querySelector('img')) : el;
+      if (!target || !root.contains(target)) return { error: t('wz.pickNotFound') };
+      if (target === root) return { selector: '', self: true, matches: [target] };
+      var rs = pathSelector(target, root, function (x) { try { return root.querySelector(x) === target; } catch (e) { return false; } });
+      return { selector: rs + attr, matches: Array.prototype.map.call(doc.querySelectorAll(parentSel), function (r) { return r.querySelector(rs); }).filter(Boolean) };
+    }
+    if (spec.kind === 'multi') {
+      // Every element like the one clicked in its container (e.g. each genre link)
+      var box = el.parentElement;
+      while (box && box.parentElement && box.querySelectorAll(stepOf(el)).length < 2 && !BLOCK_TAGS.test(box.tagName.toLowerCase())) box = box.parentElement;
+      var boxSel = pathSelector(box, null, function (x) { try { return doc.querySelector(x) === box; } catch (e) { return false; } });
+      var ms = boxSel + ' ' + stepOf(el);
+      return { selector: ms + attr, matches: doc.querySelectorAll(ms) };
+    }
+    // single: the first element the selector finds is the one clicked
+    var tgt = spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || el) : el;
+    // (one that finds only it, if a short one does; else one whose first match is it)
+    var unique = function (x) { try { return doc.querySelector(x) === tgt && doc.querySelectorAll(x).length === 1; } catch (e) { return false; } };
+    var ss = pathSelector(tgt, null, unique);
+    if (!unique(ss)) ss = pathSelector(tgt, null, function (x) { try { return doc.querySelector(x) === tgt; } catch (e) { return false; } });
+    return { selector: ss + attr, matches: [tgt] };
+  }
+  function wzHookFrame(frame) {
+    var doc = frame.contentDocument;
+    if (!doc) return;
+    var style = doc.createElement('style');
+    style.textContent = '.thoth-hl{outline:2px solid #1a73e8!important;outline-offset:1px;background-color:rgba(26,115,232,.12)!important;cursor:crosshair!important}' +
+      '.thoth-match{outline:2px dashed #188038!important;outline-offset:1px}a{cursor:' + (wz.pv.mode === 'navigate' ? 'pointer' : 'crosshair') + '!important}';
+    doc.head.appendChild(style);
+    var last = null;
+    doc.addEventListener('mouseover', function (e) {
+      if (wz.pv.mode !== 'pick') return;
+      if (last) last.classList.remove('thoth-hl');
+      last = e.target; last.classList.add('thoth-hl');
+    });
+    doc.addEventListener('mouseout', function () { if (last) last.classList.remove('thoth-hl'); last = null; });
+    doc.addEventListener('submit', function (e) { e.preventDefault(); }, true);
+    doc.addEventListener('click', function (e) {
+      e.preventDefault(); e.stopPropagation();
+      var el = e.target;
+      if (wz.pv.mode === 'navigate') {
+        var a = el.closest('a[href]');
+        if (a && /^https?:/.test(a.href)) wzLoadPreview(a.href);
+        return;
+      }
+      var field = wz.pv.target;
+      if (!field) { wz.pv.info = t('wz.chooseField'); return wzStatus(); }
+      el.classList.remove('thoth-hl');
+      var r = wzPickFor(field, el, doc);
+      if (r.error) { wz.pv.info = r.error; return wzStatus(); }
+      wz.draft.selectors[field] = r.selector;
+      // A work picked on the list page: the work page to preview next
+      if (field === 'link' || field === 'item') { var a1 = (r.matches[0] && (r.matches[0].closest('a[href]') || r.matches[0].querySelector && r.matches[0].querySelector('a[href]'))); if (a1) wz.sampleWork = a1.href; }
+      Array.prototype.forEach.call(doc.querySelectorAll('.thoth-match'), function (x) { x.classList.remove('thoth-match'); });
+      Array.prototype.forEach.call(r.matches, function (x) { if (x && x.classList) x.classList.add('thoth-match'); });
+      var sample = Array.prototype.slice.call(r.matches, 0, 3).map(function (x) { return WZ_SEL[field].attr === 'src' ? (x.getAttribute('data-src') || x.getAttribute('data-lazy-src') || x.getAttribute('data-thoth-src') || '') : WZ_SEL[field].attr === 'href' ? (x.getAttribute('href') || '') : (x.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60); }).filter(Boolean);
+      wz.pv.info = t('wz.picked', { field: t('cat.sel.' + field), selector: r.self ? t('wz.itself') : r.selector, count: r.matches.length }) + (sample.length ? ' — ' + sample.join(' | ') : '');
+      var input = $('#wz-sel-' + field);
+      if (input) input.value = r.selector;
+      wzStatus();
+    }, true);
+  }
+  function wzStatus() { var p = $('.wz-preview__status'); if (p) p.textContent = wz.pv.info || ''; }
+  /* -------- the wizard's own events -------- */
+  function wzInput(e) {
+    var el = e.target, key = el.dataset && el.dataset.wz;
+    if (!key || !wz) return;
+    var v = el.type === 'checkbox' ? el.checked : el.value;
+    if (key.indexOf('sel.') === 0) wz.draft.selectors[key.slice(4)] = v; else wz.draft[key] = v;
+    // Settings that change which steps or fields apply: drawn again
+    if (e.type === 'change' && ['autoDetect', 'type', 'listing', 'includeChapters'].indexOf(key) !== -1) wzRender();
+    // A new list page address: the preview shows it
+    if (e.type === 'change' && (key === 'sel.listUrl' || key === 'sel.firstPage')) { wzResetPreview(); wzRender(); }
+    if (key === 'siteUrl' && !wz.draft.baseUrl) wz.draft.baseUrl = v;
+  }
+  function wzValidate(step) {
+    var d = wz.draft;
+    if (step === 'site') {
+      if (!String(d.name).trim()) return { code: 'nameRequired' };
+      if (!/^https?:\/\/\S+$/i.test(String(d.siteUrl).trim())) return { code: 'invalidUrl' };
+    }
+    if (step === 'kind' && !/^https?:\/\/\S+$/i.test(String(d.baseUrl || '').trim())) return { code: 'invalidUrl' };
+    if (step === 'list' && d.listing === 'sitemap' && !String(d.workPattern).trim()) return { code: 'workPatternRequired' };
+    if (step === 'list' && d.listing !== 'sitemap' && d.type === 'custom' && (!d.selectors.listUrl || !d.selectors.item)) return { code: 'wzListNeeded' };
+    return null;
+  }
+  // The settings as the server takes them
+  function wzBody() {
+    var d = wz.draft;
+    if (d.autoDetect) return { name: d.name.trim(), siteUrl: d.siteUrl.trim(), schedule: d.schedule, concurrency: Number(d.concurrency) || 0, autoDetect: true };
+    var body = { name: d.name.trim(), type: d.type, baseUrl: (d.baseUrl || d.siteUrl).trim(), siteUrl: d.siteUrl.trim(), autoDetect: false, listPath: d.listPath, languages: d.languages, contentRating: d.contentRating,
+      includeChapters: Boolean(d.includeChapters), listing: d.listing, sitemaps: String(d.sitemaps || '').split(/\s+/).filter(Boolean), workPattern: d.workPattern, chapterPattern: d.chapterPattern,
+      iconUrl: d.iconUrl || undefined, maxWorks: Number(d.maxWorks) || 0, schedule: d.schedule, concurrency: Number(d.concurrency) || 0, selectors: {} };
+    if (Number(d.gapMs)) body.gapMs = Number(d.gapMs);
+    Object.keys(d.selectors).forEach(function (k) { if (d.selectors[k]) body.selectors[k] = d.selectors[k]; });
+    return body;
+  }
+  function wzClick(e) {
+    if (!wz) return;
+    var b = e.target.closest('button');
+    if (!b) return;
+    var steps = wzSteps(), i = steps.indexOf(wz.step);
+    if (b.dataset.wzPick) { wz.pv.target = wz.pv.target === b.dataset.wzPick ? null : b.dataset.wzPick; wz.pv.mode = 'pick'; wz.pv.info = null; return wzRender(); }
+    if (b.dataset.wzMode) { wz.pv.mode = b.dataset.wzMode; wz.pv.info = null; return wzRender(); }
+    if (b.dataset.wzGo) { wz.error = null; if (WZ_PAGE[b.dataset.wzGo] !== WZ_PAGE[wz.step]) wzResetPreview(); wz.pv.target = null; wz.step = b.dataset.wzGo; return wzRender(); }
+    var act = b.dataset.wzAct;
+    if (act === 'close') return $('#src-wizard').close();
+    if (act === 'back') { wz.error = null; var prev = steps[Math.max(0, i - 1)]; if (WZ_PAGE[prev] !== WZ_PAGE[wz.step]) wzResetPreview(); wz.pv.target = null; wz.step = prev; return wzRender(); }
+    if (act === 'next') {
+      wz.error = wzValidate(wz.step);
+      if (!wz.error) {
+        var page = WZ_PAGE[wz.step], nextStep = steps[Math.min(steps.length - 1, i + 1)];
+        if (WZ_PAGE[nextStep] !== page) wzResetPreview(); // (another kind of page to preview)
+        wz.pv.target = null; wz.step = nextStep;
+      }
+      return wzRender();
+    }
+    if (act === 'load') { var u = $('#wz-pv-url').value.trim(); if (u) wzLoadPreview(u); return; }
+    if (act === 'detect') {
+      var url = String(wz.draft.siteUrl || '').trim();
+      if (!/^https?:\/\/\S+$/i.test(url)) { wz.error = { code: 'invalidUrl' }; return wzRender(); }
+      wz.detecting = true; wz.error = null; wzRender();
+      return api('POST', '/api/catalog/sources/detect', { url: url }).then(function (r) {
+        var det = r.detect || r;
+        wz.detected = det;
+        var s = det.settings || {};
+        var d = wz.draft;
+        if (!d.name && s.name) d.name = s.name;
+        ['type', 'baseUrl', 'listing', 'workPattern', 'chapterPattern', 'listPath', 'iconUrl'].forEach(function (k) { if (s[k]) d[k] = s[k]; });
+        if (s.sitemaps) d.sitemaps = s.sitemaps.join('\n');
+        if (s.selectors) d.selectors = Object.assign({}, s.selectors, d.selectors);
+        if (det.found && det.found.sampleWork && det.found.sampleWork.url) wz.sampleWork = det.found.sampleWork.url;
+      }, function (err) { wz.error = err; }).then(function () { wz.detecting = false; wzRender(); });
+    }
+    if (act === 'test') {
+      wz.test = { loading: true }; wzRender();
+      return api('POST', '/api/catalog/sources/test', wzBody()).then(function (r) { wz.test = { test: r.test }; }, function (err) { wz.test = { error: err }; }).then(function () { if (wz) wzRender(); });
+    }
+    if (act === 'save') {
+      wz.saving = true; wz.error = null; wzRender();
+      var body = wzBody(), id = wz.editing;
+      var req = id ? api('PATCH', '/api/catalog/sources/' + id, body)
+        : body.autoDetect ? api('POST', '/api/catalog/sources', { name: body.name, baseUrl: body.siteUrl }).then(function (r) { return api('PATCH', '/api/catalog/sources/' + r.source.id, { schedule: body.schedule, concurrency: body.concurrency }); })
+        : api('POST', '/api/catalog/sources', body);
+      return req.then(function () {
+        $('#src-wizard').close();
+        A().toast(t('common.saved'));
+        catFilesState().sources = null;
+        loadCatSources();
+      }, function (err) { if (wz) { wz.saving = false; wz.error = err; wzRender(); } });
+    }
+  }
+  var WZ_PAGE = { list: 'list', work: 'work', chapters: 'work' };
+
   // What Detect found, in words (shown at the top of the settings form)
   function detectSummary(d) {
     if (!d) return '';
@@ -1780,53 +2146,92 @@
     if (n.indexOf('needsSelectors') !== -1 || n.indexOf('noWorkPattern') !== -1) lines.push(t('cat.det.needsSelectors'));
     return lines.join(' ');
   }
-  function catalogSourceForm(s, detected, url) {
-    var st = catSourcesState();
-    var types = st.types || [];
-    var cur = s || Object.assign({ type: 'custom', includeChapters: true, schedule: 'manual', languages: '', baseUrl: url || '' }, detected && detected.settings ? detected.settings : {});
-    var sel = cur.selectors || {};
-    // Shown only with automatic settings off (and, for some, for some kinds of site)
-    var manual = { field: 'autoDetect', value: false };
-    var ty = function (list) { return [manual, { field: 'type', value: list }]; };
-    var auto = cur.autoDetect === true;
-    var fields = [
-      { name: 'name', label: t('manage.name'), value: cur.name || '' },
-      { name: 'siteUrl', label: t('cat.srcSiteUrl'), value: cur.siteUrl || cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcSiteUrlHelp') },
-      { name: 'schedule', label: t('cat.srcSchedule'), type: 'select', value: cur.schedule || 'manual', options: ['manual', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) },
-      { name: 'autoDetect', label: t('cat.srcAuto'), type: 'checkbox', value: auto, help: t('cat.srcAutoHelp') },
-      { name: 'type', label: t('cat.srcType'), type: 'select', value: cur.type, options: types.map(function (x) { return { value: x.type, label: x.label }; }), help: t('cat.srcTypeHelp'), showWhen: manual },
-      { name: 'baseUrl', label: t('cat.srcUrl'), value: cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcUrlHelp'), showWhen: manual },
-      { name: 'listing', label: t('cat.srcListing'), type: 'select', value: cur.listing || 'pages', options: [{ value: 'sitemap', label: t('cat.listing.sitemap') }, { value: 'pages', label: t('cat.listing.pages') }], showWhen: ty(['madara', 'mangareader', 'custom']), help: t('cat.srcListingHelp') },
-      { name: 'sitemaps', label: t('cat.srcSitemaps'), type: 'textarea', rows: 2, value: (cur.sitemaps || []).join('\n'), showWhen: [manual, { field: 'listing', value: 'sitemap' }], help: t('cat.srcSitemapsHelp') },
-      { name: 'workPattern', label: t('cat.srcWorkPattern'), value: cur.workPattern || '', placeholder: '/manga/*/', showWhen: [manual, { field: 'listing', value: 'sitemap' }], help: t('cat.srcPatternHelp') },
-      { name: 'chapterPattern', label: t('cat.srcChapterPattern'), value: cur.chapterPattern || '', placeholder: '/manga/*/*/', showWhen: ty(['custom']), help: t('cat.srcChapterPatternHelp') },
-      { name: 'listPath', label: t('cat.srcListPath'), value: cur.listPath || '', placeholder: 'manga', showWhen: ty(['madara', 'mangareader']), help: t('cat.srcListPathHelp') },
-      { name: 'languages', label: t('cat.srcLanguages'), value: cur.languages || '', placeholder: 'en, es', help: t('cat.srcLanguagesHelp'), showWhen: manual },
-      { name: 'contentRating', label: t('cat.srcRating'), value: cur.contentRating || 'safe,suggestive,erotica', showWhen: ty(['mangadex']), help: t('cat.srcRatingHelp') },
-      { name: 'includeChapters', label: t('cat.srcChapters'), type: 'checkbox', value: cur.includeChapters !== false, help: t('cat.srcChaptersHelp'), showWhen: manual },
-      { name: 'maxWorks', label: t('cat.srcMax'), value: cur.maxWorks || '', placeholder: '0', help: t('cat.srcMaxHelp'), showWhen: manual },
-      { name: 'gapMs', label: t('cat.srcGap'), value: cur.gapMs || '', placeholder: '1500', help: t('cat.srcGapHelp'), showWhen: manual },
-      { name: 'concurrency', label: t('cat.srcConcurrency'), value: cur.concurrency || '', placeholder: String((st.data && st.data.defaultConcurrency) || 3), help: t('cat.srcConcurrencyHelp') }
-    ];
-    var selField = function (k, ph) { return { name: 'sel_' + k, label: t('cat.sel.' + k), value: sel[k] || '', placeholder: ph, showWhen: ty(['custom']) }; };
-    fields = fields.concat([
-      selField('listUrl', 'https://site.com/manga/page/{page}/'), selField('item', '.manga-list .item'), selField('link', 'a@href'), selField('title', 'h3'), selField('cover', 'img@src'),
-      selField('workTitle', 'h1'), selField('workCover', '.cover img@src'), selField('summary', '.description'), selField('genres', '.genres a'), selField('authors', '.author a'),
-      selField('altTitles', '.alt-names'), selField('status', '.status'), selField('chapter', '.chapter-list li'), selField('chapterLink', 'a@href'), selField('chapterTitle', 'a'), selField('chapterDate', '.date')
-    ]);
-    openForm({
-      title: t(s ? 'cat.editSource' : 'cat.addSource'), fields: fields, note: (detected ? detectSummary(detected) + ' ' : '') + t('cat.srcNote'),
-      onSubmit: function (v) {
-        // Automatic: the name, the address and the schedule are all there is to keep
-        if (v.autoDetect) return api('PATCH', '/api/catalog/sources/' + s.id, { name: v.name, siteUrl: v.siteUrl, schedule: v.schedule, concurrency: Number(v.concurrency) || 0, autoDetect: true }).then(function () { A().toast(t('common.saved')); loadCatSources(); });
-        var body = { name: v.name, type: v.type, baseUrl: v.baseUrl, siteUrl: v.siteUrl, autoDetect: false, listPath: v.listPath, languages: v.languages, contentRating: v.contentRating, includeChapters: v.includeChapters,
-          listing: v.listing, sitemaps: (v.sitemaps || '').split(/\s+/).filter(Boolean), workPattern: v.workPattern, chapterPattern: v.chapterPattern,
-          iconUrl: cur.iconUrl || undefined,
-          maxWorks: Number(v.maxWorks) || 0, schedule: v.schedule, gapMs: Number(v.gapMs) || undefined, concurrency: Number(v.concurrency) || 0, selectors: {} };
-        if (!body.gapMs) delete body.gapMs;
-        Object.keys(v).forEach(function (k) { if (k.indexOf('sel_') === 0 && v[k]) body.selectors[k.slice(4)] = v[k]; });
-        return api(s ? 'PATCH' : 'POST', '/api/catalog/sources' + (s ? '/' + s.id : ''), body).then(function () { A().toast(t('common.saved')); loadCatSources(); });
-      }
+  // Site files tab (admins): each source's robots.txt and sitemaps — the ones it uses, the ones detection found and
+  // the ones its last crawl read (content hash, date, works listed) — each read on demand: its text and what it lists
+  function catFilesState() {
+    if (!cache.catFiles) cache.catFiles = { sources: null, source: '', data: null, error: null, view: null, file: null, q: '', raw: false };
+    return cache.catFiles;
+  }
+  function loadCatFiles() {
+    var st = catFilesState();
+    var srcs = st.sources ? Promise.resolve(null) : api('GET', '/api/catalog/sources');
+    return srcs.then(function (r) {
+      if (r) { st.sources = r.sources; if (!st.source && r.sources.length) st.source = r.sources[0].id; }
+      if (!st.source) return;
+      return api('GET', '/api/catalog/sources/' + encodeURIComponent(st.source) + '/files').then(function (d) { st.data = d; st.error = null; });
+    }).then(null, function (e) { st.error = e; }).then(function () {
+      if (isCatalogRoute() && A().parseRoute().param === 'files') A().renderPage();
+      if (st.data && !st.view) openSiteFile(st.data.robots);
+    });
+  }
+  function openSiteFile(url) {
+    var st = catFilesState();
+    st.view = url; st.file = { loading: true }; st.q = '';
+    if (isCatalogRoute()) A().renderPage();
+    api('GET', '/api/catalog/sources/' + encodeURIComponent(st.source) + '/file?' + Store.qs({ url: url })).then(function (r) { if (st.view === url) st.file = r.file; }, function (e) { if (st.view === url) st.file = { error: e }; })
+      .then(function () { if (isCatalogRoute() && A().parseRoute().param === 'files') A().renderPage(); });
+  }
+  function siteFileLink(loc, label) {
+    var st = catFilesState();
+    return '<button type="button" class="link-button' + (st.view === loc ? ' is-current' : '') + '" data-lib="cat-file-open" data-id="' + esc(loc) + '">' + esc(label || loc) + '</button>';
+  }
+  function siteFileView(st) {
+    var f = st.file;
+    if (!st.view) return '';
+    var head = '<div class="sitefile__head"><h2 class="card__title">' + esc(st.view) + '</h2>' +
+      '<a class="btn btn--text btn--small" href="' + esc(st.view) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + esc(t('cat.openOnSite')) + '</a></div>';
+    if (!f || f.loading) return '<section class="card card--wide sitefile">' + head + '<p class="muted small"><span class="spinner spinner--sm"></span> ' + esc(t('common.loading')) + '</p></section>';
+    if (f.error) return '<section class="card card--wide sitefile">' + head + errorBanner(f.error) + '</section>';
+    if (!f.found) return '<section class="card card--wide sitefile">' + head + '<p class="muted">' + esc(t('cat.files.noRobots')) + '</p></section>';
+    var facts = [t('cat.files.size', { size: fmtSize(f.size) }), t('cat.files.hash', { hash: String(f.hash || '').slice(0, 12) })];
+    if (f.kind === 'sitemap') facts.push(t('cat.files.lists', { urls: f.urlCount || 0, sitemaps: (f.sitemaps || []).length }));
+    var q = st.q.toLowerCase();
+    var urls = (f.urls || []).filter(function (u) { return !q || u.loc.toLowerCase().indexOf(q) !== -1; });
+    var children = (f.sitemaps || []).length ? '<h3 class="proc-sub">' + esc(t('cat.files.childSitemaps')) + '</h3><ul class="sitefile__list">' +
+      f.sitemaps.map(function (s) { return '<li>' + siteFileLink(s.loc) + (s.lastmod ? ' <span class="muted small">' + esc(s.lastmod) + '</span>' : '') + '</li>'; }).join('') + '</ul>' : '';
+    var list = f.kind === 'sitemap' && (f.urls || []).length ? '<h3 class="proc-sub">' + esc(t('cat.files.urls', { count: f.urlCount })) + '</h3>' +
+        '<label class="search-field">' + icon('search') + '<input type="search" id="sitefile-q" placeholder="' + esc(t('cat.files.find')) + '" value="' + esc(st.q) + '" /></label>' +
+        '<div class="table-wrap sitefile__urls"><table class="table"><thead><tr><th>' + esc(t('cat.files.address')) + '</th><th>' + esc(t('cat.files.lastmod')) + '</th></tr></thead><tbody>' +
+          urls.slice(0, 500).map(function (u) { return '<tr><td><a href="' + esc(u.loc) + '" target="_blank" rel="noopener noreferrer">' + esc(u.loc) + '</a></td><td class="small">' + esc(u.lastmod || '—') + '</td></tr>'; }).join('') +
+        '</tbody></table></div>' + (urls.length > 500 || (f.urlCount || 0) > (f.urls || []).length ? '<p class="muted small">' + esc(t('cat.files.firstOnly', { count: Math.min(urls.length, 500) })) + '</p>' : '') : '';
+    var raw = f.kind === 'robots' || st.raw
+      ? '<pre class="task-console__text task-console__text--tall sitefile__raw">' + esc(f.text || '') + '</pre>' + (f.truncated ? '<p class="muted small">' + esc(t('cat.files.truncated')) + '</p>' : '')
+      : '<button type="button" class="btn btn--text btn--small" data-lib="cat-file-raw">' + icon('description') + esc(t('cat.files.showText')) + '</button>';
+    return '<section class="card card--wide sitefile">' + head + '<p class="muted small">' + esc(facts.join(' · ')) + '</p>' +
+      (f.kind === 'robots' && (f.sitemaps || []).length ? '<h3 class="proc-sub">' + esc(t('cat.files.robotsSitemaps')) + '</h3><ul class="sitefile__list">' + f.sitemaps.map(function (s) { return '<li>' + siteFileLink(s.loc) + '</li>'; }).join('') + '</ul>' : '') +
+      children + list + raw + '</section>';
+  }
+  var FILE_FROM = { settings: 'cat.files.fromSettings', detected: 'cat.files.fromDetect', crawl: 'cat.files.fromCrawl' };
+  function catalogFiles() {
+    var st = catFilesState();
+    var head = catalogTabs('files') + '<p class="page-lead">' + esc(t('cat.files.intro')) + '</p>';
+    if (st.error) return head + errorBanner(st.error);
+    if (!st.sources) return head + spinner;
+    if (!st.sources.length) return head + emptyState('dataset', t('cat.noSourcesTitle'), t('cat.files.noSources'));
+    var d = st.data;
+    var picker = '<div class="toolbar"><div class="toolbar__group"><select class="select select--compact" id="cat-files-source" aria-label="' + esc(t('cat.filterSource')) + '">' +
+      st.sources.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === st.source ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') + '</select></div></div>';
+    if (!d) return head + picker + spinner;
+    var files = '<section class="card card--wide"><h2 class="card__title">' + esc(t('cat.files.title', { name: d.name })) + '</h2>' +
+      '<ul class="sitefile__list"><li>' + siteFileLink(d.robots, 'robots.txt') + '</li>' +
+      d.sitemaps.map(function (s) {
+        return '<li>' + siteFileLink(s.loc) + ' <span class="muted small">' + esc(s.from.map(function (x) { return t(FILE_FROM[x]); }).join(', ') +
+          (s.works != null ? ' · ' + t('cat.files.worksListed', { count: s.works }) : '') + (s.hash ? ' · ' + t('cat.files.hash', { hash: s.hash.slice(0, 12) }) : '') + (s.lastmod ? ' · ' + s.lastmod : '')) + '</span></li>';
+      }).join('') + '</ul>' +
+      (d.sitemaps.length ? '' : '<p class="muted small">' + esc(t('cat.files.noSitemaps')) + '</p>') +
+      (d.crawledAt ? '<p class="muted small">' + esc(t('cat.files.crawledAt', { time: A().fmtDate(d.crawledAt) })) + '</p>' : '') + '</section>';
+    return head + picker + '<div class="cards cards--stack">' + files + siteFileView(st) + '</div>';
+  }
+  function catalogFilesMount(el) {
+    var st = catFilesState();
+    var sel = $('#cat-files-source', el);
+    if (sel) sel.addEventListener('change', function () { st.source = sel.value; st.data = null; st.view = null; st.file = null; loadCatFiles(); });
+    var q = $('#sitefile-q', el);
+    if (q) q.addEventListener('input', function () {
+      st.q = q.value;
+      var pos = q.selectionStart;
+      A().renderPage();
+      var again = $('#sitefile-q'); if (again) { again.focus(); again.setSelectionRange(pos, pos); }
     });
   }
 
@@ -1839,10 +2244,12 @@
       if (route.param === 'work') return catalogWork(route);
       if (route.param === 'merge' && isAdmin()) return catalogMerge();
       if (route.param === 'sources' && isAdmin()) return catalogSources();
+      if (route.param === 'files' && isAdmin()) return catalogFiles();
       return catalogBrowse();
     },
     mount: function (el, route) {
       if (!route.param) return catalogBrowseMount(el);
+      if (route.param === 'files') return catalogFilesMount(el);
       if (route.param === 'merge') el.addEventListener('change', function (e) {
         var tg = e.target, st = catMergeState(), k;
         if ((k = tg.dataset.catPrimary)) { st.choice[k].primary = tg.value; st.choice[k].include[tg.value] = true; return A().renderPage(); }
@@ -1859,6 +2266,7 @@
       }
       if (route.param === 'merge') { var ms = catMergeState(); if (!ms.data && !ms.loading) loadCatMerge(); return; }
       if (route.param === 'sources') return loadCatSources();
+      if (route.param === 'files') return loadCatFiles();
       var st = catState();
       api('GET', '/api/catalog/facets').then(function (r) { st.facets = r; if (isCatalogRoute() && !A().parseRoute().param) { A().renderPage(); } }, function () {});
       if (!st.items) fetchCatalog();
@@ -2206,15 +2614,15 @@
         cells: [
           '<strong>' + esc(t('proc.cache.' + c.kind)) + '</strong>',
           c.pid ? esc(c.pid) : '<span class="muted">' + esc(t(c.mode === 'inline' ? 'proc.cache.inline' : 'proc.cache.closed')) + '</span>',
-          esc(open ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—'),
+          // (what it's doing besides answering — search index size, covers read ahead — in the same row)
+          esc(open ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—') + (under ? '<span class="proc-cell-note">' + esc(under) + '</span>' : ''),
           esc(open ? t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 }) : t('proc.cache.requests', { count: c.requests })),
           esc(s.rss ? fmtBytes(s.rss) : '—')
-        ],
-        under: under
+        ]
       };
     };
     return {
-      id: 'caches', icon: 'collections', title: t('proc.caches'), wide: true,
+      id: 'caches', icon: 'collections', title: t('proc.caches'),
       badge: { text: t('proc.cache.running', { count: caches.filter(function (c) { return c.pid; }).length, total: caches.length }), cls: 'badge--ok' },
       parts: [
         proc.table([t('proc.cache.name'), t('proc.pid'), t('proc.cache.content'), t('proc.cache.answered'), t('proc.memory')], caches.map(row)),
@@ -2239,7 +2647,7 @@
       var head = '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1>' + procTabs('overview', running) + '<p class="page-lead">' + esc(t('proc.intro')) + '</p>';
       if (!p) return head + spinner;
       if (p.error) return head + errorBanner(p.error);
-      return head + '<div class="cards">' + PROC_SECTIONS.map(function (section) {
+      return head + '<div class="cards proc-cards">' + PROC_SECTIONS.map(function (section) {
         var card;
         // One card failing to draw (an older server's answer, say) doesn't take the page with it
         try { card = section(p); } catch (e) { console.error('[processes]', e); return ''; }
@@ -3131,6 +3539,8 @@
       case 'log-delete':
         if (!confirm(t('logs.deleteConfirm'))) return;
         return api('DELETE', '/api/logs/' + encodeURIComponent(id)).then(function () { logsPage.enter(A().parseRoute()); }, fail);
+      case 'cat-file-open': catFilesState().raw = false; return openSiteFile(id);
+      case 'cat-file-raw': catFilesState().raw = true; return A().renderPage();
       case 'cat-merge-check': return loadCatMerge();
       case 'cat-merge-auto':
         btn.disabled = true;
@@ -3166,8 +3576,8 @@
           cd.data.groups = cd.data.groups.filter(function (g) { return g.key !== dk; }); cd.data.total--; A().renderPage();
         }, fail);
       }
-      case 'cat-src-add': return catalogDetectForm();
-      case 'cat-src-edit': return catalogSourceForm(catSourcesState().data.sources.filter(function (s) { return s.id === id; })[0]);
+      case 'cat-src-add': return openSourceWizard(null);
+      case 'cat-src-edit': return openSourceWizard(catSourcesState().data.sources.filter(function (s) { return s.id === id; })[0]);
       case 'cat-src-delete':
         if (!confirm(t('cat.deleteConfirm'))) return;
         return api('DELETE', '/api/catalog/sources/' + id).then(function () { cache.catalog = null; loadCatSources(); }, fail);

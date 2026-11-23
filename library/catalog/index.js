@@ -322,6 +322,37 @@ function detectSource(url) {
   if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
   return ask({ type: 'detect', url, allowLocal: ALLOW_LOCAL });
 }
+/* ---------------- a source's site files (robots.txt, sitemaps) and pages (the wizard's picker) ---------------- */
+// What's known of a source's robots.txt and sitemaps: the ones it uses, the ones detection found, and the ones its
+// last crawl read (with their content hash, date and how many works each listed)
+function siteFiles(id) {
+  const s = db.catalogSources[id];
+  if (!s) throw err(404, 'notFound');
+  const origin = new URL(s.siteUrl || s.baseUrl).origin;
+  const state = cstore.readSitemapState(sourceDir(id)) || { files: {} };
+  const found = (s.detected && s.detected.found && s.detected.found.sitemaps) || [];
+  const all = new Map();
+  const add = (loc, from) => { if (!loc) return; const e = all.get(loc) || { loc, from: [] }; if (!e.from.includes(from)) e.from.push(from); all.set(loc, e); };
+  (s.sitemaps || []).forEach(u => add(u, 'settings'));
+  found.forEach(u => add(typeof u === 'string' ? u : u.loc || u.url, 'detected'));
+  Object.keys(state.files || {}).forEach(u => add(u, 'crawl'));
+  const sitemaps = [...all.values()].map(e => { const f = (state.files || {})[e.loc]; return Object.assign(e, f ? { hash: f.hash || null, lastmod: f.lastmod || null, works: Object.keys(f.works || {}).length } : {}); });
+  return { id, name: s.name, origin, robots: origin + '/robots.txt', sitemaps, crawledAt: state.at || null };
+}
+// Reads one of them now (only addresses of the source's own site, or sitemaps it knows)
+function readSiteFile(id, url) {
+  const files = siteFiles(id);
+  let u; try { u = new URL(String(url || '')); } catch { throw err(400, 'invalidUrl'); }
+  const hosts = new Set([new URL(files.origin).host, new URL(db.catalogSources[id].baseUrl).host]);
+  if (!publicUrl(u.href, ALLOW_LOCAL) || (!hosts.has(u.host) && !files.sitemaps.some(x => x.loc === u.href))) throw err(400, 'invalidUrl');
+  return ask({ type: 'siteFile', url: u.href, allowLocal: ALLOW_LOCAL });
+}
+// A page of a site, made inert, for the source wizard's element picker (any public page: administrators only)
+function previewPage(url) {
+  if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
+  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL });
+}
+
 // Scheduled crawls: an update when the schedule says so (a full crawl the first time or after an interruption)
 let scheduleTimer = null;
 function startSchedule() {
@@ -725,5 +756,5 @@ function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, d
 // More crawls allowed at once: start the waiting ones now
 require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
 
-module.exports = { listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
+module.exports = { siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
   list, facets, detail, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

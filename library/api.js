@@ -781,6 +781,10 @@ async function handle(ctx) {
       return send(202, { job: catalog.crawl(m[1], { mode: body.mode === 'update' ? 'update' : 'full' }) });
     }
     if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/stop$/.exec(p)) && method === 'POST') return send(200, { stopping: catalog.stopCrawl(m[1]) });
+    // Site files (robots.txt, sitemaps) and pages for the wizard's picker
+    if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/files$/.exec(p)) && method === 'GET') return send(200, catalog.siteFiles(m[1]));
+    if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/file$/.exec(p)) && method === 'GET') return send(200, { file: await catalog.readSiteFile(m[1], q.get('url')) });
+    if (p === '/api/catalog/preview' && method === 'GET') return send(200, { page: await catalog.previewPage(q.get('url')) });
     if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions({ source: q.get('source') || null }));
     if (p === '/api/catalog/merged' && method === 'GET') return send(200, catalog.mergedGroups({ source: q.get('source') || null }));
     if (p === '/api/catalog/merge/auto' && method === 'POST') return send(200, { merged: catalog.autoMerge() });

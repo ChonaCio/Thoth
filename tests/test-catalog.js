@@ -185,6 +185,20 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const dl = await fetch(`${BASE}/api/logs/${crawlTask.log}?download=1`, { headers: { Cookie: cookie } });
   ok(dl.status === 200 && /attachment/.test(dl.headers.get('content-disposition') || '') && (await dl.text()).startsWith('# Crawl of'), 'a log can be downloaded');
   ok((await call('GET', '/api/logs/..%2Fconfig.json')).status === 404 && (await call('GET', '/api/logs', null, bob)).status === 403, 'only log files can be read, and only by administrators');
+  // ---- site files (robots.txt, sitemaps) and pages for the wizard's picker ----
+  const sf = (await call('GET', `/api/catalog/sources/${madara.id}/files`)).data;
+  ok(sf.robots === SITE + '/robots.txt', 'a source’s site files: its robots.txt address');
+  const rb = (await call('GET', `/api/catalog/sources/${madara.id}/file?url=${encodeURIComponent(SITE + '/robots.txt')}`)).data.file;
+  ok(rb.found && /Disallow: \/custom\/private\//.test(rb.text) && rb.sitemaps.some(x => x.loc === SITE + '/sitemap_index.xml') && rb.hash, 'robots.txt read now: its text and the sitemaps it names');
+  const smx = (await call('GET', `/api/catalog/sources/${madara.id}/file?url=${encodeURIComponent(SITE + '/sitemap_index.xml')}`)).data.file;
+  const smw = (await call('GET', `/api/catalog/sources/${madara.id}/file?url=${encodeURIComponent(SITE + '/manga-sitemap.xml')}`)).data.file;
+  ok(smx.sitemaps.length === 2 && smw.urlCount >= 10 && smw.urls[0].loc.startsWith(SITE + '/madara/manga/'), `a sitemap read now: the sitemaps it lists (${smx.sitemaps.length}) and its addresses (${smw.urlCount})`);
+  ok((await call('GET', `/api/catalog/sources/${madara.id}/file?url=${encodeURIComponent('https://example.org/sitemap.xml')}`)).status === 400 && (await call('GET', `/api/catalog/sources/${madara.id}/files`, null, bob)).status === 403,
+    'only the source’s own site, and only for administrators');
+  const pv = (await call('GET', `/api/catalog/preview?url=${encodeURIComponent(SITE + '/madara/manga/blue-moon/')}`)).data.page;
+  ok(pv && /Blue Moon/.test(pv.html) && !/<script/i.test(pv.html) && /Content-Security-Policy/.test(pv.html) && /data-src="http:\/\/127\.0\.0\.1:3998\/img\/blue-moon\.png"/.test(pv.html) && !/ src="http:/.test(pv.html),
+    'a page for the picker is made inert: no scripts, nothing the browser would load from the site (images become placeholders)');
+  ok((await call('GET', `/api/catalog/preview?url=${encodeURIComponent('ftp://x')}`)).status === 400, 'the preview takes only web addresses');
   // Several works at once (the source's setting) with as many requests to the site in progress, even when its
   // pages answer faster than the pause (each lane pauses between its own requests; starts staggered)
   await call('PATCH', `/api/catalog/sources/${madara.id}`, { concurrency: 3 });
