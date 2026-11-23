@@ -1057,7 +1057,7 @@
 
   /* ================= RENAME FILES (admins) ================= */
   // Check a library for files to rename (chapter-1.cbz → Chapter 1.cbz), review, rename the picked ones
-  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', notEmpty: 'files.err.notEmpty', notDeletable: 'files.err.notDeletable', otherDisk: 'files.err.otherDisk' };
+  var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', locked: 'ren.err.locked', stalled: 'ren.err.stalled',notEmpty: 'files.err.notEmpty', notDeletable: 'files.err.notDeletable', otherDisk: 'files.err.otherDisk' };
   // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
   // except `excluded`; mode 'some' = only the ticked ones (`selected`)
   function renameState() {
@@ -1104,7 +1104,18 @@
     var p = { percent: j.status === 'queued' ? null : j.progress, done: j.done, total: j.total, etaMs: null, elapsedMs: 0, phase: j.status };
     return '<div id="ren-job" class="card card--wide ren-job" role="status">' +
       progressBar(p, t(j.status === 'queued' ? 'ren.jobQueued' : 'ren.jobRunning'), t('ren.jobProgress', { done: j.done, total: j.total || '…', renamed: j.renamed })) +
+      renamePhaseHtml(j) +
       '<p class="muted small">' + esc(t('ren.jobHelp')) + '</p></div>';
+  }
+  // What the job is doing right now, and a warning when the disk hasn't answered for a while
+  function renamePhaseHtml(j) {
+    var d = j.phaseDetail || {}, text = '';
+    if (j.phase === 'waiting') text = t(j.waitingFor ? 'ren.phase.waiting' : 'ren.phase.starting');
+    else if (j.phase === 'sources') text = t('ren.phase.sources', { name: d.name || '', n: d.n || 1, of: d.of || 1 });
+    else if (j.phase === 'checking') text = t('ren.phase.checking');
+    else if (j.phase === 'files') text = j.file ? t('ren.phase.file', { file: j.file }) : t('ren.phase.files');
+    var quiet = j.status === 'running' && j.quietSec >= 20 ? '<p class="small warn-text">' + esc(t(j.phase === 'files' ? 'ren.phase.quietFiles' : 'ren.phase.quiet', { sec: j.quietSec })) + '</p>' : '';
+    return (text ? '<p class="small ren-phase">' + esc(text) + '</p>' : '') + quiet;
   }
   // File management: tabs for renaming (and deleting files whose new name is taken) and merging works
   function isFilesRoute() { var n = A().parseRoute().name; return n === 'files' || n === 'rename'; }
@@ -1740,7 +1751,8 @@
       { name: 'contentRating', label: t('cat.srcRating'), value: cur.contentRating || 'safe,suggestive,erotica', showWhen: ty(['mangadex']), help: t('cat.srcRatingHelp') },
       { name: 'includeChapters', label: t('cat.srcChapters'), type: 'checkbox', value: cur.includeChapters !== false, help: t('cat.srcChaptersHelp'), showWhen: manual },
       { name: 'maxWorks', label: t('cat.srcMax'), value: cur.maxWorks || '', placeholder: '0', help: t('cat.srcMaxHelp'), showWhen: manual },
-      { name: 'gapMs', label: t('cat.srcGap'), value: cur.gapMs || '', placeholder: '1500', help: t('cat.srcGapHelp'), showWhen: manual }
+      { name: 'gapMs', label: t('cat.srcGap'), value: cur.gapMs || '', placeholder: '1500', help: t('cat.srcGapHelp'), showWhen: manual },
+      { name: 'concurrency', label: t('cat.srcConcurrency'), value: cur.concurrency || '', placeholder: String((st.data && st.data.defaultConcurrency) || 3), help: t('cat.srcConcurrencyHelp') }
     ];
     var selField = function (k, ph) { return { name: 'sel_' + k, label: t('cat.sel.' + k), value: sel[k] || '', placeholder: ph, showWhen: ty(['custom']) }; };
     fields = fields.concat([
@@ -1752,11 +1764,11 @@
       title: t(s ? 'cat.editSource' : 'cat.addSource'), fields: fields, note: (detected ? detectSummary(detected) + ' ' : '') + t('cat.srcNote'),
       onSubmit: function (v) {
         // Automatic: the name, the address and the schedule are all there is to keep
-        if (v.autoDetect) return api('PATCH', '/api/catalog/sources/' + s.id, { name: v.name, siteUrl: v.siteUrl, schedule: v.schedule, autoDetect: true }).then(function () { A().toast(t('common.saved')); loadCatSources(); });
+        if (v.autoDetect) return api('PATCH', '/api/catalog/sources/' + s.id, { name: v.name, siteUrl: v.siteUrl, schedule: v.schedule, concurrency: Number(v.concurrency) || 0, autoDetect: true }).then(function () { A().toast(t('common.saved')); loadCatSources(); });
         var body = { name: v.name, type: v.type, baseUrl: v.baseUrl, siteUrl: v.siteUrl, autoDetect: false, listPath: v.listPath, languages: v.languages, contentRating: v.contentRating, includeChapters: v.includeChapters,
           listing: v.listing, sitemaps: (v.sitemaps || '').split(/\s+/).filter(Boolean), workPattern: v.workPattern, chapterPattern: v.chapterPattern,
           iconUrl: cur.iconUrl || undefined,
-          maxWorks: Number(v.maxWorks) || 0, schedule: v.schedule, gapMs: Number(v.gapMs) || undefined, selectors: {} };
+          maxWorks: Number(v.maxWorks) || 0, schedule: v.schedule, gapMs: Number(v.gapMs) || undefined, concurrency: Number(v.concurrency) || 0, selectors: {} };
         if (!body.gapMs) delete body.gapMs;
         Object.keys(v).forEach(function (k) { if (k.indexOf('sel_') === 0 && v[k]) body.selectors[k.slice(4)] = v[k]; });
         return api(s ? 'PATCH' : 'POST', '/api/catalog/sources' + (s ? '/' + s.id : ''), body).then(function () { A().toast(t('common.saved')); loadCatSources(); });
@@ -1948,12 +1960,217 @@
     return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m ? m + 'm ' + (s % 60) + 's' : s + 's';
   }
   function fmtCpu(ms) { return ms == null ? '—' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
+  /* A process card is described as data and drawn by procCard:
+   *   { id, icon, title, badge: { text, cls }, wide, parts: [html, …] }  (null/empty parts are skipped)
+   * The helpers below make the usual parts. To show a new process, write a function that takes the
+   * /api/processes answer and returns such a card (or null to hide it), and add it to PROC_SECTIONS. */
   function facts(rows) {
-    return '<dl class="pref-list proc-facts">' + rows.filter(Boolean).map(function (r) {
+    rows = rows.filter(Boolean);
+    return rows.length ? '<dl class="pref-list proc-facts">' + rows.map(function (r) {
       return '<dt>' + esc(t(r[0])) + '</dt><dd>' + r[1] + '</dd>';
-    }).join('') + '</dl>';
+    }).join('') + '</dl>' : '';
   }
+  function procCard(c) {
+    return '<section class="card proc-card' + (c.wide ? ' proc-card--wide' : '') + '" data-proc="' + esc(c.id) + '">' +
+      '<div class="proc-card__head"><span class="lib-card__icon">' + icon(c.icon) + '</span>' +
+        '<div><h2 class="card__title">' + esc(c.title) + '</h2>' +
+        (c.badge ? '<span class="badge ' + (c.badge.cls || '') + '">' + esc(c.badge.text) + '</span>' : '') + '</div></div>' +
+      (c.parts || []).filter(Boolean).join('') +
+    '</section>';
+  }
+  var proc = {
+    // A busy/idle badge
+    busy: function (isBusy) { return { text: t(isBusy ? 'proc.busy' : 'proc.idle'), cls: isBusy ? 'badge--primary' : 'badge--ok' }; },
+    // kind: '' | 'info' | 'error'; spin: a spinner in front
+    notice: function (text, kind, spin) { return '<p class="notice' + (kind ? ' notice--' + kind : '') + '">' + (spin ? '<span class="spinner spinner--sm"></span>' : '') + esc(text) + '</p>'; },
+    help: function (text, link) { return '<p class="field__help">' + esc(text || '') + (link ? (text ? ' ' : '') + '<a href="' + link.href + '">' + esc(link.text) + '</a>' : '') + '</p>'; },
+    muted: function (text) { return '<p class="muted small">' + esc(text) + '</p>'; },
+    sub: function (text) { return '<h3 class="proc-sub">' + esc(text) + '</h3>'; },
+    // heads: column titles; rows: arrays of cell HTML, or { cells, cls } ; under: a full-width line below a row
+    table: function (heads, rows) {
+      return '<div class="table-wrap"><table class="table proc-workers"><thead><tr>' + heads.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') + '</tr></thead><tbody>' +
+        rows.map(function (r) {
+          var cells = Array.isArray(r) ? r : r.cells;
+          return '<tr' + (r.cls ? ' class="' + r.cls + '"' : '') + '>' + cells.map(function (c) { return '<td>' + c + '</td>'; }).join('') + '</tr>' +
+            (r.under ? '<tr class="proc-sub-row"><td></td><td colspan="' + (cells.length - 1) + '" class="muted small">' + esc(r.under) + '</td></tr>' : '');
+        }).join('') + '</tbody></table></div>';
+    },
+    // { lib: data-lib, op, label, icon, primary, disabled }
+    actions: function (buttons) {
+      return '<div class="lib-card__actions">' + buttons.filter(Boolean).map(function (b) {
+        return '<button class="btn ' + (b.primary ? 'btn--primary' : 'btn--outline') + ' btn--pill" data-lib="' + b.lib + '"' + (b.op ? ' data-op="' + b.op + '"' : '') + (b.disabled ? ' disabled' : '') + '>' + icon(b.icon) + esc(b.label) + '</button>';
+      }).join('') + '</div>';
+    }
+  };
+  function settingsLink() { return { href: '#server-settings', text: t('proc.changeInSettings') }; }
   var STATE_BADGE = { running: 'badge--ok', starting: 'badge--primary', stopped: '', crashed: 'badge--danger' };
+
+  // The web server itself
+  function procServer(p) {
+    var srv = p.server, restarting = cache.serverRestarting;
+    return {
+      id: 'server', icon: 'memory', title: t('proc.server'),
+      badge: { text: t(restarting ? 'proc.state.starting' : 'proc.state.running'), cls: restarting ? 'badge--primary' : 'badge--ok' },
+      parts: [
+        srv.restartNeeded ? proc.notice(t('proc.restartNeeded'), 'info') : '',
+        facts([
+          ['proc.pid', esc(srv.pid)], ['proc.uptime', esc(fmtDuration(srv.startedAt))],
+          ['proc.memory', esc(fmtBytes(srv.rss))], ['proc.cpu', esc(fmtCpu(srv.cpuMs))],
+          ['proc.node', esc(srv.node)], ['proc.platform', esc(srv.platform)]
+        ]),
+        proc.actions([{ lib: 'proc-server-restart', label: t('proc.serverRestart'), icon: 'sync', disabled: !srv.supervised || restarting }]),
+        restarting ? proc.notice(t('proc.serverRestarting'), 'info', true) : !srv.supervised ? proc.help(t('proc.notSupervised')) : ''
+      ]
+    };
+  }
+
+  // Library scans: a service with worker processes, the scan in progress and the ones waiting
+  function procScan(p) {
+    var sc = p.scanService, cur = sc.current;
+    var running = sc.state === 'running' || sc.state === 'starting', stopped = sc.state === 'stopped' || sc.state === 'crashed';
+    return {
+      id: 'scan', icon: 'sync', title: t('proc.scanService'),
+      badge: { text: t('proc.state.' + sc.state), cls: STATE_BADGE[sc.state] || '' },
+      parts: [
+        sc.mode === 'inline' ? proc.notice(t('proc.mode.inline')) : '',
+        sc.lastError && sc.state !== 'running' ? proc.notice(t('proc.lastError') + ': ' + sc.lastError, 'error') : '',
+        facts([
+          ['proc.uptime', esc(sc.state === 'running' ? fmtDuration(sc.startedAt) : '—')],
+          sc.mode === 'process' ? ['proc.processes', esc(sc.processes)] : null,
+          ['proc.concurrency', esc(sc.concurrency)],
+          sc.mode === 'process' ? ['proc.priority', esc(t('proc.priorityLow'))] : null,
+          ['proc.restarts', esc(sc.restarts)],
+          sc.lastError && sc.state === 'running' ? ['proc.lastError', esc(sc.lastError)] : null
+        ]),
+        proc.help('', settingsLink()),
+        // One row per worker process
+        sc.workers.length ? proc.table([t('proc.pid'), t('proc.memory'), t('proc.cpu'), t('proc.status')], sc.workers.map(function (w) {
+          var s2 = w.stats || {};
+          return [esc(w.pid), esc(fmtBytes(s2.rss)), esc(fmtCpu(s2.cpuMs)), '<span class="badge' + (w.busy ? ' badge--primary' : '') + '">' + esc(t(w.busy ? 'proc.busy' : 'proc.idle')) + '</span>'];
+        })) : sc.idle ? proc.muted(t('proc.onDemand')) : '',
+        proc.sub(t('proc.current')),
+        cur && cur.progress ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur)
+          : cur ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(cur.name) + '</strong> · ' + esc(scanModeLabel(cur)) + ' · ' +
+              esc(cur.toAnalyze ? t('proc.progress', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0, total: cur.toAnalyze }) : t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
+          : proc.muted(t('proc.idle')),
+        proc.sub(t('proc.queue')),
+        sc.queue.length ? '<ol class="proc-queue">' + sc.queue.map(function (q) { return '<li>' + esc(q.name) + ' <span class="muted small">(' + esc(scanModeLabel(q)) + ')</span></li>'; }).join('') + '</ol>'
+          : proc.muted(t('proc.queueEmpty')),
+        proc.actions([
+          { lib: 'proc-scan', op: 'start', label: t('proc.start'), icon: 'play', primary: true, disabled: running },
+          { lib: 'proc-scan', op: 'stop', label: t('proc.stop'), icon: 'stop', disabled: stopped },
+          { lib: 'proc-scan', op: 'restart', label: t('proc.restart'), icon: 'sync', disabled: sc.mode === 'inline' }
+        ]),
+        proc.help(t('proc.stopHelp'))
+      ]
+    };
+  }
+
+  // Online metadata lookups (inside the web server, a few works at a time)
+  function procMetadata(p) {
+    var md = p.metadata;
+    if (!md) return null;
+    // current: a list of works; an older server sent one object or null
+    var current = Array.isArray(md.current) ? md.current : md.current ? [md.current] : [];
+    return {
+      id: 'metadata', icon: 'download', title: t('meta.service'), badge: proc.busy(current.length > 0 || md.queue > 0),
+      parts: [
+        facts([
+          ['proc.queue', esc(md.queue)],
+          md.concurrency ? ['meta.atOnce', esc(md.concurrency)] : null,
+          ['meta.doneCount', esc(md.done)],
+          md.covers != null ? ['meta.coversDownloaded', esc(md.covers)] : null,
+          md.lastError ? ['proc.lastError', esc(md.lastError)] : null
+        ]),
+        md.progress ? progressBar(md.progress, t('meta.batch'), t('progress.works', { done: md.progress.done, total: md.progress.total })) : '',
+        current.length ? '<ul class="proc-list">' + current.map(function (c) {
+          var what = c.step === 'cover' ? t('meta.stepCover', { provider: providerName(c.provider || '') })
+            : c.provider ? t('meta.stepSearching', { provider: providerName(c.provider) }) : '';
+          return '<li><span class="spinner spinner--sm"></span><span><strong>' + esc(c.title) + '</strong>' + (what ? ' <span class="muted small">' + esc(what) + '</span>' : '') + '</span></li>';
+        }).join('') + '</ul>' : '',
+        proc.help(t('meta.serviceHelp'), settingsLink())
+      ]
+    };
+  }
+
+  // File jobs (renaming, deleting, merging): their own process, started for a job and closed after it
+  function procFiles(p) {
+    var rn = p.rename;
+    if (!rn) return null;
+    var rr = rn.running;
+    var job = rr && (rn.jobs || []).filter(function (j) { return j.id === rr.jobId; })[0];
+    return {
+      id: 'files', icon: 'edit', title: t('proc.rename'), badge: proc.busy(Boolean(rr)),
+      parts: [
+        facts([
+          rr && rr.pid ? ['proc.pid', esc(rr.pid)] : null,
+          rr ? ['proc.status', esc(t('proc.renameProgress', { done: rr.done, total: rr.total }))] : null,
+          rn.queued ? ['proc.queue', esc(rn.queued)] : null,
+          !rr && rn.last ? ['proc.renameLast', esc(t('proc.renameLastValue', { files: rn.last.files, when: fmtDuration(rn.last.at) }))] : null
+        ]),
+        job ? renamePhaseHtml(job) : '',
+        proc.help(t('proc.renameHelp'), { href: '#files', text: t('nav.files') })
+      ]
+    };
+  }
+
+  // External catalog crawls: each an independent process; a few at once, the others waiting
+  function procCatalog(p) {
+    var c = p.catalog;
+    if (!c || !c.sources) return null;
+    var crawls = c.crawls || [];
+    var running = crawls.filter(function (j) { return j.status === 'running'; });
+    return {
+      id: 'catalog', icon: 'travel_explore', title: t('proc.catalog'), badge: proc.busy(running.length > 0),
+      parts: [
+        facts([
+          ['proc.catalog.sources', esc(c.sources)],
+          ['proc.catalog.atOnce', esc(c.maxCrawls)],
+          c.concurrency ? ['proc.catalog.worksAtOnce', esc(c.concurrency)] : null,
+          c.queued ? ['proc.queue', esc(c.queued)] : null
+        ]),
+        running.length ? running.map(function (j) {
+          return '<p class="proc-current"><strong>' + esc(j.name) + '</strong>' + (j.pid ? ' <span class="muted small">' + esc(t('proc.pid')) + ' ' + esc(j.pid) + '</span>' : '') + '</p>' + crawlLine({ job: j });
+        }).join('') : proc.muted(t('proc.catalog.none')),
+        proc.help(t('proc.catalog.help'), { href: '#catalog/sources', text: t('cat.tabSources') })
+      ]
+    };
+  }
+
+  // The caches, each its own process (started when needed, closed after a long idle time)
+  var CACHE_ORDER = ['pages', 'covers', 'works', 'search'];
+  function procCaches(p) {
+    var caches = (p.caches || []).slice().sort(function (a, b) { return CACHE_ORDER.indexOf(a.kind) - CACHE_ORDER.indexOf(b.kind); });
+    if (!caches.length) return null;
+    var row = function (c) {
+      var s = c.stats || {}, open = c.pid || c.mode === 'inline';
+      var size = s.maxBytes && c.kind !== 'search' ? t('proc.cache.size', { size: s.bytes ? fmtBytes(s.bytes) : '0 MB', max: fmtBytes(s.maxBytes) }) : '';
+      var under = c.kind === 'search' && s.docs != null ? t('proc.cache.searchDocs', { docs: s.docs, tags: (s.terms || {}).tag || 0, people: (s.terms || {}).person || 0 })
+        : c.kind === 'covers' && s.warm && (s.warm.running || s.warm.finishedAt) ? (s.warm.running ? t('proc.media.warmRunning', { done: s.warm.done, total: s.warm.total }) : t('proc.media.warmDone', { total: s.warm.total, added: s.warm.added })) : '';
+      return {
+        cells: [
+          '<strong>' + esc(t('proc.cache.' + c.kind)) + '</strong>',
+          c.pid ? esc(c.pid) : '<span class="muted">' + esc(t(c.mode === 'inline' ? 'proc.cache.inline' : 'proc.cache.closed')) + '</span>',
+          esc(open ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—'),
+          esc(open ? t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 }) : t('proc.cache.requests', { count: c.requests })),
+          esc(s.rss ? fmtBytes(s.rss) : '—')
+        ],
+        under: under
+      };
+    };
+    return {
+      id: 'caches', icon: 'collections', title: t('proc.caches'), wide: true,
+      badge: { text: t('proc.cache.running', { count: caches.filter(function (c) { return c.pid; }).length, total: caches.length }), cls: 'badge--ok' },
+      parts: [
+        proc.table([t('proc.cache.name'), t('proc.pid'), t('proc.cache.content'), t('proc.cache.answered'), t('proc.memory')], caches.map(row)),
+        caches.filter(function (c) { return c.lastError; }).map(function (c) { return '<p class="notice notice--error small">' + esc(c.lastError) + '</p>'; }).join(''),
+        proc.help(t('proc.cache.help'))
+      ]
+    };
+  }
+
+  // The Processes page, in this order
+  var PROC_SECTIONS = [procServer, procScan, procMetadata, procFiles, procCatalog, procCaches];
 
   var processes = {
     title: function () { return t('nav.processes'); },
@@ -1962,137 +2179,12 @@
       var head = '<h1 class="page-title">' + esc(t('nav.processes')) + '</h1><p class="page-lead">' + esc(t('proc.intro')) + '</p>';
       if (!p) return head + spinner;
       if (p.error) return head + errorBanner(p.error);
-      var srv = p.server, sc = p.scanService;
-      var restarting = cache.serverRestarting;
-
-      var serverCard =
-        '<section class="card proc-card">' +
-          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('memory') + '</span>' +
-            '<div><h2 class="card__title">' + esc(t('proc.server')) + '</h2>' +
-            '<span class="badge ' + (restarting ? 'badge--primary' : 'badge--ok') + '">' + esc(t(restarting ? 'proc.state.starting' : 'proc.state.running')) + '</span></div></div>' +
-          (srv.restartNeeded ? '<p class="notice notice--info">' + esc(t('proc.restartNeeded')) + '</p>' : '') +
-          facts([
-            ['proc.pid', esc(srv.pid)], ['proc.uptime', esc(fmtDuration(srv.startedAt))],
-            ['proc.memory', esc(fmtBytes(srv.rss))], ['proc.cpu', esc(fmtCpu(srv.cpuMs))],
-            ['proc.node', esc(srv.node)], ['proc.platform', esc(srv.platform)]
-          ]) +
-          '<div class="lib-card__actions">' +
-            '<button class="btn btn--outline btn--pill" data-lib="proc-server-restart"' + (srv.supervised && !restarting ? '' : ' disabled') + '>' + icon('sync') + esc(t('proc.serverRestart')) + '</button>' +
-          '</div>' +
-          (restarting ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span>' + esc(t('proc.serverRestarting')) + '</p>'
-            : !srv.supervised ? '<p class="field__help">' + esc(t('proc.notSupervised')) + '</p>' : '') +
-        '</section>';
-
-      var cur = sc.current;
-      var scanCard =
-        '<section class="card proc-card">' +
-          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('sync') + '</span>' +
-            '<div><h2 class="card__title">' + esc(t('proc.scanService')) + '</h2>' +
-            '<span class="badge ' + (STATE_BADGE[sc.state] || '') + '">' + esc(t('proc.state.' + sc.state)) + '</span></div></div>' +
-          (sc.mode === 'inline' ? '<p class="notice">' + esc(t('proc.mode.inline')) + '</p>' : '') +
-          (sc.lastError && sc.state !== 'running' ? '<p class="notice notice--error">' + esc(t('proc.lastError')) + ': ' + esc(sc.lastError) + '</p>' : '') +
-          facts([
-            ['proc.uptime', esc(sc.state === 'running' ? fmtDuration(sc.startedAt) : '—')],
-            sc.mode === 'process' ? ['proc.processes', esc(sc.processes)] : null,
-            ['proc.concurrency', esc(sc.concurrency)],
-            sc.mode === 'process' ? ['proc.priority', esc(t('proc.priorityLow'))] : null,
-            ['proc.restarts', esc(sc.restarts)],
-            sc.lastError && sc.state === 'running' ? ['proc.lastError', esc(sc.lastError)] : null
-          ]) +
-          '<p class="field__help"><a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>' +
-          // One row per worker process
-          (sc.workers.length
-            ? '<div class="table-wrap"><table class="table proc-workers"><thead><tr>' +
-                '<th>' + esc(t('proc.pid')) + '</th><th>' + esc(t('proc.memory')) + '</th><th>' + esc(t('proc.cpu')) + '</th><th>' + esc(t('proc.status')) + '</th>' +
-              '</tr></thead><tbody>' + sc.workers.map(function (w) {
-                var s2 = w.stats || {};
-                return '<tr><td>' + esc(w.pid) + '</td><td>' + esc(fmtBytes(s2.rss)) + '</td><td>' + esc(fmtCpu(s2.cpuMs)) + '</td>' +
-                  '<td><span class="badge' + (w.busy ? ' badge--primary' : '') + '">' + esc(t(w.busy ? 'proc.busy' : 'proc.idle')) + '</span></td></tr>';
-              }).join('') + '</tbody></table></div>'
-            : sc.idle ? '<p class="muted small">' + esc(t('proc.onDemand')) + '</p>' : '') +
-          '<h3 class="proc-sub">' + esc(t('proc.current')) + '</h3>' +
-          (cur && cur.progress
-            ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur)
-            : cur
-            ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(cur.name) + '</strong> · ' +
-                esc(scanModeLabel(cur)) + ' · ' +
-                esc(cur.toAnalyze ? t('proc.progress', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0, total: cur.toAnalyze }) : t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
-            : '<p class="muted small">' + esc(t('proc.idle')) + '</p>') +
-          '<h3 class="proc-sub">' + esc(t('proc.queue')) + '</h3>' +
-          (sc.queue.length
-            ? '<ol class="proc-queue">' + sc.queue.map(function (q) { return '<li>' + esc(q.name) + ' <span class="muted small">(' + esc(scanModeLabel(q)) + ')</span></li>'; }).join('') + '</ol>'
-            : '<p class="muted small">' + esc(t('proc.queueEmpty')) + '</p>') +
-          '<div class="lib-card__actions">' +
-            '<button class="btn btn--primary btn--pill" data-lib="proc-scan" data-op="start"' + (sc.state === 'running' || sc.state === 'starting' ? ' disabled' : '') + '>' + icon('play') + esc(t('proc.start')) + '</button>' +
-            '<button class="btn btn--outline btn--pill" data-lib="proc-scan" data-op="stop"' + (sc.state === 'stopped' || sc.state === 'crashed' ? ' disabled' : '') + '>' + icon('stop') + esc(t('proc.stop')) + '</button>' +
-            '<button class="btn btn--outline btn--pill" data-lib="proc-scan" data-op="restart"' + (sc.mode === 'inline' ? ' disabled' : '') + '>' + icon('sync') + esc(t('proc.restart')) + '</button>' +
-          '</div>' +
-          '<p class="field__help">' + esc(t('proc.stopHelp')) + '</p>' +
-        '</section>';
-
-      // Online metadata lookups (run inside the web server, one work at a time)
-      var md = p.metadata;
-      // current: a list of works (several at once); an older server sent one object or null
-      var mdCurrent = md ? (Array.isArray(md.current) ? md.current : md.current ? [md.current] : []) : [];
-      var mdBusy = mdCurrent.length > 0 || (md && md.queue > 0);
-      var metaCard = md ? '<section class="card proc-card">' +
-          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('download') + '</span>' +
-            '<div><h2 class="card__title">' + esc(t('meta.service')) + '</h2>' +
-            '<span class="badge ' + (mdBusy ? 'badge--primary' : 'badge--ok') + '">' + esc(t(mdBusy ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
-          facts([
-            ['proc.queue', esc(md.queue)],
-            md.concurrency ? ['meta.atOnce', esc(md.concurrency)] : null,
-            ['meta.doneCount', esc(md.done)],
-            md.covers != null ? ['meta.coversDownloaded', esc(md.covers)] : null,
-            md.lastError ? ['proc.lastError', esc(md.lastError)] : null
-          ]) +
-          (md.progress ? progressBar(md.progress, t('meta.batch'), t('progress.works', { done: md.progress.done, total: md.progress.total })) : '') +
-          (mdCurrent.length ? '<ul class="proc-list">' + mdCurrent.map(function (c) {
-            var what = c.step === 'cover' ? t('meta.stepCover', { provider: providerName(c.provider || '') })
-              : c.provider ? t('meta.stepSearching', { provider: providerName(c.provider) }) : '';
-            return '<li><span class="spinner spinner--sm"></span><span><strong>' + esc(c.title) + '</strong>' + (what ? ' <span class="muted small">' + esc(what) + '</span>' : '') + '</span></li>';
-          }).join('') + '</ul>' : '') +
-          '<p class="field__help">' + esc(t('meta.serviceHelp')) + ' <a href="#server-settings">' + esc(t('proc.changeInSettings')) + '</a></p>' +
-        '</section>' : '';
-      // File renaming: its own process, started for one batch and closed right after
-      var rn = p.rename, rr = rn && rn.running;
-      var renameCard = rn ? '<section class="card proc-card">' +
-          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('edit') + '</span>' +
-            '<div><h2 class="card__title">' + esc(t('proc.rename')) + '</h2>' +
-            '<span class="badge ' + (rr ? 'badge--primary' : 'badge--ok') + '">' + esc(t(rr ? 'proc.busy' : 'proc.idle')) + '</span></div></div>' +
-          facts([
-            rr && rr.pid ? ['proc.pid', esc(rr.pid)] : null,
-            rr ? ['proc.status', esc(t('proc.renameProgress', { done: rr.done, total: rr.total }))] : null,
-            rn.queued ? ['proc.queue', esc(rn.queued)] : null,
-            !rr && rn.last ? ['proc.renameLast', esc(t('proc.renameLastValue', { files: rn.last.files, when: fmtDuration(rn.last.at) }))] : null
-          ]) +
-          '<p class="field__help">' + esc(t('proc.renameHelp')) + ' <a href="#files">' + esc(t('nav.files')) + '</a></p>' +
-        '</section>' : '';
-      // The caches, each its own process (started when needed, closed after a long idle time)
-      var caches = p.caches || [];
-      var order = ['pages', 'covers', 'works', 'search'];
-      caches.sort(function (a, b) { return order.indexOf(a.kind) - order.indexOf(b.kind); });
-      var cacheRow = function (c) {
-        var s = c.stats || {};
-        var size = s.maxBytes && c.kind !== 'search' ? t('proc.cache.size', { size: s.bytes ? fmtBytes(s.bytes) : '0 MB', max: fmtBytes(s.maxBytes) }) : '';
-        var extra = c.kind === 'search' && s.docs != null ? t('proc.cache.searchDocs', { docs: s.docs, tags: (s.terms || {}).tag || 0, people: (s.terms || {}).person || 0 })
-          : c.kind === 'covers' && s.warm && (s.warm.running || s.warm.finishedAt) ? (s.warm.running ? t('proc.media.warmRunning', { done: s.warm.done, total: s.warm.total }) : t('proc.media.warmDone', { total: s.warm.total, added: s.warm.added })) : '';
-        return '<tr><td><strong>' + esc(t('proc.cache.' + c.kind)) + '</strong></td>' +
-          '<td>' + (c.pid ? esc(c.pid) : '<span class="muted">' + esc(t(c.mode === 'inline' ? 'proc.cache.inline' : 'proc.cache.closed')) + '</span>') + '</td>' +
-          '<td>' + esc(c.pid || c.mode === 'inline' ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—') + '</td>' +
-          '<td>' + esc(c.pid || c.mode === 'inline' ? t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 }) : t('proc.cache.requests', { count: c.requests })) + '</td>' +
-          '<td>' + esc(s.rss ? fmtBytes(s.rss) : '—') + '</td></tr>' + (extra ? '<tr class="proc-sub-row"><td></td><td colspan="4" class="muted small">' + esc(extra) + '</td></tr>' : '');
-      };
-      var mediaCard = caches.length ? '<section class="card proc-card proc-card--wide">' +
-          '<div class="proc-card__head"><span class="lib-card__icon">' + icon('collections') + '</span>' +
-            '<div><h2 class="card__title">' + esc(t('proc.caches')) + '</h2>' +
-            '<span class="badge badge--ok">' + esc(t('proc.cache.running', { count: caches.filter(function (c) { return c.pid; }).length, total: caches.length })) + '</span></div></div>' +
-          '<div class="table-wrap"><table class="table proc-workers"><thead><tr><th>' + esc(t('proc.cache.name')) + '</th><th>' + esc(t('proc.pid')) + '</th><th>' + esc(t('proc.cache.content')) +
-            '</th><th>' + esc(t('proc.cache.answered')) + '</th><th>' + esc(t('proc.memory')) + '</th></tr></thead><tbody>' + caches.map(cacheRow).join('') + '</tbody></table></div>' +
-          caches.filter(function (c) { return c.lastError; }).map(function (c) { return '<p class="notice notice--error small">' + esc(c.lastError) + '</p>'; }).join('') +
-          '<p class="field__help">' + esc(t('proc.cache.help')) + '</p>' +
-        '</section>' : '';
-      return head + '<div class="cards">' + serverCard + scanCard + metaCard + renameCard + mediaCard + '</div>';
+      return head + '<div class="cards">' + PROC_SECTIONS.map(function (section) {
+        var card;
+        // One card failing to draw (an older server's answer, say) doesn't take the page with it
+        try { card = section(p); } catch (e) { console.error('[processes]', e); return ''; }
+        return card ? procCard(card) : '';
+      }).join('') + '</div>';
     },
     enter: function (route) {
       clearTimeout(procTimer);
@@ -2117,7 +2209,9 @@
   var SETTINGS_FIELDS = [
     { key: 'scanWorkers', label: 'cfg.scanWorkers', help: 'cfg.scanWorkersHelp' },
     { key: 'scanConcurrency', label: 'cfg.scanConcurrency', help: 'cfg.scanConcurrencyHelp' },
-    { key: 'metadataConcurrency', label: 'cfg.metadataConcurrency', help: 'cfg.metadataConcurrencyHelp', section: 'cfg.metadata' }
+    { key: 'metadataConcurrency', label: 'cfg.metadataConcurrency', help: 'cfg.metadataConcurrencyHelp', section: 'cfg.metadata' },
+    { key: 'catalogCrawls', label: 'cfg.catalogCrawls', help: 'cfg.catalogCrawlsHelp', section: 'cfg.catalog' },
+    { key: 'catalogConcurrency', label: 'cfg.catalogConcurrency', help: 'cfg.catalogConcurrencyHelp' }
   ];
   var KEY_FIELDS = [
     { key: 'comicVineApiKey', label: 'Comic Vine', help: 'cfg.comicVineHelp', url: 'https://comicvine.gamespot.com/api/' },

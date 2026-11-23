@@ -108,8 +108,13 @@ async function sourceIndex(src) {
 const relOf = (src, file) => path.relative(src.folder, file).split(path.sep).join('/');
 
 // Every folder source's index in memory (e.g. after a restart, before anything applied them)
-async function warmIndexes() {
-  for (const src of folderSources()) if (!indexCache.has(src.id)) { try { await sourceIndex(src); } catch { /* folder gone */ } }
+// ids: only these sources; onSource(src, i, count): told before each one is read (it can take a while)
+async function warmIndexes(ids, onSource) {
+  const todo = folderSources().filter(s => (!ids || ids.has(s.id)) && !indexCache.has(s.id));
+  for (let i = 0; i < todo.length; i++) {
+    if (onSource) try { onSource(todo[i], i, todo.length); } catch { /* only a report */ }
+    try { await sourceIndex(todo[i]); } catch { /* folder gone */ }
+  }
 }
 
 async function applyLocal(libraryId, onlySeriesId) {

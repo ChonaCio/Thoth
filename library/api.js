@@ -756,7 +756,7 @@ async function handle(ctx) {
     }
     requireAdmin();
     if (p === '/api/catalog/types' && method === 'GET') return send(200, { types: catalog.types() });
-    if (p === '/api/catalog/sources' && method === 'GET') return send(200, { sources: catalog.listSources(), jobs: catalog.jobs() });
+    if (p === '/api/catalog/sources' && method === 'GET') return send(200, { sources: catalog.listSources(), jobs: catalog.jobs(), defaultConcurrency: catalog.info().concurrency });
     // POST { name, baseUrl } → settings detected from the site; or the full settings (with type) as given
     if (p === '/api/catalog/sources' && method === 'POST') return send(201, { source: await catalog.createSource(body) });
     if (p === '/api/catalog/sources/test' && method === 'POST') return send(200, { test: await catalog.testSource(body) });

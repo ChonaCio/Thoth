@@ -174,12 +174,15 @@ them in small batches, each process reading several files at once. Libraries are
 | Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each, only while scanning). Changing it during a scan restarts the scan with the new number. |
 | Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
 | Works looked up at once | 3 | Metadata lookups running in parallel (1–8). Each site still gets a pause between requests. |
+| Sources crawled at once | 2 | External catalog crawls running at the same time (1–8), each its own process; others wait in line. |
+| Works read at once per crawl | 3 | Works one crawl reads at the same time (1–8), for sources without their own *Works at once*. Requests to one site still start no faster than its pause, so more only helps when pages are slow to answer. |
 | Comic Vine API key | — | Needed to use Comic Vine. Saved on the server, never shown again (only "Saved"). |
 | Google Books API key | — | Optional; without one Google Books allows very few lookups. |
 
 **Processes page (administrators).** Shows the web server, the scan service, the metadata lookups, file
-management jobs (their queue, and a process that exists only while jobs run) and the **cache** (pages, covers
-and works: sizes, answers from the cache, covers read ahead, and the media process):
+management jobs (their queue, what the running job is doing, and a process that exists only while jobs run),
+the **catalog crawls** (each its own process, how many at once) and the **caches** (pages, covers, works and
+search, each its own process: sizes, answers from the cache, covers read ahead):
 process ID, uptime, memory, CPU time, what's being scanned or looked up and what's waiting. Scans and
 metadata batches show a **progress bar with the time left**, estimated from the speed so far (scans: finding
 files → reading new/changed files *x of y* → saving; metadata: works done of the batch, and which site each
@@ -442,6 +445,14 @@ hundreds of thousands of files take one click. The naming-rule examples on the p
 themselves. A quick scan runs afterwards to put chapters in order. Files the server may not rename
 (read-only library folders) are reported.
 
+A job says what it is doing: waiting for the job before it, reading a folder source (to find the JSON files
+to rename along — a big one takes a while after a restart), checking the proposals, then the file it is on.
+A file **in use by another program** (a reader, an antivirus scan, a sync tool) is tried again for a moment,
+then reported as *in use by another program (locked)* and the job goes on with the rest. When the disk
+doesn't answer at all (a network drive gone), the page says for how long; after 2 minutes
+(THOTH_RENAME_STALL_MS) that file is reported *the disk stopped answering*, the rename process is restarted
+and the job continues.
+
 ### Editing a work
 
 The work's *Edit* dialog opens with its **current values**, wherever they come from (its own edits, a folder
@@ -483,7 +494,8 @@ sites added as **sources**, with its metadata and chapter list.
 - **Icons:** each source shows its site's own icon (the one its pages declare, else `/favicon.ico`).
 - **Sources tab:** add a site, *Test* its settings (what the first list page and first work give),
   *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
-  Each source can update every day or week by itself. Kinds of site:
+  Each source can update every day or week by itself. A crawl reads several works at once (*Works at once*,
+  default from Server settings); requests to the site still keep the pause between them. Kinds of site:
 
 | Kind | For | Notes |
 | --- | --- | --- |

@@ -49,6 +49,8 @@ function parseSource(body, current) {
   if ('schedule' in b || !current) s.schedule = Object.keys(SCHEDULES).includes(b.schedule) ? b.schedule : 'manual';
   if ('gapMs' in b) s.gapMs = Math.max(200, Math.min(60000, Math.round(Number(b.gapMs) || 0))) || adapter.defaults.gapMs;
   else if (!current) s.gapMs = adapter.defaults.gapMs || 1000;
+  // Works read at the same time in a crawl (0: the server's setting)
+  if ('concurrency' in b) { const n = Math.round(Number(b.concurrency) || 0); if (n) s.concurrency = Math.max(1, Math.min(8, n)); else delete s.concurrency; }
   if ('listPath' in b) s.listPath = String(b.listPath || '').trim().replace(/[^\w\-/]/g, '').slice(0, 80);
   if ('selectors' in b && b.selectors && typeof b.selectors === 'object') {
     const keys = ['listUrl', 'firstPage', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'authors', 'altTitles', 'status', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate'];
@@ -136,9 +138,12 @@ function removeSource(id) {
 /* ---------------- crawling: independent crawler processes ----------------
  * Each crawl is its own detached process (crawler.js) that doesn't depend on the server: it keeps going through
  * server restarts and talks to the server only through files in the source's folder (job.json, progress.json
- * with a heartbeat, a "stop" file). Up to MAX_CRAWLS run at once (different sites); others wait in line here.
+ * with a heartbeat, a "stop" file). Up to maxCrawls() run at once (different sites); others wait in line here.
  * The quick jobs (Test, Detect) use a small helper process (catalog/worker.js), started when needed. */
-const MAX_CRAWLS = Math.max(1, Number(process.env.THOTH_MAX_CRAWLS) || 2);
+// (Server settings: catalogCrawls; THOTH_MAX_CRAWLS overrides it)
+const maxCrawls = () => Math.max(1, Number(process.env.THOTH_MAX_CRAWLS) || Number(require('../../config').get().catalogCrawls) || 2);
+// Works one crawl reads at the same time: the source's own setting, else the server's
+const crawlConcurrency = s => Math.max(1, Math.min(8, Number(s.concurrency) || Number(require('../../config').get().catalogConcurrency) || 3));
 const queue = []; // waiting crawls: { id, sourceId, mode, reason, createdAt }
 let jobSeq = 0;
 const recent = new Map(); // sourceId → last finished progress (for the list of crawls)
@@ -184,7 +189,7 @@ function startCrawl(job) {
   const dir = sourceDir(s.id);
   fs.mkdirSync(dir, { recursive: true });
   const st = cstore.readState(dir);
-  fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ jobId: job.id, mode: job.mode, reason: job.reason, allowLocal: ALLOW_LOCAL,
+  fs.writeFileSync(path.join(dir, 'job.json'), JSON.stringify({ jobId: job.id, mode: job.mode, reason: job.reason, allowLocal: ALLOW_LOCAL, concurrency: crawlConcurrency(s),
     source: Object.assign({}, s, { lastCrawlAt: st.lastCrawlAt || null }) }));
   fs.rmSync(path.join(dir, 'stop'), { force: true });
   fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ jobId: job.id, sourceId: s.id, mode: job.mode, status: 'starting', startedAt: new Date().toISOString() }));
@@ -198,7 +203,7 @@ function startCrawl(job) {
 let pumpTimer = null;
 function pumpCrawls() {
   let running = runningCrawls().length;
-  while (queue.length && running < MAX_CRAWLS) { startCrawl(queue.shift()); running++; }
+  while (queue.length && running < maxCrawls()) { startCrawl(queue.shift()); running++; }
   for (const id of Object.keys(db.catalogSources)) {
     const p = readProgress(id);
     if (p && p.finishedAt && (!recent.has(id) || recent.get(id).jobId !== p.jobId)) {
@@ -572,9 +577,12 @@ async function cachedImage(imageUrl, referer) {
 
 function info() {
   const crawls = runningCrawls().map(id => Object.assign({ name: db.catalogSources[id].name }, sourceJob(id)));
-  return { pid: proc.pid, crawls, running: crawls[0] || null, queued: queue.length, maxCrawls: MAX_CRAWLS, sources: Object.keys(db.catalogSources).length };
+  return { pid: proc.pid, crawls, running: crawls[0] || null, queued: queue.length, maxCrawls: maxCrawls(), concurrency: Number(require('../../config').get().catalogConcurrency) || 3, sources: Object.keys(db.catalogSources).length };
 }
 function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, defaults: ADAPTERS[t].defaults })); }
+
+// More crawls allowed at once: start the waiting ones now
+require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
 
 module.exports = { listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
   list, facets, detail, mergeSuggestions, merge, unmerge, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

@@ -222,6 +222,9 @@ const jobView = j => ({
   id: j.id, kind: j.kind, status: j.status, createdAt: j.createdAt, startedAt: j.startedAt || null, finishedAt: j.finishedAt || null,
   by: j.by || null, total: j.total, done: j.done, renamed: j.renamed, deleted: j.deleted, moved: j.moved, skipped: j.skipped || 0, repeats: j.repeats || [], foldersDeleted: j.foldersDeleted || [], json: j.json, failedCount: j.failed.length, foldersKept: j.foldersKept || [],
   failed: j.failed.slice(0, 50), error: j.error || null, libraries: j.libraries ? [...j.libraries] : [], process: j.process || null,
+  phase: j.status === 'queued' ? 'waiting' : j.status === 'running' ? j.phase || 'checking' : null, phaseDetail: j.status === 'running' ? j.phaseDetail || null : null,
+  file: j.status === 'running' && j.file ? path.basename(j.file) : null, quietSec: j.status === 'running' && j.progressAt ? Math.floor((Date.now() - j.progressAt) / 1000) : 0,
+  waitingFor: j.status === 'queued' ? (jobs.find(x => x.status === 'running') || {}).id || null : null,
   progress: j.total ? Math.min(100, Math.floor(j.done / j.total * 100)) : (j.status === 'done' ? 100 : 0)
 });
 function info() {
@@ -247,7 +250,7 @@ function startWorker() {
   child.on('message', m => {
     const p = m && w.pending.get(m.reqId);
     if (!p) return;
-    if (m.type === 'progress') { if (p.onProgress) p.onProgress(m.done); return; }
+    if (m.type === 'progress') { p.at = Date.now(); if (m.r) p.results.push(m.r); if (p.onProgress) p.onProgress(m.done, m.file); return; }
     w.pending.delete(m.reqId);
     if (m.type === 'result') p.resolve(m.result); else p.reject(new Error(m.message));
   });
@@ -261,16 +264,34 @@ function stopWorker() {
   state.worker = null;
   if (w && w.child) { w.child.removeAllListeners('exit'); try { w.child.kill(); } catch { /* gone */ } }
 }
+// A file operation that doesn't answer for this long (a network drive gone, a disk that hangs) stops the rename
+// process: the files done so far keep their results, the rest are reported 'stalled' and the job goes on
+const STALL_MS = Number(process.env.THOTH_RENAME_STALL_MS) || 120000;
 function runOps(ops, onProgress) {
   let w = state.worker;
   if (!w || w.dead) w = state.worker = startWorker();
   if (w.mode === 'inline') return renameWorker.run(ops, onProgress);
   return new Promise((resolve, reject) => {
     const reqId = ++w.seq;
-    w.pending.set(reqId, { resolve, reject, onProgress });
+    const p = { onProgress, results: [], at: Date.now() };
+    const finish = () => { clearInterval(watch); w.pending.delete(reqId); };
+    p.resolve = r => { finish(); resolve(r); };
+    p.reject = e => { finish(); reject(e); };
+    const watch = setInterval(() => {
+      if (Date.now() - p.at < STALL_MS) return;
+      finish();
+      const stuck = ops[p.results.length];
+      console.warn(`[library] a file operation hasn't answered for ${Math.round(STALL_MS / 1000)} s (${stuck && stuck.from}); restarting the rename process`);
+      if (state.worker === w) stopWorker(); else try { w.child.kill(); } catch { /* gone */ }
+      resolve(ops.map((op, k) => p.results[k] || { ok: false, error: 'stalled', json: [] }));
+    }, Math.min(5000, STALL_MS / 4));
+    w.pending.set(reqId, p);
     w.child.send({ type: 'rename', reqId, ops });
   });
 }
+// What a job is doing: 'waiting' (another job runs) → 'sources' (reading folder sources) → 'checking'
+// (the proposals) → 'files'
+function setPhase(job, phase, detail) { job.phase = phase; job.phaseDetail = detail || null; job.progressAt = Date.now(); }
 
 // kind 'rename': picks = [{ bookId, toName }] or { all: true, library, exclude: [bookId] } (every valid proposal)
 // kind 'delete': picks = [{ bookId, replace? }] (replace: delete the file holding this book's proposed name, then
@@ -293,6 +314,7 @@ async function pump() {
     while ((job = jobs.find(j => j.status === 'queued'))) {
       job.status = 'running';
       job.startedAt = new Date().toISOString();
+      setPhase(job, 'checking');
       try { await (job.kind === 'delete' ? runDeleteJob(job) : job.kind === 'merge' ? runMergeJob(job) : runJob(job)); job.status = 'done'; } catch (e) { job.status = 'failed'; job.error = e.message; console.error('[library] rename job failed:', e.message); }
       job.finishedAt = new Date().toISOString();
       const w = state.worker;
@@ -312,8 +334,16 @@ async function pump() {
 
 async function runJob(job) {
   const { renameJson, metadata } = job;
-  if (renameJson && metadata) await metadata.warmIndexes(); // the folder sources' indexes, to find JSON files
+  // The indexes of the folder sources the libraries use (to find the JSON files): reading a big folder takes
+  // a while after a restart, so the job says which one it is reading
+  if (renameJson && metadata) {
+    const ids = new Set();
+    for (const lib of Object.values(db.libraries)) for (const p of metadata.librarySettings(lib).providers) if (p.enabled && db.metadataSources[p.id]) ids.add(p.id);
+    await metadata.warmIndexes(ids, (src, i, n) => setPhase(job, 'sources', { name: src.name, n: i + 1, of: n }));
+  }
   // The proposals as they are now (conflicts included, to say why something isn't renamed)
+  setPhase(job, 'checking');
+  await new Promise(r => setImmediate(r));
   const current = new Map(preview('all', { limit: Infinity }).items.map(x => [x.bookId, x]));
   let picks = job.picks;
   if (!Array.isArray(picks)) {
@@ -323,6 +353,7 @@ async function runJob(job) {
       .map(x => ({ bookId: x.bookId, toName: x.toName }));
   }
   job.total = picks.length;
+  setPhase(job, 'files');
   for (let i = 0; i < picks.length; i += CHUNK) {
     const chunk = picks.slice(i, i + CHUNK);
     const todo = [];
@@ -345,7 +376,7 @@ async function runJob(job) {
       todo.push({ x, b, lib, newRel, op: { from: fromAbs, to: toAbs, json: jsonOps } });
     }
     const base = job.done;
-    const results = todo.length ? await runOps(todo.map(t => t.op), n => { job.done = base + Math.round(n / todo.length * chunk.length); }) : [];
+    const results = todo.length ? await runOps(todo.map(t => t.op), (n, file) => { job.done = base + Math.round(n / todo.length * chunk.length); job.file = file; job.progressAt = Date.now(); }) : [];
     const moved = new Map();
     todo.forEach((t, k) => {
       const r = results[k] || { ok: false, error: 'not done', json: [] };
@@ -387,6 +418,7 @@ async function runDeleteJob(job) {
       .map(x => ({ bookId: x.bookId, replace }));
   }
   job.total = picks.length;
+  setPhase(job, 'files');
   for (let i = 0; i < picks.length; i += CHUNK) {
     const chunk = picks.slice(i, i + CHUNK);
     const todo = [], ops = [];
@@ -405,7 +437,7 @@ async function runDeleteJob(job) {
       ops.push({ kind: 'delete', from: otherAbs }, { kind: 'rename', from, to: path.resolve(path.dirname(from), x.toName) });
     }
     const base = job.done;
-    const results = ops.length ? await runOps(ops, n => { job.done = base + Math.round(n / ops.length * chunk.length); }) : [];
+    const results = ops.length ? await runOps(ops, (n, file) => { job.done = base + Math.round(n / ops.length * chunk.length); job.file = file; job.progressAt = Date.now(); }) : [];
     const gone = new Set(), renames = [];
     for (const t of todo) {
       const r1 = results[t.at] || { ok: false, error: 'not done' };
@@ -477,6 +509,7 @@ async function runMergeJob(job) {
   const plan = [];
   for (const s of srcs) for (const b of store.booksOf(s.id).slice()) plan.push({ s, b });
   job.total = plan.length;
+  setPhase(job, 'files');
   for (let i = 0; i < plan.length; i += CHUNK) {
     const chunk = plan.slice(i, i + CHUNK);
     const todo = [];
@@ -496,7 +529,7 @@ async function runMergeJob(job) {
       todo.push({ s, b, keys, newRel: path.join(t.relPath, b.fileName), op: { kind: 'move', from, to: path.join(tDir, b.fileName) } });
     }
     const base = job.done;
-    const results = todo.length ? await runOps(todo.map(x => x.op), n => { job.done = base + Math.round(n / todo.length * chunk.length); }) : [];
+    const results = todo.length ? await runOps(todo.map(x => x.op), (n, file) => { job.done = base + Math.round(n / todo.length * chunk.length); job.file = file; job.progressAt = Date.now(); }) : [];
     const moved = new Map();
     todo.forEach((x, k) => {
       const r = results[k] || { ok: false, error: 'not done' };

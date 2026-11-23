@@ -24,6 +24,8 @@ const madaraWorks = {
   'yellow-star': { title: 'Yellow Star', alt: '', genres: ['Comedy'], chapters: [1, 2], ajax: false, extra: true } // only in /wp-sitemap.xml, once extraSitemap is on
 };
 let extraSitemap = false;
+// Slow work pages (to see several read at once): requests in flight, and when each work page was asked for
+let slowWorks = false, inFlight = 0, maxInFlight = 0; const workHits = [];
 const listed = () => Object.keys(madaraWorks).filter(s => !madaraWorks[s].extra);
 const madaraItem = slug => `<div class="page-item-detail"><div class="item-thumb"><a href="${SITE}/madara/manga/${slug}/"><img data-src="${SITE}/img/${slug}.png" src="x.gif"></a></div><div class="post-title"><h3><a href="${SITE}/madara/manga/${slug}/">${madaraWorks[slug].title}</a></h3></div></div>`;
 function madaraWork(slug) {
@@ -63,7 +65,11 @@ const site = http.createServer((req, res) => {
     const w = madaraWorks[m[1]];
     return send(200, `<ul>${w.chapters.map(n => `<li class="wp-manga-chapter"><a href="${SITE}/madara/manga/${m[1]}/chapter-${n}/">Chapter ${n}</a></li>`).join('')}</ul>`);
   }
-  if ((m = /^\/madara\/manga\/([\w-]+)\/$/.exec(u.pathname)) && madaraWorks[m[1]]) return send(200, madaraWork(m[1]));
+  if ((m = /^\/madara\/manga\/([\w-]+)\/$/.exec(u.pathname)) && madaraWorks[m[1]]) {
+    if (!slowWorks) return send(200, madaraWork(m[1]));
+    workHits.push(Date.now()); inFlight++; maxInFlight = Math.max(maxInFlight, inFlight);
+    setTimeout(() => { inFlight--; send(200, madaraWork(m[1])); }, 700); return;
+  }
   // Custom site: one list page; one work's page is not allowed by robots.txt
   if (u.pathname === '/custom/list') {
     if (u.searchParams.get('p') !== '1') return send(200, '<div class="list"></div>');
@@ -142,6 +148,15 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   let s1 = await crawled(madara.id);
   ok(s1.works === 3 && s1.lastStats.listed === 3 && s1.lastStats.errors === 0 && s1.lastStats.chapters === 7, `Madara site: every list page read, 3 works, 7 chapters (${JSON.stringify(s1.lastStats)})`);
   ok(hits.includes('GET /robots.txt') && hits.some(h => h.startsWith('POST /madara/manga/red-sun/ajax/chapters/')), 'robots.txt read first; chapters loaded the theme’s other way when the page has none');
+  // Several works at once (the source's setting), still one request to the site per gapMs
+  await call('PATCH', `/api/catalog/sources/${madara.id}`, { concurrency: 3 });
+  slowWorks = true;
+  await call('POST', `/api/catalog/sources/${madara.id}/crawl`, { mode: 'full' });
+  s1 = await crawled(madara.id);
+  slowWorks = false;
+  const gaps = workHits.slice(1).map((t, i) => t - workHits[i]);
+  ok(s1.works === 3 && s1.lastStats.errors === 0 && s1.lastStats.concurrency === 3 && maxInFlight >= 2 && gaps.every(g => g >= 150),
+    `several works read at once (${maxInFlight} pages in flight, ${s1.lastStats.concurrency} lanes) while requests still start one per pause (gaps ${gaps.join(', ')} ms)`);
   await call('POST', `/api/catalog/sources/${custom.id}/crawl`, { mode: 'full' });
   const s2 = await crawled(custom.id);
   ok(s2.works === 2 && s2.lastStats.errors === 1 && !hits.some(h => h.includes('/custom/private/')), 'custom selectors: works found; a page robots.txt forbids is never fetched (counted as an error)');

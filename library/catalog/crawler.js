@@ -1,7 +1,7 @@
 // An independent crawl: `node crawler.js <source folder>`, started detached by catalog/index.js. It doesn't
 // depend on the server: it keeps going if the server restarts or stops, and talks to it only through files
 // in the source's folder (data/catalog/<source>/):
-//   job.json       what to do: { jobId, source (settings), mode: 'full' | 'update', allowLocal, reason }
+//   job.json       what to do: { jobId, source (settings), mode: 'full' | 'update', allowLocal, reason, concurrency }
 //   progress.json  { jobId, pid, status: 'running' | 'done' | 'failed' | 'stopped', startedAt, heartbeatAt,
 //                    finishedAt, progress, result, error } (written every second while it runs)
 //   stop           present → finish the current work, save, end (removed when it ends)
@@ -33,7 +33,7 @@ const beat = setInterval(() => {
 
 const log = (...a) => console.log(new Date().toISOString(), ...a);
 log(`[crawler] ${job.mode} crawl of "${job.source.name}" (pid ${process.pid})`);
-worker.crawl({ reqId: 1, source: job.source, dir, mode: job.mode, allowLocal: Boolean(job.allowLocal) }, m => {
+worker.crawl({ reqId: 1, source: job.source, dir, mode: job.mode, allowLocal: Boolean(job.allowLocal), concurrency: job.concurrency }, m => {
   if (m.type === 'progress') { state.progress = Object.assign({}, m, { type: undefined, reqId: undefined }); }
 }).then(result => {
   state.status = result.stopped ? 'stopped' : 'done';

@@ -911,3 +911,7 @@ body.is-reading { overflow: hidden; }
 .proc-sub-row td { padding-top: 0; border-top: 0; }
 .cat-detected { display: flex; gap: 6px; align-items: flex-start; }
 .cat-detected .icon svg { width: 14px; height: 14px; margin-top: 2px; flex: none; }
+
+/* Rename job: what it is doing, and a disk that doesn't answer */
+.ren-phase { margin: .25rem 0 0; overflow-wrap: anywhere; }
+.warn-text { color: var(--danger); margin: .25rem 0 0; }

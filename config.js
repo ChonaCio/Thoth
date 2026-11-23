@@ -17,6 +17,10 @@ const SCHEMA = {
   scanConcurrency: { default: 4, min: 1, max: 32 },
   // Works looked up on metadata sites at the same time (each site still gets a pause between requests)
   metadataConcurrency: { default: 3, min: 1, max: 8 },
+  // External catalog: sources crawled at the same time (each crawl is its own process), and works each crawl
+  // reads at the same time (a source can set its own; requests to one site still keep their pause)
+  catalogCrawls: { default: 2, min: 1, max: 8 },
+  catalogConcurrency: { default: 3, min: 1, max: 8 },
   // API keys for metadata providers (secret: never sent back to the browser, only whether one is set)
   comicVineApiKey: { default: '', secret: true },
   googleBooksApiKey: { default: '', secret: true }

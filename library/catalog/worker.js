@@ -80,14 +80,15 @@ async function crawl(msg, send) {
       if (Date.now() - lastFlush > 30000) flush();
     }
     listingComplete = !src.maxWorks || stats.listed < src.maxWorks;
-    // 2. Each work's details and chapter list
+    // 2. Each work's details and chapter list: several works at once (msg.concurrency lanes taking the next
+    // work from the list). The fetcher still spaces the requests to one site by gapMs, so more lanes only
+    // help while pages are slow to answer; they never make the crawl hit the site faster than that.
     state.phase = 'works'; store.writeState(dir, state);
-    let done = 0;
-    for (const sid of queue) {
-      if (run.stop) break;
+    const lanes = Math.max(1, Math.min(8, Number(msg.concurrency) || 1, queue.length || 1));
+    stats.concurrency = lanes;
+    let done = 0, next = 0;
+    const readWork = async sid => {
       const w = works[sid];
-      done++;
-      if (resume && w.detailAt && w.detailAt >= resume) continue;
       try {
         const old = chapters.get(sid);
         const known = new Set(((old && old.chapters) || []).map(c => String(c.id)));
@@ -110,14 +111,24 @@ async function crawl(msg, send) {
         w.detailAt = new Date().toISOString();
         stats.read++; stats.updated++;
       } catch (e) {
-        if (e.code === 'stopped') break;
-        if (e.code === 'blocked' || e.code === 'notPublic') { aborted = e; break; } // the whole site
+        if (e.code === 'stopped') return;
+        if (e.code === 'blocked' || e.code === 'notPublic') { if (!aborted) aborted = e; return; } // the whole site
         stats.errors++;
         w.error = errText(e).slice(0, 200);
       }
-      if (done % 10 === 0 || done === queue.length) report({ phase: 'works', done, total: queue.length });
-      if (Date.now() - lastFlush > 30000) flush();
-    }
+    };
+    const lane = async () => {
+      while (!run.stop && !aborted && next < queue.length) {
+        const sid = queue[next++];
+        const w = works[sid];
+        if (!(resume && w.detailAt && w.detailAt >= resume)) await readWork(sid);
+        if (run.stop || aborted) return;
+        done++;
+        if (done % 10 === 0 || done === queue.length) report({ phase: 'works', done, total: queue.length, concurrency: lanes });
+        if (Date.now() - lastFlush > 30000) flush();
+      }
+    };
+    await Promise.all(Array.from({ length: lanes }, lane));
     // 3. A complete full crawl: works the site no longer lists are dropped
     if (!incremental && listingComplete && !run.stop && !aborted) {
       for (const [sid, w] of Object.entries(works)) if (w.seenAt !== runStartedAt) { delete works[sid]; chapters.set(sid, null); stats.removed++; }
