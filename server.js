@@ -153,6 +153,7 @@ async function handleApi(req, res, url) {
         scanService: scanner.serviceInfo(),
         metadata: metadata.info(),
         rename: rename.info(),
+        catalog: require('./library/catalog').info(),
         media: Object.assign(media.info(), { responses: library.cacheInfo() })
       });
     }
@@ -251,6 +252,8 @@ server.listen(PORT, HOST, () => {
   scanner.init();      // start the scan service (unless an admin stopped it)
   scanner.scanAll();
 media.scheduleWarm(15000); // work covers into the cover cache (also after every scan)
+require('./library/catalog').startSchedule(); // external catalog: scheduled crawls
+
   scanner.startSchedule();
 });
 

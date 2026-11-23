@@ -9,6 +9,7 @@ const metadata = require('./metadata');
 const rename = require('./rename');
 const terms = require('./metadata/terms');
 const media = require('./media');
+const catalog = require('./catalog');
 
 const { db } = store;
 const STATUSES = ['ongoing', 'ended', 'hiatus', 'abandoned', 'unknown'];
@@ -729,6 +730,42 @@ async function handle(ctx) {
     if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
     return send(202, { job });
   }
+  // ---- External catalog: sources (sites crawled for their works) and the works found ----
+  if (p.startsWith('/api/catalog')) {
+    // Everyone signed in browses the catalog; administrators manage sources and merges
+    if (p === '/api/catalog' && method === 'GET') {
+      return send(200, catalog.list({ q: q.get('q'), source: q.get('source'), inLibrary: q.get('inLibrary'), genre: q.get('genre'), merged: q.get('merged'), sort: q.get('sort'), offset: q.get('offset'), limit: q.get('limit') }));
+    }
+    if (p === '/api/catalog/facets' && method === 'GET') return send(200, catalog.facets());
+    if (p === '/api/catalog/work' && method === 'GET') return send(200, { work: catalog.detail(String(q.get('key') || '')) });
+    if (p === '/api/catalog/cover' && method === 'GET') {
+      const img = await catalog.cover(String(q.get('key') || ''));
+      await sendImage(req, res, img.buf, img.type, img.etag);
+      return true;
+    }
+    requireAdmin();
+    if (p === '/api/catalog/types' && method === 'GET') return send(200, { types: catalog.types() });
+    if (p === '/api/catalog/sources' && method === 'GET') return send(200, { sources: catalog.listSources(), jobs: catalog.jobs() });
+    if (p === '/api/catalog/sources' && method === 'POST') return send(201, { source: catalog.createSource(body) });
+    if (p === '/api/catalog/sources/test' && method === 'POST') return send(200, { test: await catalog.testSource(body) });
+    if ((m = /^\/api\/catalog\/sources\/([\w-]+)$/.exec(p))) {
+      if (method === 'PATCH') return send(200, { source: catalog.updateSource(m[1], body) });
+      if (method === 'DELETE') { catalog.removeSource(m[1]); console.log(`[catalog] ${user.username} removed a source`); return send(200, { ok: true }); }
+    }
+    if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/crawl$/.exec(p)) && method === 'POST') {
+      return send(202, { job: catalog.crawl(m[1], { mode: body.mode === 'update' ? 'update' : 'full' }) });
+    }
+    if ((m = /^\/api\/catalog\/sources\/([\w-]+)\/stop$/.exec(p)) && method === 'POST') return send(200, { stopping: catalog.stopCrawl(m[1]) });
+    if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions());
+    if (p === '/api/catalog/merge-suggestions/dismiss' && method === 'POST') {
+      if (typeof body.key !== 'string' || !body.key) throw httpError(400, 'invalid');
+      catalog.dismiss(body.key);
+      return send(200, { ok: true });
+    }
+    if (p === '/api/catalog/merge' && method === 'POST') return send(200, catalog.merge(body.keys, body.primary));
+    if ((m = /^\/api\/catalog\/merge\/([\w-]+)$/.exec(p)) && method === 'DELETE') { catalog.unmerge(m[1]); return send(200, { ok: true }); }
+  }
+
   // ---- File management: deleting files, merging works (same job queue as renaming) ----
   const fileJobDone = (by, what) => j => {
     for (const id of j.libraries) if (db.libraries[id]) scanner.scanLibrary(id, { mode: 'changes', reason: 'files' }).catch(() => {});

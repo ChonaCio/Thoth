@@ -438,6 +438,39 @@ searched when the picker opens), images in folder sources that belong to the wor
 as the work's own cover (`data/covers/custom-…`) and always used. Previews of site covers go through the
 server, so the browser never contacts the metadata sites.
 
+### External catalog (sites as sources)
+
+**External catalog** (sidebar) lists every work found on external sites added as **sources**, with its metadata
+and chapter list. Everyone signed in can browse it; administrators manage the sources and merges.
+
+- **Catalog tab:** search (titles, alternative titles, authors), filter by source, genre and *in my library / not
+  in my library*, sort by title, recently updated or chapters. Works the library already has are marked (matched
+  by the site's link, e.g. the same MangaDex entry, else by title). A work's page shows each source's chapter
+  list (with links to the site) and, for a work you have, **the chapters your library doesn't have**.
+- **Merge tab (administrators):** the same work found on several sites (or twice on one) can become one catalog
+  entry: the main one's title, cover and summary, every site's chapters. Suggestions come from the same MangaDex
+  entry or the same title/alternative title; *Not the same* hides one; a merged entry can be separated again.
+- **Sources tab (administrators):** add a site, *Test* its settings (what the first list page and first work give),
+  *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
+  Each source can update every day or week by itself. Kinds of site:
+
+| Kind | For | Notes |
+| --- | --- | --- |
+| MangaDex (API) | mangadex.org | Official API; chapter languages and content ratings are settings. ~95 000 works: a full crawl with chapter lists takes hours. |
+| WEBTOON (Originals) | webtoons.com | The genre pages list every Original; episodes come from each series' list pages. Some of those pages are excluded by the site's robots.txt, so very long series get a partial episode list (shown as such). |
+| Madara theme | WordPress manga sites using it | List at `/manga/`, chapters from the page or the theme's chapter loader. |
+| MangaReader theme | WordPress manga sites using it | List at `/manga/?page=N`. |
+| Other site | anything else | Give CSS selectors (list address with `{page}`, each work, title, cover, genres, chapters…; `selector@attribute` for links and images). Use *Test* to check them. |
+
+- **Polite crawling:** the crawler runs in its own low-priority process (started for the queue, closed when it's
+  done), identifies itself with Thoth's generic user agent, **follows each site's robots.txt**, waits between
+  requests to a site (setting, 500 ms at least), backs off when the site asks, and never fetches this machine or
+  the local network. Sites behind **bot protection** (e.g. Cloudflare challenges) are reported as *blocked*: Thoth
+  doesn't try to get around it. Only crawl sites whose terms allow it.
+- An interrupted full crawl continues where it stopped; a complete full crawl drops works a site no longer lists.
+- Covers are fetched by the server and cached (`data/cache/catalog-covers/`): browsers never contact the sites.
+- Storage: `data/catalog/<source>/` (`works.json`, chapter lists in `chapters/`, `state.json`). Removing a source
+  removes them; your library is never changed by the catalog.
 ### Library and work settings
 
 | Setting | Library (Manage libraries → Edit) | Work (its page → Edit) |

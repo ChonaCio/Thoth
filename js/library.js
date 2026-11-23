@@ -1391,6 +1391,321 @@
     }, fail);
   }
 
+  /* ================= EXTERNAL CATALOG ================= */
+  // #catalog: every work found on the external sources (merged ones once), marked when the library has it;
+  // #catalog/work?key=: one work with each source's chapter list; #catalog/merge (admins): merge suggestions;
+  // #catalog/sources (admins): the sites crawled, their settings and crawls.
+  function isCatalogRoute() { return A().parseRoute().name === 'catalog'; }
+  function catalogTabs(active) {
+    var tab = function (id, href, ic, key) {
+      return '<a class="tab' + (active === id ? ' is-active' : '') + '" href="' + href + '"' + (active === id ? ' aria-current="page"' : '') + '>' + icon(ic) + esc(t(key)) + '</a>';
+    };
+    return '<h1 class="page-title">' + esc(t('nav.catalog')) + '</h1>' +
+      '<nav class="tabs files-tabs" aria-label="' + esc(t('nav.catalog')) + '">' +
+        tab('browse', '#catalog', 'travel_explore', 'cat.tabBrowse') +
+        (isAdmin() ? tab('merge', '#catalog/merge', 'collections', 'cat.tabMerge') + tab('sources', '#catalog/sources', 'dataset', 'cat.tabSources') : '') +
+      '</nav>';
+  }
+  function catState() {
+    if (!cache.catalog) cache.catalog = { q: '', source: '', inLibrary: '', genre: '', sort: 'title', items: null, total: 0, error: null, loading: false, facets: null, seq: 0 };
+    return cache.catalog;
+  }
+  var catCover = function (key) { return '/api/catalog/cover?key=' + encodeURIComponent(key); };
+  function catalogCard(it) {
+    return '<article class="media-card cat-card">' +
+      '<a class="media-card__link" href="#catalog/work?key=' + encodeURIComponent(it.key) + '">' +
+        '<div class="cover">' + (it.cover ? '<img class="cover__img" loading="lazy" decoding="async" alt="" src="' + catCover(it.coverKey) + '" />' : '') + placeholder('cbz') +
+          (it.inLibrary ? '<span class="cat-card__have" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') + '</div>' +
+        '<div class="media-card__body"><h3 class="media-card__title">' + esc(it.title) + '</h3>' +
+          '<p class="media-card__meta">' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : ''].filter(Boolean).join(' · ')) + '</p></div>' +
+      '</a></article>';
+  }
+  function fetchCatalog(append) {
+    var st = catState();
+    var seq = ++st.seq;
+    st.loading = true;
+    var grid = $('#cat-grid');
+    if (grid && !append) { grid.classList.add('is-loading'); }
+    return api('GET', '/api/catalog?' + Store.qs({ q: st.q, source: st.source, inLibrary: st.inLibrary, genre: st.genre, sort: st.sort, offset: append ? st.items.length : 0, limit: 60 })).then(function (r) {
+      if (seq !== st.seq) return;
+      st.items = append ? st.items.concat(r.items) : r.items; st.total = r.total; st.error = null;
+    }, function (e) { if (seq === st.seq) st.error = e; }).then(function () { if (seq === st.seq) { st.loading = false; renderCatalogGrid(); } });
+  }
+  function renderCatalogGrid() {
+    var el = $('#cat-grid');
+    if (!el) return;
+    var st = catState();
+    var html;
+    if (st.error) html = errorBanner(st.error);
+    else if (!st.items) html = spinner;
+    else if (!st.items.length) html = emptyState('travel_explore', st.facets && !st.facets.sources.length ? t('cat.noSourcesTitle') : '', st.facets && !st.facets.sources.length ? t(isAdmin() ? 'cat.noSourcesAdmin' : 'cat.noSources') : t('lib.noMatch'));
+    else html = '<p class="muted small grid-count">' + esc(t('cat.count', { count: st.total })) + '</p>' + grid(st.items.map(catalogCard)) +
+      (st.items.length < st.total ? '<div class="load-more"><button class="btn btn--outline btn--pill" data-lib="cat-more"' + (st.loading ? ' disabled' : '') + '>' + esc(t('lib.loadMore')) + '</button></div>' : '');
+    el.innerHTML = html;
+    el.classList.toggle('is-loading', false);
+    renderIcons(el);
+    A().restoreScroll();
+  }
+  function catalogBrowse() {
+    var st = catState(), fc = st.facets;
+    var opt = function (v, label, cur) { return '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(label) + '</option>'; };
+    return catalogTabs('browse') +
+      '<p class="page-lead">' + esc(t('cat.intro')) + (fc ? ' ' + esc(t('cat.summary', { total: fc.total, have: fc.inLibrary })) : '') + '</p>' +
+      '<div class="toolbar">' +
+        '<label class="search-field">' + icon('search') + '<input type="search" id="cat-q" placeholder="' + esc(t('cat.searchPlaceholder')) + '" value="' + esc(st.q) + '" /></label>' +
+        '<div class="toolbar__group">' +
+          '<select class="select select--compact" id="cat-source" aria-label="' + esc(t('cat.source')) + '">' + opt('', t('cat.allSources'), st.source) +
+            ((fc && fc.sources) || []).map(function (s) { return opt(s.id, s.name + ' (' + s.works + ')', st.source); }).join('') + '</select>' +
+          '<select class="select select--compact" id="cat-have" aria-label="' + esc(t('cat.inLibrary')) + '">' + opt('', t('cat.haveAll'), st.inLibrary) + opt('yes', t('cat.haveYes'), st.inLibrary) + opt('no', t('cat.haveNo'), st.inLibrary) + '</select>' +
+          '<select class="select select--compact" id="cat-genre" aria-label="' + esc(t('filter.genre')) + '">' + opt('', t('cat.allGenres'), st.genre) +
+            ((fc && fc.genres) || []).map(function (g) { return opt(g.name, g.name + ' (' + g.count + ')', st.genre); }).join('') + '</select>' +
+          '<select class="select select--compact" id="cat-sort" aria-label="' + esc(t('lib.sort')) + '">' + opt('title', t('lib.sortTitle'), st.sort) + opt('updated', t('cat.sortUpdated'), st.sort) + opt('chapters', t('cat.sortChapters'), st.sort) + '</select>' +
+        '</div>' +
+      '</div>' +
+      '<div id="cat-grid"></div>';
+  }
+  var catTimer = null;
+  function catalogBrowseMount(el) {
+    var st = catState();
+    renderCatalogGrid();
+    $('#cat-q', el).addEventListener('input', function (e) { st.q = e.target.value; clearTimeout(catTimer); catTimer = setTimeout(function () { fetchCatalog(); }, 250); });
+    [['#cat-source', 'source'], ['#cat-have', 'inLibrary'], ['#cat-genre', 'genre'], ['#cat-sort', 'sort']].forEach(function (x) {
+      $(x[0], el).addEventListener('change', function (e) { st[x[1]] = e.target.value; fetchCatalog(); });
+    });
+  }
+
+  // One work: every source with its chapter list; what the library has
+  function catWorkState(key) { cache.catWork = cache.catWork || {}; return cache.catWork[key]; }
+  function catalogWork(route) {
+    var key = route.query.get('key') || '';
+    var d = catWorkState(key);
+    var back = backLink('#catalog', t('nav.catalog'));
+    if (!d) return back + spinner;
+    if (d.error) return back + errorBanner(d.error);
+    var w = d.work;
+    var miss = w.missing;
+    var lib = w.inLibrary ? '<div class="banner banner--ok cat-have"><div><strong>' + esc(t('cat.inLibraryAs', { title: w.inLibrary.title })) + '</strong>' +
+        (miss ? '<p class="small">' + esc(miss.chapters.length ? t('cat.missingCount', { count: miss.chapters.length, have: miss.have }) : t('cat.missingNone', { have: miss.have })) + '</p>' : '') + '</div>' +
+        '<a class="btn btn--primary" href="#series/' + w.inLibrary.seriesId + '">' + esc(t('cat.openInLibrary')) + '</a></div>' : '';
+    var missingList = miss && miss.chapters.length ? '<details class="card card--wide cat-missing"><summary class="card__title">' + esc(t('cat.missingTitle', { count: miss.chapters.length })) + '</summary><ul class="cat-chapters">' +
+        miss.chapters.slice(0, 500).map(function (c) { return '<li><span class="cat-ch__n">' + esc(c.n) + '</span><span class="cat-ch__t">' + esc(c.t || '') + '</span><span class="muted small">' + esc(c.source) + '</span>' +
+          (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + '</a>' : '') + '</li>'; }).join('') + '</ul></details>' : '';
+    var sources = w.sources.map(function (s, i) {
+      var all = d.showAll && d.showAll[s.key];
+      var rows = all ? s.chapterList : s.chapterList.slice(0, 50);
+      return '<section class="card card--wide cat-source">' +
+        '<div class="cat-source__head"><h2 class="card__title">' + esc(s.name) + '</h2>' +
+          (s.url ? '<a class="btn btn--text btn--small" href="' + esc(s.url) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + esc(t('cat.openOnSite')) + '</a>' : '') + '</div>' +
+        (s.title && s.title !== w.title ? '<p class="small"><strong>' + esc(s.title) + '</strong></p>' : '') +
+        (s.error ? '<p class="notice notice--error small">' + esc(s.error) + '</p>' : '') +
+        (s.partial ? '<p class="notice notice--info small">' + esc(t('cat.partial')) + '</p>' : '') +
+        '<p class="muted small">' + esc(t('cat.chapters', { count: s.chapterList.length }) + (s.detailAt ? ' · ' + t('cat.readAt', { time: A().fmtDate(s.detailAt) }) : '')) + '</p>' +
+        (rows.length ? '<ul class="cat-chapters">' + rows.map(function (c) {
+          return '<li><span class="cat-ch__n">' + esc(c.n != null ? c.n : '—') + '</span><span class="cat-ch__t">' + esc(c.t || '') + '</span><span class="muted small">' + esc([c.d, c.l].filter(Boolean).join(' · ')) + '</span>' +
+            (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer" aria-label="' + esc(t('cat.openOnSite')) + '">' + icon('open_in_new') + '</a>' : '') + '</li>';
+        }).join('') + '</ul>' : '') +
+        (!all && s.chapterList.length > 50 ? '<button class="btn btn--text btn--small" data-lib="cat-all-chapters" data-key="' + esc(s.key) + '" data-work="' + esc(key) + '">' + esc(t('cat.showAll', { count: s.chapterList.length })) + '</button>' : '') +
+      '</section>';
+    }).join('');
+    return back + lib +
+      '<div class="detail">' +
+        '<div class="detail__cover cover cover--large">' + (w.cover ? '<img class="cover__img" alt="" src="' + catCover(w.coverKey) + '" />' : '') + placeholder('cbz') + '</div>' +
+        '<div class="detail__body">' +
+          '<h1 class="detail__title">' + esc(w.title) + '</h1>' +
+          '<div class="detail__meta">' + [w.type ? '<span class="badge badge--primary">' + esc(t('type.' + w.type)) + '</span>' : '', w.year ? esc(w.year) : '',
+            w.status && w.status !== 'unknown' ? '<span class="badge">' + esc(t('series.status.' + w.status)) + '</span>' : '', esc(t('cat.chapters', { count: w.chapters })),
+            w.lastChapter ? esc(t('cat.lastChapter', { n: w.lastChapter })) : ''].filter(Boolean).join('<span class="dot">·</span>') + '</div>' +
+          (w.authors.length ? '<p class="detail__authors">' + esc(w.authors.join(', ')) + '</p>' : '') +
+          (w.altTitles.length ? '<p class="muted small detail__alt">' + esc(w.altTitles.slice(0, 6).join(' · ')) + '</p>' : '') +
+          (w.genres.length ? chips(w.genres.map(esc), 'chip--genre') : '') +
+          (w.summary ? '<p class="detail__summary">' + esc(w.summary) + '</p>' : '') +
+          '<p class="muted small">' + esc(t('cat.foundOn', { sources: w.sources.map(function (s) { return s.name; }).join(', ') })) + '</p>' +
+          (isAdmin() && w.groupId ? '<button class="btn btn--text btn--danger" data-lib="cat-unmerge" data-id="' + esc(w.groupId) + '" data-work="' + esc(key) + '">' + esc(t('cat.unmerge')) + '</button>' : '') +
+        '</div>' +
+      '</div>' + missingList + sources;
+  }
+
+  // Merge suggestions (admins): the same work on several sites
+  function catMergeState() {
+    if (!cache.catMerge) cache.catMerge = { data: null, loading: false, error: null, choice: {} };
+    return cache.catMerge;
+  }
+  function loadCatMerge() {
+    var st = catMergeState();
+    st.loading = true; st.error = null;
+    if (isCatalogRoute()) A().renderPage();
+    return api('GET', '/api/catalog/merge-suggestions').then(function (r) {
+      st.data = r; st.choice = {};
+      r.groups.forEach(function (g) { var inc = {}; g.works.forEach(function (w) { inc[w.key] = true; }); st.choice[g.key] = { primary: g.primary, include: inc }; });
+    }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isCatalogRoute()) A().renderPage(); });
+  }
+  function catalogMerge() {
+    var st = catMergeState();
+    var head = catalogTabs('merge') + '<p class="page-lead">' + esc(t('cat.mergeIntro')) + '</p>' +
+      '<div class="toolbar"><div class="toolbar__group"><button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button></div></div>';
+    if (st.error) return head + errorBanner(st.error);
+    if (st.loading || !st.data) return head + spinner;
+    if (!st.data.groups.length) return head + emptyState('check', t('files.noSuggestionsTitle'), t('cat.noSuggestions'));
+    return head + '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
+      var ch = st.choice[g.key];
+      var n = g.works.filter(function (w) { return ch.include[w.key]; }).length;
+      var why = g.reason === 'link' ? t('cat.reason.link') : t('files.reason.title', { title: (g.detail || {}).title || '' });
+      return '<section class="card card--wide merge-group">' +
+        '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(why) + '</span>' +
+          (g.inLibrary ? ' <a class="badge badge--ok" href="#series/' + g.inLibrary.seriesId + '">' + esc(t('cat.inLibrary')) + '</a>' : '') + '</p>' +
+        '<ul class="merge-list">' + g.works.map(function (w) {
+          var main = w.key === ch.primary;
+          return '<li class="merge-row' + (main ? ' is-target' : '') + '">' +
+            '<label class="merge-row__keep" title="' + esc(t('cat.primaryTitle')) + '"><input type="radio" name="p-' + esc(g.key) + '" value="' + esc(w.key) + '" data-cat-primary="' + esc(g.key) + '"' + (main ? ' checked' : '') + ' /><span class="small">' + esc(t('cat.primary')) + '</span></label>' +
+            '<label class="checkbox"><input type="checkbox" data-cat-include="' + esc(g.key) + '" value="' + esc(w.key) + '"' + (ch.include[w.key] || main ? ' checked' : '') + (main ? ' disabled' : '') + ' />' +
+              '<span class="merge-row__what"><a href="#catalog/work?key=' + encodeURIComponent(w.key) + '">' + esc(w.title) + '</a> <span class="muted small">' + esc([w.source, t('cat.chapters', { count: w.chapters })].join(' · ')) + '</span>' +
+              (w.merged ? ' <span class="badge">' + esc(t('cat.alreadyMerged')) + '</span>' : '') + '</span></label></li>';
+        }).join('') + '</ul>' +
+        '<div class="merge-actions"><button class="btn btn--primary" data-lib="cat-merge-go" data-key="' + esc(g.key) + '"' + (n < 2 ? ' disabled' : '') + '>' + icon('collections') + esc(t('cat.mergeN', { count: n })) + '</button>' +
+          '<button class="btn btn--text" data-lib="cat-merge-dismiss" data-key="' + esc(g.key) + '">' + esc(t('files.notSame')) + '</button></div>' +
+      '</section>';
+    }).join('');
+  }
+
+  // Sources (admins): add/edit/delete, crawl, follow the crawl, test the settings
+  function catSourcesState() {
+    if (!cache.catSources) cache.catSources = { data: null, types: null, error: null, tests: {} };
+    return cache.catSources;
+  }
+  var catPollTimer = null;
+  function loadCatSources() {
+    var st = catSourcesState();
+    clearTimeout(catPollTimer);
+    return Promise.all([api('GET', '/api/catalog/sources'), st.types ? Promise.resolve({ types: st.types }) : api('GET', '/api/catalog/types')]).then(function (r) {
+      st.data = r[0]; st.types = r[1].types; st.error = null;
+    }, function (e) { st.error = e; }).then(function () {
+      if (A().parseRoute().name === 'catalog' && A().parseRoute().param === 'sources') {
+        A().renderPage();
+        if (st.data && st.data.sources.some(function (s) { return s.job; })) catPollTimer = setTimeout(loadCatSources, 1500);
+      }
+    });
+  }
+  function crawlLine(s) {
+    var j = s.job;
+    if (!j) return '';
+    var p = j.progress || {};
+    var listing = !p.phase || p.phase === 'listing';
+    var bar = { percent: listing || !p.total ? null : Math.min(100, Math.floor((p.done || 0) / p.total * 100)), etaMs: null, elapsedMs: j.startedAt ? Date.now() - Date.parse(j.startedAt) : 0 };
+    return progressBar(bar, t(j.status === 'queued' ? 'cat.crawlQueued' : listing ? 'cat.crawlListing' : 'cat.crawlReading'),
+      listing ? t('cat.crawlListed', { count: p.listed || 0 }) : t('cat.crawlProgress', { done: p.done || 0, total: p.total || 0, errors: p.errors || 0 }));
+  }
+  function testReport(r) {
+    if (!r) return '';
+    if (r.loading) return '<p class="muted small"><span class="spinner spinner--sm"></span> ' + esc(t('cat.testing')) + '</p>';
+    if (r.error) return '<p class="notice notice--error small">' + esc(A().errMsg(r.error)) + '</p>';
+    var x = r.test, w = x.work;
+    return '<div class="msrc-report">' +
+      (x.errors.length ? '<p class="notice notice--error small">' + esc(x.errors.join(' · ')) + '</p>' : '') +
+      '<p class="small"><strong>' + esc(t('cat.testList', { count: x.firstPageCount })) + '</strong> ' + esc(x.works.map(function (s) { return s.title || s.sid; }).join(' · ')) + '</p>' +
+      (w ? '<p class="small">' + esc(t('cat.testWork', { title: w.title || '—', chapters: w.chapterCount == null ? '—' : w.chapterCount, genres: (w.genres || []).join(', ') || '—', authors: (w.authors || []).join(', ') || '—' })) + '</p>' +
+        (w.firstChapters && w.firstChapters.length ? '<p class="muted small">' + esc(w.firstChapters.map(function (c) { return (c.n || '?') + ' ' + (c.t || ''); }).join(' · ')) + '</p>' : '') : '') +
+      '<p class="muted small">' + esc(t('cat.testRequests', { count: x.requests })) + '</p></div>';
+  }
+  function catalogSources() {
+    var st = catSourcesState();
+    var head = catalogTabs('sources') + '<p class="page-lead">' + esc(t('cat.sourcesIntro')) + '</p>' +
+      '<div class="toolbar"><div class="toolbar__group"><button class="btn btn--primary btn--pill" data-lib="cat-src-add">' + icon('add') + esc(t('cat.addSource')) + '</button></div></div>';
+    if (st.error) return head + errorBanner(st.error);
+    if (!st.data) return head + spinner;
+    if (!st.data.sources.length) return head + emptyState('travel_explore', t('cat.noSourcesTitle'), t('cat.noSourcesAdmin'));
+    return head + '<div class="lib-list">' + st.data.sources.map(function (s) {
+      var stats = s.lastStats;
+      return '<section class="card lib-card cat-src">' +
+        '<div class="lib-card__head"><span class="lib-card__icon">' + icon('travel_explore') + '</span><div class="lib-card__titles">' +
+          '<h2 class="card__title">' + esc(s.name) + '</h2><p class="muted small">' + esc(s.label + ' · ' + s.baseUrl) + '</p></div></div>' +
+        '<p class="small">' + esc(t('cat.srcWorks', { count: s.works })) + (s.lastCrawlAt ? ' · ' + esc(t('cat.srcLast', { time: A().fmtDate(s.lastCompleteAt || s.lastCrawlAt) })) : ' · ' + esc(t('cat.srcNever'))) +
+          ' · ' + esc(t('cat.schedule.' + (s.schedule || 'manual'))) + '</p>' +
+        (stats ? '<p class="muted small">' + esc(t('cat.srcStats', { listed: stats.listed, added: stats.added, read: stats.read, errors: stats.errors, chapters: stats.chapters })) + (stats.partial ? ' · ' + esc(t('cat.srcPartial', { count: stats.partial })) : '') + '</p>' : '') +
+        (s.lastError ? '<p class="notice notice--error small">' + esc(s.lastError) + '</p>' : '') +
+        (s.interrupted ? '<p class="notice notice--info small">' + esc(t('cat.interrupted')) + '</p>' : '') +
+        crawlLine(s) +
+        '<div class="lib-card__actions">' +
+          (s.job ? '<button class="btn btn--outline btn--small" data-lib="cat-src-stop" data-id="' + s.id + '">' + icon('stop') + esc(t('proc.stop')) + '</button>'
+            : '<button class="btn btn--primary btn--small" data-lib="cat-src-crawl" data-id="' + s.id + '" data-mode="' + (s.lastCrawlAt ? 'update' : 'full') + '">' + icon('sync') + esc(t(s.lastCrawlAt ? 'cat.update' : (s.interrupted ? 'cat.resume' : 'cat.crawl'))) + '</button>' +
+              (s.lastCrawlAt ? '<button class="btn btn--text btn--small" data-lib="cat-src-crawl" data-id="' + s.id + '" data-mode="full">' + esc(t('cat.fullCrawl')) + '</button>' : '')) +
+          '<button class="btn btn--text btn--small" data-lib="cat-src-test" data-id="' + s.id + '">' + icon('search') + esc(t('cat.test')) + '</button>' +
+          '<button class="btn btn--text btn--small" data-lib="cat-src-edit" data-id="' + s.id + '">' + icon('edit') + esc(t('cat.edit')) + '</button>' +
+          '<button class="btn btn--text btn--small btn--danger" data-lib="cat-src-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('manage.delete')) + '</button>' +
+        '</div>' + testReport(st.tests[s.id]) +
+      '</section>';
+    }).join('') + '</div>';
+  }
+  // The settings form; the fields shown depend on the kind of site
+  function catalogSourceForm(s) {
+    var st = catSourcesState();
+    var types = st.types || [];
+    var cur = s || { type: 'madara', includeChapters: true, schedule: 'manual', languages: '' };
+    var sel = cur.selectors || {};
+    var ty = function (list) { return { field: 'type', value: list }; };
+    var fields = [
+      { name: 'name', label: t('manage.name'), value: cur.name || '' },
+      { name: 'type', label: t('cat.srcType'), type: 'select', value: cur.type, options: types.map(function (x) { return { value: x.type, label: x.label }; }), help: t('cat.srcTypeHelp') },
+      { name: 'baseUrl', label: t('cat.srcUrl'), value: cur.baseUrl || '', placeholder: 'https://example.com', help: t('cat.srcUrlHelp') },
+      { name: 'listPath', label: t('cat.srcListPath'), value: cur.listPath || '', placeholder: 'manga', showWhen: ty(['madara', 'mangareader']), help: t('cat.srcListPathHelp') },
+      { name: 'languages', label: t('cat.srcLanguages'), value: cur.languages || '', placeholder: 'en, es', help: t('cat.srcLanguagesHelp') },
+      { name: 'contentRating', label: t('cat.srcRating'), value: cur.contentRating || 'safe,suggestive,erotica', showWhen: ty(['mangadex']), help: t('cat.srcRatingHelp') },
+      { name: 'includeChapters', label: t('cat.srcChapters'), type: 'checkbox', value: cur.includeChapters !== false, help: t('cat.srcChaptersHelp') },
+      { name: 'maxWorks', label: t('cat.srcMax'), value: cur.maxWorks || '', placeholder: '0', help: t('cat.srcMaxHelp') },
+      { name: 'schedule', label: t('cat.srcSchedule'), type: 'select', value: cur.schedule || 'manual', options: ['manual', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) },
+      { name: 'gapMs', label: t('cat.srcGap'), value: cur.gapMs || '', placeholder: '1500', help: t('cat.srcGapHelp') }
+    ];
+    var selField = function (k, ph) { return { name: 'sel_' + k, label: t('cat.sel.' + k), value: sel[k] || '', placeholder: ph, showWhen: ty(['custom']) }; };
+    fields = fields.concat([
+      selField('listUrl', 'https://site.com/manga/page/{page}/'), selField('item', '.manga-list .item'), selField('link', 'a@href'), selField('title', 'h3'), selField('cover', 'img@src'),
+      selField('workTitle', 'h1'), selField('workCover', '.cover img@src'), selField('summary', '.description'), selField('genres', '.genres a'), selField('authors', '.author a'),
+      selField('altTitles', '.alt-names'), selField('status', '.status'), selField('chapter', '.chapter-list li'), selField('chapterLink', 'a@href'), selField('chapterTitle', 'a'), selField('chapterDate', '.date')
+    ]);
+    openForm({
+      title: t(s ? 'cat.editSource' : 'cat.addSource'), fields: fields, note: t('cat.srcNote'),
+      onSubmit: function (v) {
+        var body = { name: v.name, type: v.type, baseUrl: v.baseUrl, listPath: v.listPath, languages: v.languages, contentRating: v.contentRating, includeChapters: v.includeChapters,
+          maxWorks: Number(v.maxWorks) || 0, schedule: v.schedule, gapMs: Number(v.gapMs) || undefined, selectors: {} };
+        if (!body.gapMs) delete body.gapMs;
+        Object.keys(v).forEach(function (k) { if (k.indexOf('sel_') === 0 && v[k]) body.selectors[k.slice(4)] = v[k]; });
+        return api(s ? 'PATCH' : 'POST', '/api/catalog/sources' + (s ? '/' + s.id : ''), body).then(function () { A().toast(t('common.saved')); loadCatSources(); });
+      }
+    });
+  }
+
+  var catalogPage = {
+    title: function (route) {
+      if (route.param === 'work') { var d = catWorkState(route.query.get('key') || ''); return d && d.work ? d.work.title : t('nav.catalog'); }
+      return t('nav.catalog');
+    },
+    render: function (route) {
+      if (route.param === 'work') return catalogWork(route);
+      if (route.param === 'merge' && isAdmin()) return catalogMerge();
+      if (route.param === 'sources' && isAdmin()) return catalogSources();
+      return catalogBrowse();
+    },
+    mount: function (el, route) {
+      if (!route.param) return catalogBrowseMount(el);
+      if (route.param === 'merge') el.addEventListener('change', function (e) {
+        var tg = e.target, st = catMergeState(), k;
+        if ((k = tg.dataset.catPrimary)) { st.choice[k].primary = tg.value; st.choice[k].include[tg.value] = true; return A().renderPage(); }
+        if ((k = tg.dataset.catInclude)) { st.choice[k].include[tg.value] = tg.checked; return A().renderPage(); }
+      });
+    },
+    enter: function (route) {
+      if (route.param === 'work') {
+        var key = route.query.get('key') || '';
+        cache.catWork = cache.catWork || {};
+        return api('GET', '/api/catalog/work?' + Store.qs({ key: key })).then(function (r) { cache.catWork[key] = { work: r.work }; }, function (e) { cache.catWork[key] = { error: e }; })
+          .then(function () { if (isCatalogRoute()) A().renderPage(); });
+      }
+      if (route.param === 'merge') { var ms = catMergeState(); if (!ms.data && !ms.loading) loadCatMerge(); return; }
+      if (route.param === 'sources') return loadCatSources();
+      var st = catState();
+      api('GET', '/api/catalog/facets').then(function (r) { st.facets = r; if (isCatalogRoute() && !A().parseRoute().param) { A().renderPage(); } }, function () {});
+      if (!st.items) fetchCatalog();
+    }
+  };
+
   /* ================= METADATA SOURCES (admins) ================= */
   // Folder sources (JSON files the admin keeps) can be added, edited, checked and deleted; online sites are
   // listed with their key status, the libraries using them and a test search.
@@ -1859,7 +2174,7 @@
     var v = formValues();
     $$('#form-dialog-fields [data-show-when]').forEach(function (el) {
       var w = JSON.parse(el.dataset.showWhen);
-      el.hidden = v[w.field] !== w.value;
+      el.hidden = Array.isArray(w.value) ? w.value.indexOf(v[w.field]) === -1 : v[w.field] !== w.value;
     });
   }
   function formError(err) {
@@ -2358,6 +2673,54 @@
         } catch (e) { /* no storage: just this view */ }
         return A().renderPage();
       }
+      // ---- External catalog ----
+      case 'cat-more': btn.disabled = true; return fetchCatalog(true);
+      case 'cat-all-chapters': {
+        var cw = catWorkState(btn.dataset.work);
+        if (cw) { cw.showAll = cw.showAll || {}; cw.showAll[btn.dataset.key] = true; A().renderPage(); }
+        return;
+      }
+      case 'cat-unmerge':
+        if (!confirm(t('cat.unmerge') + '?')) return;
+        return api('DELETE', '/api/catalog/merge/' + encodeURIComponent(id)).then(function () {
+          cache.catalog = null; cache.catMerge = null; location.hash = '#catalog';
+        }, fail);
+      case 'cat-merge-check': return loadCatMerge();
+      case 'cat-merge-go': {
+        var cm = catMergeState(), gk = btn.dataset.key, ch = cm.choice[gk];
+        var keys = Object.keys(ch.include).filter(function (k) { return ch.include[k]; });
+        if (keys.indexOf(ch.primary) === -1) keys.push(ch.primary);
+        btn.disabled = true;
+        return api('POST', '/api/catalog/merge', { keys: keys, primary: ch.primary }).then(function () {
+          A().toast(t('common.saved'));
+          cm.data.groups = cm.data.groups.filter(function (g) { return g.key !== gk; }); cm.data.total--;
+          cache.catalog = null;
+          A().renderPage();
+        }, function (e) { btn.disabled = false; fail(e); });
+      }
+      case 'cat-merge-dismiss': {
+        var cd = catMergeState(), dk = btn.dataset.key;
+        return api('POST', '/api/catalog/merge-suggestions/dismiss', { key: dk }).then(function () {
+          cd.data.groups = cd.data.groups.filter(function (g) { return g.key !== dk; }); cd.data.total--; A().renderPage();
+        }, fail);
+      }
+      case 'cat-src-add': return catalogSourceForm(null);
+      case 'cat-src-edit': return catalogSourceForm(catSourcesState().data.sources.filter(function (s) { return s.id === id; })[0]);
+      case 'cat-src-delete':
+        if (!confirm(t('cat.deleteConfirm'))) return;
+        return api('DELETE', '/api/catalog/sources/' + id).then(function () { cache.catalog = null; loadCatSources(); }, fail);
+      case 'cat-src-crawl':
+        btn.disabled = true;
+        return api('POST', '/api/catalog/sources/' + id + '/crawl', { mode: btn.dataset.mode }).then(function () { loadCatSources(); }, function (e) { btn.disabled = false; fail(e); });
+      case 'cat-src-stop':
+        btn.disabled = true;
+        return api('POST', '/api/catalog/sources/' + id + '/stop', {}).then(function () { setTimeout(loadCatSources, 800); }, fail);
+      case 'cat-src-test': {
+        var ss = catSourcesState(), src = ss.data.sources.filter(function (s) { return s.id === id; })[0];
+        ss.tests[id] = { loading: true }; A().renderPage();
+        return api('POST', '/api/catalog/sources/test', src).then(function (r) { ss.tests[id] = { test: r.test }; }, function (e) { ss.tests[id] = { error: e }; })
+          .then(function () { if (isCatalogRoute()) A().renderPage(); });
+      }
       case 'ren-check': renameState().result = null; return runRenamePreview();
       // File management: delete one of two files competing for a name, or all of them at once
       case 'files-del':
@@ -2619,6 +2982,7 @@
     'manage-libraries': manage,
     'metadata-sources': metadataSources,
     files: renamePage,
+    catalog: catalogPage,
     rename: renamePage,
     processes: processes,
     'server-settings': serverSettings,

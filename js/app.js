@@ -12,6 +12,7 @@
     'manage-libraries': { adminOnly: true },
     'metadata-sources': { adminOnly: true },
     files: { adminOnly: true },
+    catalog: {},
     rename: { adminOnly: true }, // old address of File management
     processes: { adminOnly: true },
     'server-settings': { adminOnly: true },
@@ -336,6 +337,7 @@
     }
     items.push({ href: '#collections', icon: 'collections', key: 'nav.collections', match: ['collections', 'collection'] });
     items.push({ href: '#readlists', icon: 'readlist', key: 'nav.readlists', match: ['readlists', 'readlist'] });
+    items.push({ href: '#catalog', icon: 'travel_explore', key: 'nav.catalog', match: ['catalog'] });
     items.push({ divider: true });
     if (isAdmin()) {
       items.push({ href: '#manage-libraries', icon: 'storage', key: 'nav.manageLibraries' });
