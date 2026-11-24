@@ -588,13 +588,21 @@ sites added as **sources**, with its metadata and chapter list.
     pick that only exists after them is marked (*not in the page as the site sends it*). Some sites send an almost
     empty page and build everything with scripts that refuse to run anywhere but on the site itself; the preview
     then stays dark and a note above it says so, with a **Build pages in a browser** button (see below).
+  - *Block ads and pop-ups* (on by default) — keeps ads and click hijacks from getting in the way of picking: new
+    windows and tabs are never opened; when the page tries to leave for another address (the "click anywhere and
+    you land on an ad" trick) it is put back at once; scripts, frames and banners from known ad and pop-under
+    networks (`library/catalog/adhosts.js`) aren't loaded, however the page adds them; and a see-through or empty
+    layer covering the page, or one that links to another site, is removed when clicked (click again to reach what
+    was under it). While picking or navigating, the page's own click handlers don't see your clicks at all. How many
+    things were blocked shows next to the option (hover it for the breakdown). Turn it off if a site needs something
+    it blocks.
 - **Build pages in a browser** (*Crawling* step). For sites that build their pages with scripts: the list and work
   pages are opened in a headless **Chrome, Edge or Chromium installed on the server** and read once their scripts
   have run (*Time for the scripts*, 8 s by default), in the preview and in crawls. Much slower than plain fetches.
   The browser is found in the usual install places, or set `THOTH_BROWSER` to its path (extra arguments:
   `THOTH_BROWSER_ARGS`). It runs with a throwaway profile and no images, and all its traffic goes through a small
   guard in Thoth that only lets it reach public addresses on ports 80/443 (never this machine or the local
-  network); robots.txt, the site's pace and bot-protection stops apply to the pages as for any crawl. In Docker,
+  network) and refuses the ad and pop-under networks; pop-up windows aren't opened; robots.txt, the site's pace and bot-protection stops apply to the pages as for any crawl. In Docker,
   install Chromium in the image and run Thoth as a non-root user (Chromium's sandbox refuses root).
   - *Wait N s before picking* — the picker waits for the page to finish loading (its images and styles), then
     that many seconds more (up to 60), with a countdown; ↻ shows the page again.

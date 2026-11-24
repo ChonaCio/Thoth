@@ -1012,7 +1012,11 @@ body.is-reading { overflow: hidden; }
 .wz-preview__holder { flex: 1; min-height: 0; display: flex; }
 .wz-preview__holder .wz-preview__frame { flex: 1; }
 .wz-preview__opts .checkbox { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
-.wz-preview__opts .checkbox input { width: auto; }
+.wz-preview__opts .checkbox input { width: auto; flex: none; min-width: 0; padding: 0; }
+.wz-preview__blocked { color: var(--text-muted, inherit); }
+.wz-preview__blocked > span { display: inline-flex; align-items: center; gap: 4px; cursor: help; }
+.wz-preview__blocked .icon { width: 14px; height: 14px; }
+.wz-preview__blocked:empty { display: none; }
 
 /* Wizard: clicks to make before collecting */
 .wz-clicks { border: 1px dashed var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 8px; }

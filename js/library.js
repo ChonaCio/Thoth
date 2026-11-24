@@ -1923,7 +1923,7 @@
   function openSourceWizard(src) {
     var st = catSourcesState();
     wz = { editing: src ? src.id : null, draft: wzDraftFrom(src), step: 'site', detected: src && src.detected ? { found: src.detected.found, notes: src.detected.notes, at: src.detected.at } : null,
-      detecting: false, test: null, saving: false, error: null, pv: { url: '', page: null, loading: false, error: null, mode: 'pick', target: null, info: null, images: true, scripts: false, wait: 0 }, sampleWork: (src && src.detected && src.detected.found && src.detected.found.sampleWork && src.detected.found.sampleWork.url) || '', types: st.types || [] };
+      detecting: false, test: null, saving: false, error: null, pv: { url: '', page: null, loading: false, error: null, mode: 'pick', target: null, info: null, images: true, scripts: false, block: true, wait: 0 }, sampleWork: (src && src.detected && src.detected.found && src.detected.found.sampleWork && src.detected.found.sampleWork.url) || '', types: st.types || [] };
     var dlg = $('#src-wizard');
     if (!dlg) {
       dlg = document.createElement('dialog');
@@ -2168,6 +2168,8 @@
       '<div class="wz-preview__opts">' +
         '<label class="checkbox small"><input type="checkbox" id="wz-pv-images"' + (pv.images ? ' checked' : '') + ' /><span>' + esc(t('wz.images')) + '</span></label>' +
         '<label class="checkbox small" title="' + esc(t('wz.scriptsHelp')) + '"><input type="checkbox" id="wz-pv-scripts"' + (pv.scripts ? ' checked' : '') + (pv.images ? '' : ' disabled') + ' /><span>' + esc(t('wz.scripts')) + '</span></label>' +
+        '<label class="checkbox small" title="' + esc(t('wz.blockHelp')) + '"><input type="checkbox" id="wz-pv-block"' + (pv.block ? ' checked' : '') + ' /><span>' + esc(t('wz.block')) + '</span></label>' +
+        '<span class="small wz-preview__blocked" id="wz-pv-blocked">' + wzBlockedHtml() + '</span>' +
         '<label class="checkbox small" title="' + esc(t('wz.revealHelp')) + '"><input type="checkbox" id="wz-pv-reveal"' + (pv.reveal ? ' checked' : '') + ' /><span>' + esc(t('wz.reveal')) + '</span></label>' +
         '<label class="small wz-wait">' + esc(t('wz.wait')) + ' <input type="number" id="wz-pv-wait" min="0" max="60" step="1" value="' + esc(pv.wait) + '" /> ' + esc(t('wz.seconds')) + '</label>' +
       '</div>';
@@ -2180,7 +2182,14 @@
     if (pv.scrolling) return t('wz.scrolling');
     return pv.mode === 'navigate' ? t('wz.navigateHelp') : pv.mode === 'interact' ? (pv.interacted ? t('wz.interacted', { selector: pv.interacted }) : t('wz.interactHelp')) : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField');
   }
+  // What the ad and pop-up blocker kept out of the page shown (counted in the frame)
+  function wzBlockedHtml() {
+    var b = wz && wz.pv.block && wz.pv.blocked;
+    var n = b ? b.popups + b.redirects + b.ads + b.overlays : 0;
+    return n ? '<span title="' + esc(t('wz.block.detail', b)) + '">' + icon('block') + esc(t('wz.block.count', { n: n })) + '</span>' : '';
+  }
   function wzStatus() {
+    var bl = $('#wz-pv-blocked'); if (bl && wz) { bl.innerHTML = wzBlockedHtml(); if (window.renderIcons) window.renderIcons(bl); }
     var p = $('#wz-pv-status'); if (p && wz) p.textContent = wzStatusText();
     // A click made in Interact mode can become one of this step's clicks before collecting
     var x = $('#wz-pv-keep'), pv = wz && wz.pv, group = wz && ({ list: 'list', work: 'work', chapters: 'chapters' })[wz.step];
@@ -2239,7 +2248,7 @@
     var acts = JSON.stringify(wzActionsFor(wz.step).filter(function (a) { return a.selector || (a.kind === 'scroll' && a.loads.length); }));
     if (pv.page && !pv.loading && !pv.scripts && pv.page.actionsKey !== acts && pv.base) return wzLoadPreview(pv.base);
     if (pv.page && !pv.loading && Boolean(pv.page.rendered) !== Boolean(wz.draft.render) && pv.base) return wzLoadPreview(pv.base);
-    var key = pv.page ? [pv.seq, pv.images ? 1 : 0, pv.scripts ? 1 : 0, pv.wait, pv.reloads || 0, pv.scripts ? acts : ''].join('|') : 'empty' + (pv.loading ? '-loading' : '');
+    var key = pv.page ? [pv.seq, pv.images ? 1 : 0, pv.scripts ? 1 : 0, pv.block ? 1 : 0, pv.wait, pv.reloads || 0, pv.scripts ? acts : ''].join('|') : 'empty' + (pv.loading ? '-loading' : '');
     var frame = $('#wz-frame');
     if (frame && frame.dataset.key === key) return wzSendConfig();
     holder.innerHTML = '';
@@ -2251,7 +2260,24 @@
     frame.setAttribute('sandbox', pv.scripts ? 'allow-scripts' : 'allow-scripts allow-same-origin');
     frame.dataset.key = key;
     pv.ready = false; pv.waitLeft = 0;
-    frame.srcdoc = pv.page ? wzBuildDoc(pv.page) : '<p style="font:14px sans-serif;color:#777;padding:16px">' + esc(pv.loading ? t('wz.fetching') : t('wz.noPage')) + '</p>';
+    pv.blocked = { popups: 0, redirects: 0, ads: 0, overlays: 0 };
+    var doc = pv.page ? wzBuildDoc(pv.page) : '<p style="font:14px sans-serif;color:#777;padding:16px">' + esc(pv.loading ? t('wz.fetching') : t('wz.noPage')) + '</p>';
+    frame.srcdoc = doc;
+    // "Block ads and pop-ups": the page leaving for another address (an ad's redirect) is put back — as it starts
+    // (the frame says so), else once the other page has loaded; a page that keeps leaving is left alone, with advice
+    var loads = 0, bounces = 0, ours = false;
+    frame.bounce = function () {
+      if (ours || !pv.page || !pv.block || $('#wz-frame') !== frame) return;
+      if (++bounces > 3) { pv.info = t('wz.block.gaveUp'); return wzStatus(); }
+      pv.blocked.redirects++; pv.ready = false; pv.info = t('wz.block.redirect'); ours = true;
+      frame.srcdoc = doc; // (a new load of the frame: the one under way is dropped)
+      wzStatus();
+    };
+    frame.addEventListener('load', function () {
+      if (++loads < 2) return;
+      if (ours) { ours = false; return; } // (the page put back)
+      frame.bounce();
+    });
     holder.appendChild(frame);
     wzStatus();
   }
@@ -2294,10 +2320,23 @@
     var pics = doc.body ? doc.body.querySelectorAll('img[src], img[data-src], picture').length : 0;
     return (page.shell = text.length < 60 && pics < 3);
   }
+  // Ads by their usual markup, and a test for addresses of ad networks (the list comes with the page, from the
+  // server: library/catalog/adhosts.js). (Same code in the frame's blocker, wzPickerMain.)
+  var WZ_AD_SEL = 'ins.adsbygoogle, [id^="google_ads_iframe"], [id^="div-gpt-ad"], [data-ad-client], [data-ad-slot]';
+  function wzAdHostTest(hosts, base) {
+    return function (u) {
+      var h; try { h = new URL(String(u || ''), base).hostname.toLowerCase(); } catch (e) { return false; }
+      if (!u) return false;
+      for (var i = 0; i < hosts.length; i++) if (h === hosts[i] || h.slice(-hosts[i].length - 1) === '.' + hosts[i]) return true;
+      return false;
+    };
+  }
   // The document the frame shows: the site's page (its images, styles, and scripts if asked) + the picker
   function wzBuildDoc(page) {
     var pv = wz.pv;
+    var adHosts = pv.block && Array.isArray(page.adHosts) ? page.adHosts : [];
     var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors, reveal: Boolean(pv.reveal),
+      block: Boolean(pv.block), adHosts: adHosts,
       clicks: pv.scripts ? wzActionsFor(wz.step).filter(function (a) { return a.kind !== 'scroll'; }).map(function (a) { return a.selector; }).filter(Boolean) : [] };
     var picker = '(' + wzPickerMain.toString() + ')(' + JSON.stringify(cfg).replace(/</g, '\\u003c') + ');';
     var nonce = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
@@ -2326,6 +2365,13 @@
     Array.prototype.forEach.call(doc.querySelectorAll('link[crossorigin], link[integrity], img[crossorigin], script[crossorigin]:not([type=module]), script[integrity]:not([type=module])'), function (x) {
       x.removeAttribute('crossorigin'); x.removeAttribute('integrity');
     });
+    // The ads written in the page itself (what its scripts add later is stopped in the frame)
+    if (pv.block) {
+      var adHost = wzAdHostTest(adHosts, page.url);
+      Array.prototype.forEach.call(doc.querySelectorAll('script[src], iframe[src], embed[src], object[data], ' + WZ_AD_SEL), function (x) {
+        if (x.matches(WZ_AD_SEL) || adHost(x.getAttribute('src') || x.getAttribute('data'))) { x.remove(); pv.blocked.ads++; }
+      });
+    }
     var head = doc.head || doc.documentElement.insertBefore(doc.createElement('head'), doc.body);
     var base = doc.createElement('base'); base.setAttribute('href', page.url);
     head.insertBefore(base, head.firstChild);
@@ -2335,10 +2381,12 @@
       csp.setAttribute('content', "script-src 'nonce-" + nonce + "'; connect-src 'none'; frame-src 'none'; child-src 'none'; object-src 'none'; form-action 'none'; worker-src 'none'");
       head.insertBefore(csp, head.firstChild);
     }
+    // The picker goes first, before any of the site's scripts: its blocker is in place before they run, and its
+    // listeners get clicks before theirs
     var s = doc.createElement('script');
     s.setAttribute('nonce', nonce);
     s.textContent = picker;
-    (doc.body || doc.documentElement).appendChild(s);
+    head.insertBefore(s, base.nextSibling);
     return '<!doctype html>' + doc.documentElement.outerHTML;
   }
   function wzSendConfig() {
@@ -2367,6 +2415,12 @@
     if (!wz || !frame || e.source !== frame.contentWindow) return;
     var m = e.data, pv = wz.pv;
     if (!m || m.thoth !== 'picker') return;
+    if (m.type === 'blocked' && pv.blocked && /^(popups|redirects|ads|overlays)$/.test(m.kind)) {
+      pv.blocked[m.kind]++;
+      return wzStatus();
+    }
+    if (m.type === 'leaving') { if (frame.bounce) frame.bounce(); return; }
+    if (m.type === 'overlay') { pv.info = t('wz.block.overlay'); return wzStatus(); }
     if (m.type === 'waiting') { pv.ready = false; pv.clicking = 0; pv.waitLeft = Math.max(0, Math.min(60, Number(m.left) || 0)); return wzStatus(); }
     if (m.type === 'scrolled' && pv.scrollFor) {
       // What scrolling asked the site for: the same site's requests, the ones that look like a list first
@@ -2419,6 +2473,101 @@
    * crawler understands (tag, #id, .class, descendants). It waits for the page to load (+ cfg.wait seconds). */
   function wzPickerMain(cfg) {
     var ready = false, last = null;
+    var post = function (m) { m.thoth = 'picker'; try { parent.postMessage(m, '*'); } catch (e) { /* the wizard closed */ } };
+    /* The ad and pop-up blocker ("Block ads and pop-ups"; this script runs before any of the site's): ads and
+     * pop-under scripts click-jack the page (a click anywhere opens an ad, or sends the page to one). So: no new
+     * windows; no leaving the page (only the wizard loads other pages: Navigate mode, links in Interact mode); the
+     * ad networks' scripts and frames not loaded, however they're added; and an invisible layer covering the page
+     * (what catches those clicks) removed when clicked. Each thing blocked is told to the wizard (counts). */
+    var pageHost = ''; try { pageHost = new URL(document.baseURI).hostname; } catch (e) { /* no address */ }
+    var tellBlocked = function (kind, u) { var h = ''; try { h = new URL(String(u || ''), document.baseURI).hostname; } catch (e) { /* not an address */ } post({ type: 'blocked', kind: kind, host: h }); };
+    var AD_SEL = 'ins.adsbygoogle, [id^="google_ads_iframe"], [id^="div-gpt-ad"], [data-ad-client], [data-ad-slot]';
+    var hosts = cfg.adHosts || [], blockOn = Boolean(cfg.block); // (fixed for this page: the frame is built again when it changes)
+    var adHost = function (u) {
+      var h; if (!u) return false;
+      try { h = new URL(String(u), document.baseURI).hostname.toLowerCase(); } catch (e) { return false; }
+      for (var i = 0; i < hosts.length; i++) if (h === hosts[i] || h.slice(-hosts[i].length - 1) === '.' + hosts[i]) return true;
+      return false;
+    };
+    var otherSite = function (u) { try { var x = new URL(String(u), document.baseURI); return /^https?:$/.test(x.protocol) && x.hostname !== pageHost; } catch (e) { return false; } };
+    var isAd = function (el) {
+      if (!el || el.nodeType !== 1) return false;
+      var tag = el.tagName;
+      if (/^(SCRIPT|IFRAME|EMBED|IMG)$/.test(tag) && adHost(el.getAttribute('src'))) return true;
+      if (tag === 'OBJECT' && adHost(el.getAttribute('data'))) return true;
+      if (tag === 'A' && adHost(el.getAttribute('href'))) return true;
+      try { return el.matches(AD_SEL); } catch (e) { return false; }
+    };
+    var defuse = function (el) {
+      var u = el.getAttribute('src') || el.getAttribute('href') || el.getAttribute('data') || '';
+      if (el.tagName === 'SCRIPT') { el.type = 'text/thoth-blocked'; el.removeAttribute('src'); }
+      else if (el.tagName === 'IFRAME') { el.removeAttribute('src'); el.removeAttribute('srcdoc'); }
+      try { el.style.setProperty('display', 'none', 'important'); } catch (e) { /* no style */ }
+      el.setAttribute('data-thoth-blocked', '');
+      tellBlocked('ads', u);
+    };
+    var check = function (node) {
+      if (!node || (node.nodeType !== 1 && node.nodeType !== 11)) return;
+      if (node.nodeType === 1 && !node.hasAttribute('data-thoth-blocked') && isAd(node)) defuse(node);
+      if (node.querySelectorAll) Array.prototype.forEach.call(node.querySelectorAll('script[src], iframe[src], embed[src], img[src], object[data], a[href], ' + AD_SEL), function (x) { if (!x.hasAttribute('data-thoth-blocked') && isAd(x)) defuse(x); });
+    };
+    // A layer over most of the page that is empty or see-through, an ad, or a link to another site
+    var coverAt = function (el) {
+      var area = innerWidth * innerHeight;
+      for (var n = el, k = 0; n && n.nodeType === 1 && n !== document.body && n !== document.documentElement && k < 8; n = n.parentElement, k++) {
+        var cs = getComputedStyle(n);
+        if (cs.position !== 'fixed' && cs.position !== 'absolute') continue;
+        var r = n.getBoundingClientRect();
+        if (r.width * r.height < area * 0.4) continue;
+        var empty = (n.textContent || '').replace(/\s+/g, '').length < 3 && !n.querySelector('img, video, canvas, svg, input, button, select, textarea');
+        if (isAd(n) || Number(cs.opacity) < 0.15 || empty || (n.tagName === 'A' && otherSite(n.href)) || (n.tagName === 'IFRAME' && otherSite(n.src))) return n;
+      }
+      return null;
+    };
+    if (blockOn) {
+      try {
+        window.open = function (u) { tellBlocked('popups', u); return null; };
+        // Leaving the page (a script setting location, a link the page clicks itself): told to the wizard as it
+        // starts, which puts the page back before the other one shows. (A frame like this one can't stop it itself:
+        // location can't be replaced, and the Navigation API is off in sandboxed frames.)
+        window.addEventListener('beforeunload', function () { post({ type: 'leaving' }); });
+        // The ad networks' scripts and frames, however the page adds them
+        var wrap = function (proto, name) {
+          var real = proto && proto[name]; if (typeof real !== 'function') return;
+          proto[name] = function () { for (var i = 0; i < arguments.length; i++) if (arguments[i] && typeof arguments[i] === 'object') check(arguments[i]); return real.apply(this, arguments); };
+        };
+        ['appendChild', 'insertBefore', 'replaceChild'].forEach(function (n) { wrap(Node.prototype, n); });
+        ['append', 'prepend', 'before', 'after', 'replaceWith', 'insertAdjacentElement'].forEach(function (n) { wrap(Element.prototype, n); });
+        var realWrite = document.write, realWriteln = document.writeln;
+        var cleanHtml = function (html) {
+          return String(html).replace(/<(script|iframe)\b[^>]*?\bsrc\s*=\s*["']?([^"'\s>]+)[^>]*>(?:[\s\S]*?<\/\1\s*>)?/gi, function (m, tag, src) { if (!adHost(src)) return m; tellBlocked('ads', src); return ''; });
+        };
+        document.write = function () { return realWrite.call(document, cleanHtml(Array.prototype.join.call(arguments, ''))); };
+        document.writeln = function () { return realWriteln.call(document, cleanHtml(Array.prototype.join.call(arguments, ''))); };
+        // What gets in anyway (put in with innerHTML, say): hidden as it appears
+        new MutationObserver(function (list) {
+          list.forEach(function (m) { Array.prototype.forEach.call(m.addedNodes, check); });
+        }).observe(document.documentElement, { childList: true, subtree: true });
+      } catch (e) { /* an old browser: the rest still works */ }
+      // A click on a layer covering the page: the layer goes, the click doesn't reach the page
+      var lastCover = 0;
+      ['pointerdown', 'mousedown', 'touchstart', 'click', 'auxclick'].forEach(function (type) {
+        window.addEventListener(type, function (e) {
+          if (!blockOn || !e.isTrusted) return;
+          var cover = coverAt(e.target);
+          if (cover) {
+            cover.remove(); lastCover = Date.now();
+            e.preventDefault(); e.stopImmediatePropagation();
+            tellBlocked('overlays', cover.getAttribute('href') || cover.getAttribute('src'));
+            return post({ type: 'overlay' });
+          }
+          // (the rest of a click whose start removed a layer)
+          if (Date.now() - lastCover < 700) { e.preventDefault(); e.stopImmediatePropagation(); return; }
+          // Picking or navigating: the page's own handlers (where pop-unders hide) never see the click
+          if (ready && cfg.mode !== 'interact' && type !== 'click') e.stopImmediatePropagation();
+        }, { capture: true, passive: false });
+      });
+    }
     // Requests the page makes (its own scripts): recorded, to tell what scrolling a list asks the site for
     var requests = [];
     var record = function (u) { try { if (u) requests.push(new URL(String(u), document.baseURI).href); } catch (e) { /* not an address */ } };
@@ -2454,8 +2603,7 @@
       step();
     };
 
-    var post = function (m) { m.thoth = 'picker'; try { parent.postMessage(m, '*'); } catch (e) { /* the wizard closed */ } };
-    var BLOCK = /^(li|div|article|section|tr|td|dl|dd|figure|header|ul|ol|table|tbody|main|aside|nav)$/;
+    var BLOCK =/^(li|div|article|section|tr|td|dl|dd|figure|header|ul|ol|table|tbody|main|aside|nav)$/;
     var goodClass = function (c) { return /^[a-zA-Z][\w-]{1,40}$/.test(c) && !/\d{4,}/.test(c) && !/^(active|current|selected|hover|focus|show|open|is-|has-|js-|thoth-)/.test(c); };
     var stepOf = function (el) {
       var tag = el.tagName.toLowerCase();
@@ -2559,19 +2707,29 @@
     }, true);
     document.addEventListener('mouseout', function () { if (last) last.classList.remove('thoth-hl'); last = null; }, true);
     document.addEventListener('submit', function (e) { e.preventDefault(); }, true);
-    document.addEventListener('click', function (e) {
+    // (on the window, before the page's own listeners: this script runs first)
+    window.addEventListener('click', function (e) {
       var el = e.target;
+      if (!el || el.nodeType !== 1) return;
       // Interact: the page gets the click (tabs, "show more"…); a link to another page opens it in the preview
       if (ready && cfg.mode === 'interact') {
         var la = el.closest && el.closest('a[href]');
-        if (la && /^https?:/i.test(la.href) && la.getAttribute('href').charAt(0) !== '#') { e.preventDefault(); e.stopPropagation(); return post({ type: 'navigate', href: la.href, interact: true }); }
+        if (la && /^https?:/i.test(la.href) && la.getAttribute('href').charAt(0) !== '#') {
+          e.preventDefault(); e.stopImmediatePropagation();
+          if (blockOn && adHost(la.href)) return tellBlocked('ads', la.href);
+          return post({ type: 'navigate', href: la.href, interact: true });
+        }
         var tgt = (el.closest && el.closest('a, button, summary, label, [role=tab], [role=button], [onclick], [data-url], [data-href], [data-load], [data-toggle], [data-bs-toggle], [data-target], [data-tab]')) || el;
         var only = function (x) { try { return document.querySelector(x) === tgt; } catch (er) { return false; } };
         return post({ type: 'interacted', selector: pathSelector(tgt, null, only) });
       }
-      e.preventDefault(); e.stopPropagation();
+      e.preventDefault(); e.stopImmediatePropagation();
       if (!ready) return;
-      if (cfg.mode === 'navigate') { var a = el.closest && el.closest('a[href]'); if (a && /^https?:/i.test(a.href)) post({ type: 'navigate', href: a.href }); return; }
+      if (cfg.mode === 'navigate') {
+        var a = el.closest && el.closest('a[href]');
+        if (a && /^https?:/i.test(a.href)) { if (blockOn && adHost(a.href)) return tellBlocked('ads', a.href); post({ type: 'navigate', href: a.href }); }
+        return;
+      }
       if (last) last.classList.remove('thoth-hl');
       pick(el);
     }, true);
@@ -2615,6 +2773,7 @@
       return wzRender();
     }
     if (e.type === 'change' && el.id === 'wz-pv-scripts') { pv.scripts = el.checked; return wzRender(); }
+    if (e.type === 'change' && el.id === 'wz-pv-block') { pv.block = el.checked; pv.info = null; return wzRender(); }
     if (e.type === 'change' && el.id === 'wz-pv-reveal') { pv.reveal = el.checked; return wzSendConfig(); }
     if (e.type === 'change' && el.id === 'wz-pv-wait') { pv.wait = Math.max(0, Math.min(60, Math.round(Number(el.value) || 0))); return wzRender(); }
     if (!key) return;

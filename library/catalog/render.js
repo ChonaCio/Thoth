@@ -12,6 +12,7 @@
 //     resolved and every address checked, and the connection goes to the address checked) on ports 80 and 443:
 //     a page's scripts can't reach this machine or the local network. WebRTC and QUIC, which wouldn't go through
 //     the proxy, are off.
+//   - ad and pop-under networks (adhosts.js) are refused by the proxy, and pop-up windows aren't opened
 //   - the same generic user agent as the fetcher; robots.txt and the site's pace are checked by the fetcher before
 //     a page is opened (fetcher.render)
 //   - extra arguments for the browser: THOTH_BROWSER_ARGS (e.g. "--no-sandbox" in a container that runs as root —
@@ -23,6 +24,7 @@ const net = require('net');
 const http = require('http');
 const dns = require('dns');
 const { execFile } = require('child_process');
+const { isAdHost } = require('./adhosts');
 
 const MAX_OUT = 16 * 1024 * 1024;
 const MAX_AT_ONCE = 2;
@@ -74,7 +76,7 @@ function startGuard(allowLocal) {
     // A plain http:// request: "GET http://host/path"
     let u; try { u = new URL(req.url); } catch { res.writeHead(400); return res.end(); }
     const port = Number(u.port) || 80;
-    if (u.protocol !== 'http:' || !okPort(port)) { res.writeHead(403); return res.end(); }
+    if (u.protocol !== 'http:' || !okPort(port) || isAdHost(u.hostname)) { res.writeHead(403); return res.end(); }
     resolvePublic(u.hostname, allowLocal).then(ip => {
       const headers = Object.assign({}, req.headers); delete headers['proxy-connection']; delete headers['proxy-authorization'];
       const out = http.request({ host: ip, port, method: req.method, path: u.pathname + u.search, headers, setHost: false }, up => { res.writeHead(up.statusCode, up.headers); up.pipe(res); });
@@ -87,7 +89,7 @@ function startGuard(allowLocal) {
   server.on('connect', (req, sock, head) => {
     const m = /^\[?([^\]]+?)\]?:(\d+)$/.exec(req.url || '');
     const port = m ? Number(m[2]) : 0;
-    if (!m || !okPort(port)) { sock.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
+    if (!m || !okPort(port) || isAdHost(m[1])) { sock.end('HTTP/1.1 403 Forbidden\r\n\r\n'); return; }
     sock.on('error', () => {});
     resolvePublic(m[1], allowLocal).then(ip => {
       const up = net.connect(port, ip, () => { sock.write('HTTP/1.1 200 Connection Established\r\n\r\n'); if (head && head.length) up.write(head); up.pipe(sock); sock.pipe(up); });
@@ -116,7 +118,7 @@ async function renderPage(url, { allowLocal = false, waitMs = 8000, timeoutMs = 
   try {
     const args = ['--headless=new', '--disable-gpu', '--no-first-run', '--no-default-browser-check', '--disable-extensions', '--disable-sync',
       '--disable-background-networking', '--disable-component-update', '--disable-default-apps', '--disable-features=Translate,MediaRouter,OptimizationHints',
-      '--mute-audio', '--hide-scrollbars', '--blink-settings=imagesEnabled=false', '--window-size=1280,2000', '--lang=en',
+      '--mute-audio', '--hide-scrollbars', '--block-new-web-contents', '--blink-settings=imagesEnabled=false', '--window-size=1280,2000', '--lang=en',
       `--user-data-dir=${profile}`, `--proxy-server=http://127.0.0.1:${port}`, '--proxy-bypass-list=<-loopback>',
       '--disable-quic', '--force-webrtc-ip-handling-policy=disable_non_proxied_udp', '--webrtc-ip-handling-policy=disable_non_proxied_udp',
       `--user-agent=${userAgent || require('./fetcher').UA}`, `--virtual-time-budget=${Math.max(1000, Math.min(60000, Math.round(waitMs)))}`]

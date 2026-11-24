@@ -1,5 +1,6 @@
 // Pages built in a browser (external catalog sources with "Build pages in a browser"):
-//   - the address guard the browser goes through: private and local addresses refused, other ports refused
+//   - the address guard the browser goes through: private and local addresses refused, other ports refused, ad
+//     and pop-under networks refused
 //   - with a Chrome / Edge / Chromium on this machine: a page that builds itself with scripts is read as built,
 //     by the fetcher (robots.txt still followed) and by the generic reader's work page
 //   - without one: a clear "noBrowser" error
@@ -51,6 +52,12 @@ function viaGuard(port, raw) {
   check(/403/.test(await viaGuard(gport, 'CONNECT 192.168.1.1:443 HTTP/1.1\r\nHost: 192.168.1.1:443\r\n\r\n')), 'CONNECT to the local network refused');
   check(/403/.test(await viaGuard(gport, 'CONNECT example.com:22 HTTP/1.1\r\nHost: example.com:22\r\n\r\n')), 'ports other than 80/443 refused');
   check(/403/.test(await viaGuard(gport, `GET http://127.0.0.1:${PORT}/series/one HTTP/1.1\r\nHost: 127.0.0.1:${PORT}\r\n\r\n`)), 'plain http to this machine refused');
+  // Ad and pop-under networks: refused (before any lookup), and their list goes with the wizard's preview
+  const { isAdHost, AD_HOSTS } = require(path.join(APP, 'library/catalog/adhosts'));
+  check(isAdHost('pagead2.googlesyndication.com') && isAdHost('popads.net') && isAdHost('CDN.PopCash.net.'), 'ad networks and their subdomains are known');
+  check(!isAdHost('example.com') && !isAdHost('notpopads.net') && !isAdHost('popads.net.example.com'), 'other sites are not ad networks');
+  check(/403/.test(await viaGuard(gport, 'CONNECT ad.doubleclick.net:443 HTTP/1.1\r\nHost: ad.doubleclick.net:443\r\n\r\n')), 'CONNECT to an ad network refused');
+  check(/403/.test(await viaGuard(gport, 'GET http://www.popads.net/pop.js HTTP/1.1\r\nHost: www.popads.net\r\n\r\n')), 'plain http to an ad network refused');
   const f0 = createFetcher({ gapMs: 50 });
   let e0 = null; try { await f0.render(`http://127.0.0.1:${PORT}/series/one`); } catch (e) { e0 = e; }
   check(e0 && e0.code === 'notPublic', 'the fetcher refuses to build a local page', e0 && e0.code);
@@ -82,6 +89,7 @@ function viaGuard(port, raw) {
       // Through the preview the wizard asks for
       const pv = await require(path.join(APP, 'library/catalog/sitefiles')).previewPage({ url: base + '/series/one', allowLocal: true, render: true, waitMs: 4000 });
       check(pv.rendered && /Built By Script/.test(pv.source), 'the wizard preview gets the built page');
+      check(Array.isArray(pv.adHosts) && pv.adHosts.length === AD_HOSTS.length, 'the preview comes with the ad networks to block');
     } catch (e) { check(false, 'building pages', e.message); }
     site.close();
   }

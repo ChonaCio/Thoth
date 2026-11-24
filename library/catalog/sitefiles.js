@@ -48,7 +48,7 @@ async function previewPage({ url, allowLocal, inert = false, actions = [], rende
   const base = res.url;
   let html = res.text;
   const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || [])[1] || '';
-  if (!inert) return { url: base, title: title.trim().slice(0, 200), source: html.slice(0, MAX_SOURCE), truncated: html.length > MAX_SOURCE, actions: actionsReport, requests: fetcher.stats.requests, rendered: Boolean(render) };
+  if (!inert) return { url: base, title: title.trim().slice(0, 200), source: html.slice(0, MAX_SOURCE), truncated: html.length > MAX_SOURCE, actions: actionsReport, requests: fetcher.stats.requests, rendered: Boolean(render), adHosts: require('./adhosts').AD_HOSTS };
   // The site's stylesheets, inlined (only from the same site; what robots.txt allows; a few)
   const css = [];
   const links = [...html.matchAll(/<link\b[^>]*>/gi)].map(m => m[0]).filter(tag => /rel\s*=\s*["']?[^"'>]*stylesheet/i.test(tag));
@@ -74,7 +74,7 @@ async function previewPage({ url, allowLocal, inert = false, actions = [], rende
     css.map(c => `<style>${c.replace(/url\(\s*(['"]?)(?!data:)[^)'"]+\1\s*\)/gi, 'none').replace(/@import[^;]+;/gi, '')}</style>`).join('') +
     `<style>img{background:repeating-linear-gradient(45deg,#ddd 0 6px,#eee 6px 12px);min-width:24px;min-height:24px}</style>`;
   html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + head) : head + html;
-  return { url: base, title: title.trim().slice(0, 200), html, source: res.text.slice(0, MAX_SOURCE), actions: actionsReport, requests: fetcher.stats.requests, rendered: Boolean(render) };
+  return { url: base, title: title.trim().slice(0, 200), html, source: res.text.slice(0, MAX_SOURCE), actions: actionsReport, requests: fetcher.stats.requests, rendered: Boolean(render), adHosts: require('./adhosts').AD_HOSTS };
 }
 
 module.exports = { readSiteFile, previewPage };
