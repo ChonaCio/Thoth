@@ -17,6 +17,7 @@ const { publicUrl, UA } = require('./fetcher');
 const { normTitle, fromUrl } = require('../metadata/providers');
 const terms = require('../metadata/terms');
 const names = require('./names');
+const sites = require('./sites');
 // A work's metadata-site entries ("anilist:123", "mangadex:…") from its links (read from its page)
 const siteIds = w => Object.entries(w.links || {}).filter(([, id]) => id).map(([p, id]) => p + ':' + id);
 
@@ -75,7 +76,7 @@ function parseSource(body, current) {
   if ('concurrency' in b) { const n = Math.round(Number(b.concurrency) || 0); if (n) s.concurrency = Math.max(1, Math.min(8, n)); else delete s.concurrency; }
   if ('listPath' in b) s.listPath = String(b.listPath || '').trim().replace(/[^\w\-/]/g, '').slice(0, 80);
   if ('selectors' in b && b.selectors && typeof b.selectors === 'object') {
-    const keys = ['listUrl', 'firstPage', 'maxPages', 'extraListUrls', 'linkPattern', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'tags', 'authors', 'altTitles', 'altSeparator', 'status', 'type', 'year', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate'];
+    const keys = ['listUrl', 'firstPage', 'maxPages', 'extraListUrls', 'linkPattern', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'tags', 'authors', 'altTitles', 'altSeparator', 'status', 'type', 'year', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate', 'chapterPremium'];
     s.selectors = {};
     for (const k of keys) if (b.selectors[k] != null && String(b.selectors[k]).trim()) s.selectors[k] = String(b.selectors[k]).trim().slice(0, 400);
   }
@@ -156,10 +157,29 @@ function sourceView(s) {
 // A new source needs only a name and its address: the rest is detected now (robots.txt, every sitemap, the
 // address patterns, the theme, the icon) and again at every crawl (autoDetect). Settings given in full (type
 // included) are kept as given.
+// A site template (sites.js) gives the settings in full: body.template (its id), or found by the address's host
+// (unless body.detect asks for detection instead). The person's own choices (name, address for an engine,
+// languages, schedule, limits) go over the template's.
+const OVER_TEMPLATE = ['languages', 'schedule', 'scheduleHours', 'maxWorks', 'includeChapters', 'contentRating', 'blacklist', 'checkOngoing', 'access'];
+function fromTemplate(t, body) {
+  const url = String(body.baseUrl || body.url || '').trim();
+  const settings = JSON.parse(JSON.stringify(t.settings || {}));
+  if (t.needsUrl || !settings.baseUrl) { if (!publicUrl(url, ALLOW_LOCAL)) throw err(400, 'invalidUrl'); settings.baseUrl = new URL(url).origin; }
+  const b = Object.assign(settings, { name: String(body.name || '').trim() || (t.needsUrl ? new URL(settings.baseUrl).hostname.replace(/^www\./, '') : t.name) });
+  for (const k of OVER_TEMPLATE) if (k in body && body[k] !== '' && body[k] != null) b[k] = body[k];
+  const s = parseSource(b);
+  s.autoDetect = false;
+  s.template = t.id;
+  s.siteUrl = t.needsUrl ? settings.baseUrl : (t.url || settings.baseUrl);
+  return s;
+}
 async function createSource(body) {
   body = body || {};
   let s;
-  if (!body.type) {
+  const tpl = body.template ? sites.get(String(body.template)) : (!body.type && !body.detect ? sites.forUrl(String(body.baseUrl || body.url || '')) : null);
+  if (body.template && !tpl) throw err(404, 'notFound');
+  if (tpl) s = fromTemplate(tpl, body);
+  else if (!body.type) {
     const url = String(body.baseUrl || body.url || '').trim();
     if (!publicUrl(url, ALLOW_LOCAL)) throw err(400, 'invalidUrl');
     let d = null;
@@ -485,6 +505,22 @@ function readSiteFile(id, url) {
 // render: the page built in a headless browser first (what a source with "Build pages in a browser" reads)
 // Layout templates, and which fit a site (tried by the helper process: a few requests per template)
 function templates() { return require('./templates').publicTemplates(); }
+// Site templates (complete source settings for a site or an engine): the built-in ones and the administrator's.
+// Saving one: from a source (body.sourceId: how it reads its site, never its access cookies or headers) or an
+// imported template file ({ thothTemplate: 1, name, settings… }), validated like a source's settings.
+function siteTemplates() { return sites.list().map(t => Object.assign(t, { used: Object.values(db.catalogSources).filter(s => s.template === t.id).length })); }
+function saveSiteTemplate(body) {
+  const b = body || {};
+  if (b.sourceId) {
+    const src = db.catalogSources[b.sourceId];
+    if (!src) throw err(404, 'notFound');
+    return sites.save({ name: b.name || src.name, description: b.description, notes: b.notes, settings: sites.settingsOf(src), from: src.id }, x => parseSource(x));
+  }
+  if (!b.settings || typeof b.settings !== 'object') throw err(400, 'invalid');
+  return sites.save({ name: b.name, description: b.description, notes: b.notes, hosts: b.hosts, url: b.url, settings: Object.assign({}, b.settings, { access: undefined }) }, x => parseSource(x));
+}
+function removeSiteTemplate(id) { sites.remove(String(id)); }
+function exportSiteTemplate(id) { const t = sites.get(String(id)); if (!t) throw err(404, 'notFound'); return sites.exported(t); }
 function findTemplate(url) {
   if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
   return ask({ type: 'findTemplate', url: String(url), allowLocal: ALLOW_LOCAL });
@@ -1096,5 +1132,5 @@ function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, d
 // More crawls allowed at once: start the waiting ones now
 require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
 
-module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
+module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, siteTemplates, saveSiteTemplate, removeSiteTemplate, exportSiteTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
   list, facets, detail, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

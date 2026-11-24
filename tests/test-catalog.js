@@ -508,6 +508,39 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(cl.removed === 3 && (await call('GET', '/api/catalog')).data.total === 0 && (await call('GET', '/api/catalog/sources')).data.sources.length === nSources && !fs.existsSync(path.join(DATA, 'cache', 'catalog-covers')),
     'clearing removes every crawled work and cached cover; the sources stay');
 
+  // ---- site templates: complete settings for a site, added in one step (no detection: nothing is fetched) ----
+  const tpls = (await call('GET', '/api/catalog/site-templates')).data.templates;
+  const want = ['qimanga', 'vortexscans', 'manganato', 'manta', 'webtoons', 'mangadex', 'mangapill', 'mangakatana', 'engine-madara', 'engine-mangareader', 'engine-nato'];
+  ok(want.every(id => tpls.some(x => x.id === id && x.builtIn)) && (await call('GET', '/api/catalog/site-templates', null, bob)).status === 403, `built-in site templates listed for admins (${tpls.length})`);
+  const madeFrom = [];
+  for (const x of tpls.filter(y => y.builtIn && !y.needsUrl)) {
+    const r = await call('POST', '/api/catalog/sources', { template: x.id });
+    if (r.status === 201 && r.data.source.template === x.id && r.data.source.autoDetect === false) madeFrom.push(r.data.source.id);
+    else console.log('   template', x.id, r.status, JSON.stringify(r.data).slice(0, 200));
+  }
+  ok(madeFrom.length === tpls.filter(y => y.builtIn && !y.needsUrl).length, `every built-in site template makes a valid source (${madeFrom.length})`);
+  const auto = (await call('POST', '/api/catalog/sources', { baseUrl: 'https://www.qimanga.com/series/x' })).data.source;
+  ok(auto.template === 'qimanga' && auto.listing === 'sitemap' && auto.workPattern === '/series/*' && auto.selectors.chapterPremium === '.cl-price' && auto.name === 'Qi Manga',
+    'a new source on a template\'s site gets that template (not detection)');
+  ok((await call('POST', '/api/catalog/sources', { template: 'engine-madara' })).status === 400, 'an engine template needs the site\'s address');
+  const eng = (await call('POST', '/api/catalog/sources', { template: 'engine-nato', baseUrl: SITE + '/nato/', name: 'Nato clone', languages: 'es' })).data.source;
+  ok(eng.baseUrl === SITE && eng.selectors.workTitle === '.manga-info-text h1' && eng.languages === 'es' && eng.name === 'Nato clone' && !(eng.sitemaps || []).length,
+    'an engine template on a given site: its settings, the site\'s address, the person\'s choices over the template\'s');
+  // Saving a source as a template: how it reads its site, never its access cookies or headers
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { access: { cookies: 'secret=1', headers: 'X-Key: k' } });
+  const mine = (await call('POST', '/api/catalog/site-templates', { sourceId: madaraId, name: 'My Madara', description: 'mine' })).data.template;
+  const file = (await call('GET', `/api/catalog/site-templates/${mine.id}`)).data.template;
+  ok(mine.group === 'mine' && !mine.builtIn && mine.hosts[0] === '127.0.0.1' && mine.settings.type === 'madara' && !mine.settings.access && !JSON.stringify(file).includes('secret') && file.thothTemplate === 1,
+    'a source saved as a template (and exported) without its cookies or headers');
+  const imported = await call('POST', '/api/catalog/site-templates', Object.assign({}, file, { name: 'Imported', settings: Object.assign({}, file.settings, { access: { cookies: 'x=2' } }) }));
+  ok(imported.status === 201 && imported.data.template.id !== mine.id && !imported.data.template.settings.access, 'a template file imported (cookies in it ignored)');
+  ok((await call('POST', '/api/catalog/site-templates', { name: 'Bad', settings: { type: 'nope' } })).status === 400 && (await call('POST', '/api/catalog/site-templates', { name: 'x' })).status === 400, 'invalid template files refused');
+  const viaMine = (await call('POST', '/api/catalog/sources', { baseUrl: SITE + '/anything' })).data.source;
+  ok(viaMine.template === imported.data.template.id && viaMine.type === 'madara', 'the administrator\'s own template (the newest) is used for its site');
+  ok((await call('DELETE', '/api/catalog/site-templates/qimanga')).status === 400 && (await call('DELETE', `/api/catalog/site-templates/${mine.id}`)).status === 200 &&
+    !(await call('GET', '/api/catalog/site-templates')).data.templates.some(x => x.id === mine.id), 'own templates can be removed, built-in ones can\'t');
+  for (const id of madeFrom.concat([auto.id, eng.id, viaMine.id])) await call('DELETE', `/api/catalog/sources/${id}`);
+
   console.log(`\nALL ${passed} CATALOG CHECKS PASSED`);
   srv.kill(); site.close();
   process.exit(0);

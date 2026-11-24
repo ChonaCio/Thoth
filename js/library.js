@@ -1833,14 +1833,47 @@
       '<div class="cat-src__group" role="group" aria-label="' + esc(t('cat.grpSource')) + '">' +
         b({ act: 'cat-src-test', cls: 'btn--text', icon: 'search', label: t('cat.test') }) +
         b({ act: 'cat-src-edit', cls: 'btn--text', icon: 'edit', label: t('cat.edit') }) +
+        b({ act: 'cat-src-template', cls: 'btn--text', icon: 'bookmark_add', label: t('cat.tpl.save'), title: t('cat.tpl.saveHelp') }) +
         b({ act: 'cat-src-delete', cls: 'btn--text btn--danger', icon: 'delete', label: t('manage.delete'), off: busy, why: whileBusy }) +
       '</div></div>';
   }
+  // Site templates: complete settings for a known site (or a site engine), added as a source in one step; the
+  // administrator's own (saved from a source or imported) can be exported and removed
+  function loadCatTemplates() {
+    var st = catSourcesState();
+    return api('GET', '/api/catalog/site-templates').then(function (r) { st.templates = r.templates; st.tplError = null; }, function (e) { st.tplError = e; })
+      .then(function () { if (isCatalogRoute()) A().renderPage(); });
+  }
+  function catTemplatesHtml() {
+    var st = catSourcesState();
+    var head = '<section class="card cat-tpl" id="cat-tpl"><div class="cat-tpl__head"><h2 class="card__title">' + icon('dashboard') + esc(t('cat.tpl.title')) + '</h2>' +
+      '<button type="button" class="btn btn--outline btn--small" data-lib="cat-tpl-import">' + icon('upload') + esc(t('cat.tpl.import')) + '</button></div>' +
+      '<p class="muted small">' + esc(t('cat.tpl.help')) + '</p>';
+    if (st.tplError) return head + '<p class="notice notice--error small">' + esc(A().errMsg(st.tplError)) + '</p></section>';
+    if (!st.templates) return head + spinner + '</section>';
+    var group = function (g) {
+      var list = st.templates.filter(function (x) { return x.group === g; });
+      if (!list.length) return g === 'mine' ? '<h3 class="cat-tpl__group">' + esc(t('cat.tpl.grp.mine')) + '</h3><p class="muted small">' + esc(t('cat.tpl.noneMine')) + '</p>' : '';
+      return '<h3 class="cat-tpl__group">' + esc(t('cat.tpl.grp.' + g)) + '</h3><ul class="cat-tpl__list">' + list.map(function (x) {
+        var meta = [x.needsUrl ? t('cat.tpl.anySite') : (x.hosts[0] || x.url || '')].concat(x.checked ? [t('cat.tpl.checked', { date: x.checked })] : []).concat(x.used ? [t('cat.tpl.used', { count: x.used })] : []);
+        return '<li class="cat-tpl__item"><div class="cat-tpl__text"><strong>' + esc(x.name) + '</strong> <span class="muted small">' + esc(meta.join(' · ')) + '</span>' +
+          (x.description ? '<p class="muted small">' + esc(x.description) + '</p>' : '') + (x.notes ? '<p class="small">' + esc(x.notes) + '</p>' : '') + '</div>' +
+          '<div class="cat-tpl__btns"><button type="button" class="btn btn--primary btn--small" data-lib="cat-tpl-add" data-id="' + esc(x.id) + '">' + icon('add') + esc(t('cat.tpl.add')) + '</button>' +
+          '<button type="button" class="btn btn--text btn--small" data-lib="cat-tpl-export" data-id="' + esc(x.id) + '" title="' + esc(t('cat.tpl.exportHelp')) + '">' + icon('download') + esc(t('cat.tpl.export')) + '</button>' +
+          (x.builtIn ? '' : '<button type="button" class="btn btn--text btn--danger btn--small" data-lib="cat-tpl-delete" data-id="' + esc(x.id) + '">' + icon('delete') + esc(t('manage.delete')) + '</button>') +
+          '</div></li>';
+      }).join('') + '</ul>';
+    };
+    return head + group('site') + group('engine') + group('mine') + '</section>';
+  }
   function catalogSources() {
     var st = catSourcesState();
+    if (st.tplOpen && !st.templates && !st.tplError && !st.tplLoading) { st.tplLoading = true; loadCatTemplates().then(function () { st.tplLoading = false; }); }
     var head = catalogTabs('sources') + '<p class="page-lead">' + esc(t('cat.sourcesIntro')) + '</p>' +
       '<div class="toolbar"><div class="toolbar__group"><button class="btn btn--primary btn--pill" data-lib="cat-src-add">' + icon('add') + esc(t('cat.addSource')) + '</button>' +
-      (st.data && st.data.sources.length ? '<button class="btn btn--outline btn--pill" data-lib="cat-clear-catalog" title="' + esc(t('cat.cleanHelp')) + '">' + icon('restart_alt') + esc(t('cat.cleanCrawl')) + '</button>' : '') + '</div></div>';
+      '<button class="btn btn--outline btn--pill" data-lib="cat-tpl-toggle" aria-expanded="' + (st.tplOpen ? 'true' : 'false') + '" aria-controls="cat-tpl">' + icon('dashboard') + esc(t('cat.tpl.fromTemplate')) + '</button>' +
+      (st.data && st.data.sources.length ? '<button class="btn btn--outline btn--pill" data-lib="cat-clear-catalog" title="' + esc(t('cat.cleanHelp')) + '">' + icon('restart_alt') + esc(t('cat.cleanCrawl')) + '</button>' : '') + '</div></div>' +
+      (st.tplOpen ? catTemplatesHtml() : '');
     if (st.error) return head + errorBanner(st.error);
     if (!st.data) return head + spinner;
     if (!st.data.sources.length) return head + emptyState('travel_explore', t('cat.noSourcesTitle'), t('cat.noSourcesAdmin'));
@@ -4623,6 +4656,73 @@
       }
       case 'cat-src-add': return openSourceWizard(null);
       case 'cat-src-edit': return openSourceWizard(catSourcesState().data.sources.filter(function (s) { return s.id === id; })[0]);
+      case 'cat-tpl-toggle': {
+        var ts0 = catSourcesState();
+        ts0.tplOpen = !ts0.tplOpen;
+        if (ts0.tplOpen) ts0.tplError = null;
+        return A().renderPage();
+      }
+      case 'cat-tpl-add': {
+        // A new source with a template's settings: its name, the site's address (engines), the languages, and
+        // whether to crawl it now
+        var tpl = (catSourcesState().templates || []).filter(function (x) { return x.id === id; })[0];
+        if (!tpl) return;
+        var tf = [{ name: 'name', label: t('cat.tpl.name'), value: tpl.needsUrl ? '' : tpl.name, placeholder: tpl.needsUrl ? t('cat.tpl.namePh') : '' }];
+        if (tpl.needsUrl) tf.push({ name: 'baseUrl', label: t('cat.tpl.siteUrl'), placeholder: 'https://', help: t('cat.tpl.siteUrlHelp') });
+        tf.push({ name: 'languages', label: t('cat.tpl.languages'), value: (tpl.settings && tpl.settings.languages) || '', help: t('cat.tpl.languagesHelp') });
+        tf.push({ name: 'crawl', type: 'checkbox', value: true, label: t('cat.tpl.crawlNow') });
+        return openForm({
+          title: t('cat.tpl.addTitle', { name: tpl.name }), submitLabel: t('cat.tpl.add'), note: tpl.description, fields: tf,
+          onSubmit: function (v) {
+            return api('POST', '/api/catalog/sources', { template: tpl.id, name: v.name, baseUrl: v.baseUrl, languages: v.languages }).then(function (r) {
+              A().toast(t('cat.tpl.added', { name: r.source.name }));
+              var st2 = catSourcesState(); st2.templates = null; st2.tplOpen = false;
+              return v.crawl ? api('POST', '/api/catalog/sources/' + r.source.id + '/crawl', { mode: 'full' }).catch(fail) : null;
+            }).then(function () { loadCatSources(); });
+          }
+        });
+      }
+      case 'cat-tpl-export':
+        // (a file to keep or give to another Thoth: the template's settings, never a source's access cookies)
+        return api('GET', '/api/catalog/site-templates/' + encodeURIComponent(id)).then(function (r) {
+          var blob = new Blob([JSON.stringify(r.template, null, 2)], { type: 'application/json' });
+          var a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = 'thoth-template-' + String(r.template.name || id).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.json';
+          document.body.appendChild(a); a.click(); a.remove();
+          setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+        }, fail);
+      case 'cat-tpl-delete':
+        if (!confirm(t('cat.tpl.deleteConfirm'))) return;
+        return api('DELETE', '/api/catalog/site-templates/' + encodeURIComponent(id)).then(function () { catSourcesState().templates = null; A().renderPage(); }, fail);
+      case 'cat-tpl-import':
+        return openForm({
+          title: t('cat.tpl.importTitle'), submitLabel: t('cat.tpl.import'), note: t('cat.tpl.importNote'),
+          fields: [{ name: 'json', label: t('cat.tpl.importLabel'), type: 'textarea', rows: 10 }],
+          onSubmit: function (v) {
+            var j;
+            try { j = JSON.parse(v.json); } catch (e) { return Promise.reject(t('cat.tpl.notJson')); }
+            if (!j || typeof j !== 'object' || !j.settings) return Promise.reject(t('cat.tpl.notTemplate'));
+            return api('POST', '/api/catalog/site-templates', j).then(function (r) {
+              A().toast(t('cat.tpl.imported', { name: r.template.name }));
+              catSourcesState().templates = null; A().renderPage();
+            });
+          }
+        });
+      case 'cat-src-template': {
+        var ssrc = ((catSourcesState().data || { sources: [] }).sources).filter(function (s) { return s.id === id; })[0];
+        if (!ssrc) return;
+        return openForm({
+          title: t('cat.tpl.save'), submitLabel: t('common.save'), note: t('cat.tpl.saveNote'),
+          fields: [{ name: 'name', label: t('cat.tpl.name'), value: ssrc.name }, { name: 'description', label: t('cat.tpl.description'), type: 'textarea', rows: 3 }],
+          onSubmit: function (v) {
+            return api('POST', '/api/catalog/site-templates', { sourceId: id, name: v.name, description: v.description }).then(function (r) {
+              A().toast(t('cat.tpl.saved', { name: r.template.name }));
+              var st3 = catSourcesState(); st3.templates = null; st3.tplOpen = true; A().renderPage();
+            });
+          }
+        });
+      }
       case 'cat-src-delete':
         if (!confirm(t('cat.deleteConfirm'))) return;
         return api('DELETE', '/api/catalog/sources/' + id).then(function () { cache.catalog = null; loadCatSources(); }, fail);

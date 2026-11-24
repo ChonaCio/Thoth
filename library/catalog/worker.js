@@ -218,7 +218,9 @@ async function crawl(msg, send) {
         const old = chapters.get(sid);
         const known = new Set(((old && old.chapters) || []).map(c => String(c.id)));
         const full = await adapter.fetchWork(Object.assign({}, ctx, { known }), Object.assign({}, w));
-        if (full.chapters) full.chapters = withSitemapChapters(full.chapters, ctx.sitemapChapters && ctx.sitemapChapters.get(sid)).map(c => standardChapter(c, src));
+        // (a reader that gives the whole list — chaptersComplete — takes nothing from the sitemaps)
+        if (full.chapters) full.chapters = (full.chaptersComplete ? full.chapters : withSitemapChapters(full.chapters, ctx.sitemapChapters && ctx.sitemapChapters.get(sid))).map(c => standardChapter(c, src));
+        delete full.chaptersComplete;
         // The English title when the page gives several (the site's main one kept among the other titles)
         const best = preferEnglish([full.title].concat(full.altTitles || []));
         if (best && best !== full.title) { full.altTitles = [full.title].concat((full.altTitles || []).filter(t => t !== best)); full.title = best; }

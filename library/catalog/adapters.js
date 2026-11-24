@@ -267,6 +267,60 @@ const webtoons = {
   }
 };
 
+/* ---------------- Manta (manta.net) ----------------
+ * Its pages are built by scripts, but each series page carries its data (Next.js __NEXT_DATA__): titles,
+ * creators, tags, and the episode list with which episodes are free. Works come from the sitemap
+ * (/<lang>/series/<title>?seriesId=N). Episodes: /<lang>/series/<title>/episodes/episode-N?episodeId=ID. */
+const MANTA_TYPES = { 30: 'novel', 60: 'manga' };
+const manta = {
+  type: 'manta', label: 'Manta (manta.net)', defaults: { baseUrl: 'https://manta.net', gapMs: 2000, languages: 'en' },
+  async *listWorks(ctx) {
+    const lang = langs(ctx.src)[0] || 'en';
+    const src = Object.assign({ listing: 'sitemap' }, ctx.src);
+    if (!src.workPattern) src.workPattern = `/${lang}/series/*`;
+    yield* require('./sitemap').sitemapWorks(Object.assign(ctx, { src }));
+  },
+  async fetchWork(ctx, stub) {
+    const { src, get } = ctx;
+    const res = await get(stub.url);
+    const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(res.text);
+    let s = null;
+    try { s = JSON.parse(m[1]).props.pageProps.initialSeries; } catch { /* not there */ }
+    if (!s || !s.data) throw Object.assign(new Error('No series data in the page'), { code: 'parse' });
+    const lang = langs(src)[0] || s.lang || 'en';
+    const tr = o => (o && typeof o === 'object' ? o[lang] || o.en || Object.values(o).find(v => typeof v === 'string') || '' : o == null ? '' : String(o));
+    const d = s.data;
+    const img = s.image || {};
+    const doc = parse(res.text);
+    const work = Object.assign({}, stub, {
+      title: tr(d.title) || stub.title,
+      cover: (img['1280x1840_720'] || img['1280x1840_480'] || {}).downloadUrl || null,
+      summary: tr(d.description && (d.description.long || d.description.short || d.description)),
+      genres: list((d.tags || []).map(t => tr(t.name))),
+      authors: list((d.creators || []).filter(c => /author|writer|artist|illustrat|original|story|\bart\b/i.test(c.role || '')).map(c => c.name)),
+      status: d.isCompleted ? 'ended' : 'ongoing',
+      type: MANTA_TYPES[s.type] || 'webcomic',
+      year: /^\d{4}/.test(s.openAt || '') ? Number(s.openAt.slice(0, 4)) : null
+    });
+    enrich(doc, work, res.url);
+    if (!src.includeChapters) return work;
+    const base = new URL(stub.url);
+    const seriesPath = base.pathname.replace(/\/+$/, '');
+    const now = Date.now();
+    work.chapters = (s.episodes || []).filter(e => e && e.id != null).map(e => {
+      const ord = e.ord != null ? e.ord : null;
+      const price = Number(((e.lockData || {}).buyOption || {}).price || 0);
+      const free = Boolean(e.data && e.data.isFree) || (!price && (e.lockData || {}).state === 110);
+      const later = e.openAt && Date.parse(e.openAt) > now;
+      return { id: `${seriesPath}/episodes/${e.id}`, n: ord != null ? String(ord) : null, t: tr(e.data && e.data.title) || (ord != null ? 'Episode ' + ord : ''),
+        u: `${base.origin}${seriesPath}/episodes/episode-${ord != null ? ord : e.id}?episodeId=${e.id}`, d: String(e.openAt || '').slice(0, 10), l: lang, pr: !free || later || undefined };
+    });
+    // (the list is the whole one: the sitemap's few episode addresses, named differently, aren't added)
+    work.chaptersComplete = true;
+    return work;
+  }
+};
+
 /* ---------------- WordPress "Madara" theme (many manga/scanlation sites) ---------------- */
 const madara = {
   type: 'madara', label: 'Madara theme (WordPress)', defaults: { gapMs: 1500 },
@@ -641,7 +695,8 @@ const custom = {
       title: pick(doc, s.workTitle, res.url, false, cl.workTitle) || meta('og:title') || pick(doc, 'h1', res.url) || stub.title,
       cover: pick(doc, s.workCover, res.url) || abs(meta('og:image'), res.url) || stub.cover,
       summary: s.summary ? cleanValue((doc.first(s.summary) || { textBlock: () => '' }).textBlock(), cl.summary && Object.assign({}, cl.summary, { counts: false })) : (meta('og:description') || ''),
-      genres: pick(doc, s.genres, res.url, true, cl.genres), authors: pick(doc, s.authors, res.url, true, cl.authors),
+      // (authors given as one line, "A, B; C": one each)
+      genres: pick(doc, s.genres, res.url, true, cl.genres), authors: list(pick(doc, s.authors, res.url, true, cl.authors).flatMap(v => String(v).split(/\s*[,;]\s*/))),
       tags: pick(doc, s.tags, res.url, true, cl.tags),
       altTitles: list(altRaw.flatMap(altSplit)), status: STATUS(pick(doc, s.status, res.url, false, cl.status)),
       type: pick(doc, s.type, res.url, false, cl.type) || null,
@@ -684,7 +739,9 @@ const custom = {
       const a = lsel ? li.first(lsel) || (li.el.tag === 'a' && (!s.chapterLink || /^a(\[href\])?$/i.test(lsel.trim())) ? li : null) : li;
       const u = a && abs(a.attr(lat || 'href'), base);
       const t = s.chapterTitle ? pick(li, s.chapterTitle, base) : (a ? a.text() : li.text());
-      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
+      // (premium: the row's marker when the source names one — a price, a lock — else the usual signs)
+      const pr = (s.chapterPremium ? li.select(s.chapterPremium).length > 0 : false) || isPremium(li, t);
+      return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null, pr: pr || undefined } : null;
     }).filter(Boolean));
     work.chapters = withExtra(work.chapters);
     return withComplete(ctx, work, chDoc, chRes);
@@ -704,6 +761,6 @@ async function withComplete(ctx, work, doc, res) {
   return work;
 }
 
-const ADAPTERS = { mangadex, webtoons, madara, mangareader, custom };
+const ADAPTERS = { mangadex, webtoons, manta, madara, mangareader, custom };
 const TYPES = Object.keys(ADAPTERS);
 module.exports = { ADAPTERS, TYPES, pick, chapterNum, STATUS, applyActions, enrich, cleanValue, expandListing };

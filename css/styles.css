@@ -1016,6 +1016,17 @@ body.is-reading { overflow: hidden; }
 /* External catalog source tiles: the same buttons in the same places (crawling | the source) */
 .cat-src__actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
 .cat-src__group { display: flex; flex-wrap: wrap; gap: 6px; }
+/* Site templates panel (Sources tab) */
+.cat-tpl { margin-bottom: 16px; }
+.cat-tpl__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+.cat-tpl__head .card__title { display: flex; align-items: center; gap: 8px; margin: 0; }
+.cat-tpl__group { font-size: .95rem; margin: 16px 0 6px; }
+.cat-tpl__list { list-style: none; margin: 0; padding: 0; }
+.cat-tpl__item { display: flex; gap: 12px; align-items: flex-start; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border); }
+.cat-tpl__text { min-width: 0; flex: 1; }
+.cat-tpl__text p { margin: 4px 0 0; }
+.cat-tpl__btns { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; flex: none; }
+@media (max-width: 640px) { .cat-tpl__item { flex-direction: column; } .cat-tpl__btns { justify-content: flex-start; } }
 .cat-src__actions .btn:disabled { pointer-events: auto; cursor: not-allowed; opacity: .45; } /* (still shows why on hover) */
 .wz-builder { margin: 4px 0 6px; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 8px; }
 .wz-builder p { margin: 2px 0; }

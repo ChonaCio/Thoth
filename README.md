@@ -549,6 +549,14 @@ sites added as **sources**, with its metadata and chapter list.
 - **More fields and clean-up (wizard → Work page):** tags, type, release year, and the separator of the alternative
   titles; under each text field, **Clean up the values**: remove counts ("Adventure 999", "Action · 1.2k"), a label
   before the value ("Status: Ongoing"), keep only the element's own text, or remove a regular expression.
+- **Site templates (Sources → From a template):** a source's complete settings for a known site, added in one step
+  (no detection, no wizard): Qi Manga, Vortex Scans, MangaNato, Manta, WEBTOON, MangaDex, MangaPill and MangaKatana,
+  each checked against the live site, plus engines for any site that runs them (Madara, MangaReader / Themesia,
+  the MangaNato family: the site's address is asked for). A source added with the address of one of these sites
+  gets its template automatically. **Save as template** on a source keeps how it reads its site (address, sitemaps,
+  patterns, selectors, clean-up rules, clicks; never its schedule, limits, blacklist, cookies or headers);
+  templates can be exported to a JSON file and imported in another Thoth. Selectors can also name a chapter row's
+  **premium marker** (`chapterPremium`, e.g. a price), and authors given on one line ("A, B; C") are split.
 - **Templates (wizard → Works list):** 26 layouts for known site engines and common structures (Madara, MangaStream
   / MangaReader and its list mode, FoOlSlide, Iken, FanFox, MangaTown, Mangakakalot, MangaBuddy, MangaPill, Bato,
   Genkan, paged catalogues, per-type pages, A–Z directories, latest feeds…) fill the listing and work-page fields.
@@ -679,6 +687,7 @@ sites added as **sources**, with its metadata and chapter list.
 | --- | --- | --- |
 | MangaDex (API) | mangadex.org | Official API; chapter languages and content ratings are settings. ~95 000 works: a full crawl with chapter lists takes hours. |
 | WEBTOON (Originals) | webtoons.com | The genre pages list every Original; episodes come from each series' list pages. Some of those pages are excluded by the site's robots.txt, so very long series get a partial episode list (shown as such). |
+| Manta | manta.net | Works from the sitemap; fields and the whole episode list from the data in each series page. Episodes not free right now (paid, or not out yet) are marked premium. |
 | Madara theme | WordPress manga sites using it | List at `/manga/`, chapters from the page or the theme's chapter loader. |
 | MangaReader theme | WordPress manga sites using it | List at `/manga/?page=N`. |
 | Other site | anything else | Give CSS selectors (list address with `{page}`, each work, title, cover, genres, chapters…; `selector@attribute` for links and images). Use *Test* to check them. |

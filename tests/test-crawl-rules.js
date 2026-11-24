@@ -35,6 +35,14 @@ const site = http.createServer((req, res) => {
   }
   // Chapter rows that are links themselves
   if (u.pathname === '/series/linkrows') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Link rows</h1><div class="chs">${[3, 2, 1].map(n => `<a class="ch" href="/series/linkrows/chapter-${n}">Chapter ${n} <span class="date">2026-01-0${n}</span></a>`).join('')}</div>`); }
+  if (u.pathname === '/series/priced') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Priced</h1><p class="au">Ana One, Bo Two; Cy Three</p><ul>' + [3, 2, 1].map(n => `<li class="cl"><a href="/series/priced/chapter-${n}"><span class="num">Chapter ${n}</span>${n === 3 ? '<span class="price">50</span>' : '<span class="free">Now Free</span>'}</a></li>`).join('') + '</ul>'); }
+  if (u.pathname === '/en/series/time-mage') {
+    const ep = (id, ord, o) => Object.assign({ id, ord, openAt: '2026-01-0' + ord + 'T04:00:00Z', data: {}, lockData: { buyOption: { price: 374 }, state: 30 } }, o);
+    const data = { props: { pageProps: { initialSeries: { id: 7, type: 60, openAt: '2025-03-01T00:00:00Z', image: { '1280x1840_720': { downloadUrl: 'https://img.example/c.jpg' } },
+      data: { title: { en: 'Time Mage' }, description: { long: 'About it.' }, isCompleted: true, tags: [{ name: { en: 'Fantasy', es: 'Fantasía' } }], creators: [{ name: 'Ana Author', role: 'Author' }, { name: 'Pub', role: 'Publisher' }] },
+      episodes: [ep(101, 1, { data: { isFree: true }, lockData: { buyOption: { price: 0 }, state: 110 } }), ep(102, 2), ep(103, 3, { openAt: '2999-01-01T00:00:00Z', lockData: { buyOption: { price: 0 }, state: 110 } })] } } } };
+    res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<title>Time Mage - Manga</title><script id="__NEXT_DATA__" type="application/json">${JSON.stringify(data)}</script>`);
+  }
   if (u.pathname === '/latin1') { res.writeHead(200, { 'Content-Type': 'text/html; charset=iso-8859-1' }); return res.end(Buffer.from([0x3c, 0x70, 0x3e, 0x43, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e])); }
   // Work pages that show only the newest chapters; the rest where the page's script would get it
   const recent = n => Array.from({ length: 3 }, (_, i) => `<li><a href="/series/${n}/chapter-${30 - i}">Chapter ${30 - i}</a></li>`).join('');
@@ -225,6 +233,17 @@ const site = http.createServer((req, res) => {
   const lr = await adapters.ADAPTERS.custom.fetchWork({ src: lrSrc, get: flr.get, incremental: false, known: new Set() }, { sid: '/series/linkrows', url: BASE + '/series/linkrows', title: 'x' });
   check(lr.chapters.length === 3 && lr.chapters[0].u === BASE + '/series/linkrows/chapter-3' && lr.chapters[0].n === '3' && /2026-01-03/.test(lr.chapters[0].d),
     'each row is its own link (its address, number and date read)', JSON.stringify(lr.chapters.slice(0, 1)));
+
+  console.log('Site template readers');
+  // A premium marker named by the source (a price in the row), authors given on one line
+  const pr = await adapters.ADAPTERS.custom.fetchWork({ src: { type: 'custom', baseUrl: BASE, includeChapters: true, fullChapters: false, selectors: { workTitle: 'h1', authors: 'p.au', chapter: 'li.cl', chapterLink: 'a@href', chapterTitle: '.num', chapterPremium: '.price' } }, get: flr.get, incremental: false, known: new Set() },
+    { sid: '/series/priced', url: BASE + '/series/priced', title: 'x' });
+  check(pr.chapters.length === 3 && pr.chapters.filter(c => c.pr).length === 1 && pr.chapters[0].pr === true && pr.authors.join('|') === 'Ana One|Bo Two|Cy Three', 'a chapter with the source\'s premium marker is premium; "A, B; C" is three authors', JSON.stringify({ a: pr.authors, p: pr.chapters.map(c => c.pr) }));
+  // Manta: the series page's data (__NEXT_DATA__) → fields and the whole episode list, free ones not premium
+  const mt = await adapters.ADAPTERS.manta.fetchWork({ src: { type: 'manta', baseUrl: BASE, languages: 'en', includeChapters: true }, get: flr.get }, { sid: '/en/series/time-mage', url: BASE + '/en/series/time-mage?seriesId=7', title: 'x' });
+  check(mt.title === 'Time Mage' && mt.authors.join('|') === 'Ana Author' && mt.genres.join('|') === 'Fantasy' && mt.status === 'ended' && mt.type === 'manga' && mt.cover === 'https://img.example/c.jpg' && mt.chaptersComplete === true &&
+    mt.chapters.length === 3 && !mt.chapters[0].pr && mt.chapters[1].pr && mt.chapters[2].pr && mt.chapters[1].u === BASE + '/en/series/time-mage/episodes/episode-2?episodeId=102' && mt.chapters[0].d === '2026-01-01',
+    'Manta: fields and episodes from the page data (free / paid / not out yet)', JSON.stringify(mt).slice(0, 400));
 
   site.close();
   console.log(failed ? `\n${failed} CRAWL RULE CHECK(S) FAILED` : `\nALL ${passed} CRAWL RULE CHECKS PASSED`);

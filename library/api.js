@@ -778,6 +778,13 @@ async function handle(ctx) {
     // Layout templates for the generic reader; which fit a site
     if (p === '/api/catalog/templates' && method === 'GET') return send(200, { templates: catalog.templates() });
     if (p === '/api/catalog/sources/find-template' && method === 'POST') return send(200, await catalog.findTemplate((body || {}).url));
+    // Site templates (complete settings for a site or engine): list; save one (from a source: { sourceId, name? },
+    // or an imported file); its file (export); remove one of the administrator's. A new source takes one with
+    // POST /api/catalog/sources { template, name?, baseUrl? }.
+    if (p === '/api/catalog/site-templates' && method === 'GET') return send(200, { templates: catalog.siteTemplates() });
+    if (p === '/api/catalog/site-templates' && method === 'POST') return send(201, { template: catalog.saveSiteTemplate(body) });
+    if ((m = /^\/api\/catalog\/site-templates\/([\w-]+)$/.exec(p)) && method === 'GET') return send(200, { template: catalog.exportSiteTemplate(m[1]) });
+    if ((m = /^\/api\/catalog\/site-templates\/([\w-]+)$/.exec(p)) && method === 'DELETE') { catalog.removeSiteTemplate(m[1]); return send(200, { ok: true }); }
     // Clear crawled data for a clean crawl (body { confirm: 'CLEAR', sources?: [ids], keepMerges?, crawl? }); the
     // sources and their settings stay
     if (p === '/api/catalog/clear' && method === 'POST') {
