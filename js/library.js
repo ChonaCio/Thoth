@@ -2070,7 +2070,8 @@
         : '<button type="button" class="btn btn--primary" data-wz-act="next">' + esc(t('wz.next')) + '</button>');
     if (preview) {
       $('#wz-pv-bar', dlg).innerHTML = wzPreviewBar();
-      $('#wz-pv-error', dlg).innerHTML = wz.pv.error ? errorBanner(wz.pv.error) : '';
+      $('#wz-pv-error', dlg).innerHTML = wz.pv.error ? errorBanner(wz.pv.error)
+        : wz.pv.page && !wz.pv.loading && wzShellPage(wz.pv.page) ? '<p class="small wz-preview__note" role="note">' + icon('help') + esc(t(wz.pv.scripts ? 'wz.shellScripts' : 'wz.shellPage')) + '</p>' : '';
       wzStatus();
     }
     if (window.renderIcons) window.renderIcons(dlg);
@@ -2130,6 +2131,19 @@
   }
   // Another kind of page to show: the next render loads it
   function wzResetPreview() { var pv = wz.pv; pv.seq = (pv.seq || 0) + 1; pv.page = null; pv.loading = false; pv.error = null; pv.info = null; pv.target = null; pv.tried = false; pv.srcDoc = null; }
+  // A page the site sends nearly empty (an app shell: <div id="root"></div> and scripts) and builds in the
+  // browser: the preview shows only its background (and whatever sits outside the app, a Discord button…), and
+  // crawls, which read pages as sent, find nothing in it either
+  function wzShellPage(page) {
+    if (page.shell != null) return page.shell;
+    var src = String(page.source || '');
+    if (!/<script\b/i.test(src)) return (page.shell = false);
+    var doc = new DOMParser().parseFromString(src, 'text/html');
+    Array.prototype.forEach.call(doc.querySelectorAll('script, style, noscript, template, svg, head'), function (x) { x.remove(); });
+    var text = (doc.body ? doc.body.textContent : '').replace(/\s+/g, ' ').trim();
+    var pics = doc.body ? doc.body.querySelectorAll('img[src], img[data-src], picture').length : 0;
+    return (page.shell = text.length < 60 && pics < 3);
+  }
   // The document the frame shows: the site's page (its images, styles, and scripts if asked) + the picker
   function wzBuildDoc(page) {
     var pv = wz.pv;
@@ -2157,6 +2171,11 @@
         }
       });
     }
+    // Styles, images and the site's classic scripts load as plain requests: a "crossorigin" one would be refused
+    // (the frame isn't the site), which left some pages black with no styles. (Module scripts always ask so.)
+    Array.prototype.forEach.call(doc.querySelectorAll('link[crossorigin], link[integrity], img[crossorigin], script[crossorigin]:not([type=module]), script[integrity]:not([type=module])'), function (x) {
+      x.removeAttribute('crossorigin'); x.removeAttribute('integrity');
+    });
     var head = doc.head || doc.documentElement.insertBefore(doc.createElement('head'), doc.body);
     var base = doc.createElement('base'); base.setAttribute('href', page.url);
     head.insertBefore(base, head.firstChild);

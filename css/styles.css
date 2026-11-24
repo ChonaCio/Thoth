@@ -1045,6 +1045,8 @@ body.is-reading { overflow: hidden; }
 .wz-click__loads { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
 .wz-click__loads input { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
 .wz-click__loads .field__help { flex-basis: 100%; }
+.wz-preview__note { display: flex; gap: 8px; align-items: flex-start; margin: 0 12px 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,.12)); color: var(--text); }
+.wz-preview__note svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
 .wz-preview__keep { padding: 0 12px 8px; }
 .wz-preview__keep:empty { display: none; }
 

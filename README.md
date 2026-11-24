@@ -530,7 +530,10 @@ sites added as **sources**, with its metadata and chapter list.
   - *Site scripts* — runs the site's own scripts, for pages that build their content with scripts; the preview is
     then fully isolated from Thoth (it can't reach the app, its cookies or its API). Off (the default), the site's
     scripts and inline handlers are removed and only the picker can run. Crawls never run a site's scripts, so a
-    pick that only exists after them is marked (*not in the page as the site sends it*).
+    pick that only exists after them is marked (*not in the page as the site sends it*). Some sites send an almost
+    empty page and build everything with scripts that refuse to run anywhere but on the site itself; the preview
+    then stays dark and a note above it says so — crawls can't read such pages with selectors either, so use
+    automatic settings (sitemaps) or another of the site's pages.
   - *Wait N s before picking* — the picker waits for the page to finish loading (its images and styles), then
     that many seconds more (up to 60), with a countdown; ↻ shows the page again.
 - **Clicks before collecting.** When data is behind a tab or a button ("Chapters", "Show all", "More info"), the

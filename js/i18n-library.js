@@ -4251,4 +4251,24 @@
     "wz.clicksIn.work": "Cliques na página da obra",
     "wz.clicksIn.chapters": "Cliques para os capítulos"
   });
+  add('en', {
+    "wz.shellPage": "This page arrives almost empty: the site builds it with its scripts in the browser, so the preview shows only its background. Crawls read pages as the site sends them, so they find nothing here either. If the site has sitemaps, turn on automatic settings in the first step; or try another of its pages.",
+    "wz.shellScripts": "This page is built by the site's scripts, and they wouldn't run in the preview (the site refuses to load them anywhere but on itself). Crawls read pages as the site sends them, which is almost empty here. If the site has sitemaps, turn on automatic settings in the first step; or try another of its pages."
+  });
+  add('es', {
+    "wz.shellPage": "Esta página llega casi vacía: el sitio la construye con sus scripts en el navegador, así que la vista previa solo muestra el fondo. Los rastreos leen las páginas tal como el sitio las envía, así que aquí tampoco encuentran nada. Si el sitio tiene sitemaps, activa la configuración automática en el primer paso; o prueba otra de sus páginas.",
+    "wz.shellScripts": "Esta página la construyen los scripts del sitio, y no pudieron ejecutarse en la vista previa (el sitio no deja cargarlos fuera de él). Los rastreos leen las páginas tal como el sitio las envía, y aquí llega casi vacía. Si el sitio tiene sitemaps, activa la configuración automática en el primer paso; o prueba otra de sus páginas."
+  });
+  add('fr', {
+    "wz.shellPage": "Cette page arrive presque vide : le site la construit avec ses scripts dans le navigateur, donc l'aperçu n'en montre que le fond. Les explorations lisent les pages telles que le site les envoie, elles n'y trouvent donc rien non plus. Si le site a des sitemaps, activez les réglages automatiques à la première étape ; ou essayez une autre de ses pages.",
+    "wz.shellScripts": "Cette page est construite par les scripts du site, qui n'ont pas pu s'exécuter dans l'aperçu (le site refuse qu'on les charge ailleurs que chez lui). Les explorations lisent les pages telles que le site les envoie, et celle-ci arrive presque vide. Si le site a des sitemaps, activez les réglages automatiques à la première étape ; ou essayez une autre de ses pages."
+  });
+  add('de', {
+    "wz.shellPage": "Diese Seite kommt fast leer an: Die Website baut sie mit ihren Skripten im Browser auf, daher zeigt die Vorschau nur den Hintergrund. Crawls lesen Seiten so, wie die Website sie sendet, und finden hier also auch nichts. Hat die Website Sitemaps, aktiviere im ersten Schritt die automatischen Einstellungen; oder probiere eine andere ihrer Seiten.",
+    "wz.shellScripts": "Diese Seite wird von den Skripten der Website aufgebaut, und die ließen sich in der Vorschau nicht ausführen (die Website erlaubt nicht, sie anderswo zu laden). Crawls lesen Seiten so, wie die Website sie sendet, und diese kommt fast leer an. Hat die Website Sitemaps, aktiviere im ersten Schritt die automatischen Einstellungen; oder probiere eine andere ihrer Seiten."
+  });
+  add('pt', {
+    "wz.shellPage": "Esta página chega quase vazia: o site a monta com seus scripts no navegador, então a prévia mostra só o fundo. As varreduras leem as páginas como o site as envia, então também não encontram nada aqui. Se o site tiver sitemaps, ative as configurações automáticas no primeiro passo; ou tente outra de suas páginas.",
+    "wz.shellScripts": "Esta página é montada pelos scripts do site, e eles não puderam rodar na prévia (o site não deixa carregá-los fora dele). As varreduras leem as páginas como o site as envia, e esta chega quase vazia. Se o site tiver sitemaps, ative as configurações automáticas no primeiro passo; ou tente outra de suas páginas."
+  });
 })();
