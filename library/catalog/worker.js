@@ -27,6 +27,13 @@ function standardChapter(c, src) {
   return out;
 }
 
+// What decides how a source's works are read (not its name, schedule or pause)
+function settingsKey(src) {
+  const pick = { type: src.type, listing: src.listing, workPattern: src.workPattern, chapterPattern: src.chapterPattern, listPath: src.listPath, languages: src.languages,
+    contentRating: src.contentRating, includeChapters: src.includeChapters !== false, selectors: src.selectors || {}, actions: src.actions || {} };
+  return require('crypto').createHash('sha1').update(JSON.stringify(pick)).digest('hex').slice(0, 16);
+}
+
 let current = null;
 const FIELDS = ['title', 'altTitles', 'cover', 'summary', 'authors', 'genres', 'tags', 'status', 'type', 'year', 'url', 'languages', 'links'];
 const filled = v => v != null && v !== '' && !(Array.isArray(v) && !v.length) && v !== 'unknown';
@@ -55,7 +62,8 @@ async function redetect(msg) {
 
 async function crawl(msg, send) {
   msg = Object.assign({}, msg, { source: await redetect(msg) });
-  const { source: src, dir, mode } = msg;
+  const { source: src, dir } = msg;
+  let mode = msg.mode;
   const adapter = ADAPTERS[src.type];
   if (!adapter) throw new Error(`Unknown source type ${src.type}`);
   const gapMs = Math.max(Number(src.gapMs) || adapter.defaults.gapMs || 1000, src.type === 'mangadex' ? 200 : 500);
@@ -66,11 +74,16 @@ async function crawl(msg, send) {
   // How it's crawling right now: works read at once, requests in progress / waiting for their turn, the pause
   const concurrencyNow = () => { const l = fetcher.limits(); return { lanes: stats.concurrency || 1, parallel: l.parallel, crawlDelay: l.crawlDelay, active: fetcher.stats.active, waiting: fetcher.stats.waiting, gapMs }; };
   const run = current = { stop: false, fetcher };
-  const incremental = mode === 'update';
   const data = store.readWorks(dir);
   const works = data.works;
   const chapters = store.shardCache(dir);
   const prevState = store.readState(dir);
+  // How works are read (kind of site, selectors, clicks, patterns…): when it changed since the last crawl, an update
+  // reads every work again — the ones the site didn't change too — or they'd keep what the old settings found
+  const readingKey = settingsKey(src);
+  const settingsChanged = Boolean(prevState.readingKey && prevState.readingKey !== readingKey);
+  if (mode === 'update' && settingsChanged) mode = 'full';
+  const incremental = mode === 'update';
   // An interrupted full crawl continues where it was (works already read in that run are skipped)
   const resume = !incremental && prevState.running && prevState.mode === 'full' ? prevState.runStartedAt : null;
   const runStartedAt = resume || new Date().toISOString();
@@ -79,6 +92,7 @@ async function crawl(msg, send) {
   const stats = { listed: 0, added: 0, updated: 0, read: 0, errors: 0, chapters: 0, removed: 0, partial: 0, requests: 0, mode, resumed: Boolean(resume) };
   const report = extra => send(Object.assign({ type: 'progress', reqId: msg.reqId }, stats, extra));
   const say = line => send({ type: 'log', reqId: msg.reqId, line }); // (a line in the task's log)
+  if (settingsChanged) say('the reading settings changed since the last crawl: every work is read again');
   say(`listing the works (${src.listing === 'sitemap' ? 'from ' + ((src.sitemaps || []).length || 1) + ' sitemap(s)' : 'from the list pages'}${incremental ? ', recent changes only' : ''})`);
   let lastFlush = Date.now();
   const flush = () => { store.writeWorks(dir, { sourceId: src.id, works }); chapters.flush(); lastFlush = Date.now(); send({ type: 'flushed', reqId: msg.reqId }); };
@@ -202,7 +216,7 @@ async function crawl(msg, send) {
     }
   }
   Object.assign(state, { running: !finished && !incremental, phase: finished ? 'done' : 'stopped', lastError: aborted ? errText(aborted) : null, stats, total: Object.keys(works).length });
-  if (finished) { state.lastCrawlAt = runStartedAt; state.lastCompleteAt = new Date().toISOString(); }
+  if (finished) { state.lastCrawlAt = runStartedAt; state.lastCompleteAt = new Date().toISOString(); state.readingKey = readingKey; }
   store.writeState(dir, state);
   current = null;
   if (aborted) throw Object.assign(new Error(errText(aborted)), { code: aborted.code || 'error', stats });

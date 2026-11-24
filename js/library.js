@@ -1478,7 +1478,8 @@
         '<div class="cover">' + (it.cover ? '<img class="cover__img" loading="lazy" decoding="async" alt="" src="' + catCover(it.coverKey) + '" />' : '') + placeholder('cbz') +
           (it.inLibrary ? '<span class="cat-card__have" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') + '</div>' +
         '<div class="media-card__body"><h3 class="media-card__title">' + esc(it.title) + '</h3>' +
-          '<p class="media-card__meta cat-card__meta">' + it.sources.map(function (s) { return sourceIconHtml(s.sourceId, 'src-icon--xs'); }).join('') + '<span>' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : ''].filter(Boolean).join(' · ')) + '</span></p></div>' +
+          '<p class="media-card__meta cat-card__meta">' + it.sources.map(function (s) { return sourceIconHtml(s.sourceId, 'src-icon--xs'); }).join('') + '<span>' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : '',
+            it.versions && it.versions.length > 1 ? t('lib.versions', { count: it.versions.length }) : ''].filter(Boolean).join(' · ')) + '</span></p></div>' +
       '</a></article>';
   }
   function fetchCatalog(append) {
@@ -1553,7 +1554,34 @@
     var missingList = miss && miss.chapters.length ? '<details class="card card--wide cat-missing"><summary class="card__title">' + esc(t('cat.missingTitle', { count: miss.chapters.length })) + '</summary><ul class="cat-chapters">' +
         miss.chapters.slice(0, 500).map(function (c) { return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n) + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span><span class="muted small">' + esc(c.source) + '</span>' +
           (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + '</a>' : '') + '</li>'; }).join('') + '</ul></details>' : '';
-    var sources = w.sources.map(function (s, i) {
+    // A version's name: its tags (Raw + Uncensored…), or Regular
+    var versionLabel = function (v) { return (v.editions && v.editions.length ? v.editions : ['base']).map(function (e) { return editionTag(e, true); }).join(' '); };
+    var versionTabs = w.versions && w.versions.length > 1 ? '<nav class="tabs version-tabs" aria-label="' + esc(t('series.versions')) + '">' + w.versions.map(function (v) {
+        var on = v.key === w.key;
+        return '<a class="tab' + (on ? ' is-active' : '') + '" href="#catalog/work?key=' + encodeURIComponent(v.key) + '"' + (on ? ' aria-current="page"' : '') + '>' + versionLabel(v) + '<span class="tab__count">' + v.chapters + '</span></a>';
+      }).join('') + '</nav>' : '';
+    // Chapters: every chapter of every source in one list (each with its sources' links), or one source's
+    var tab = d.tab && (d.tab === 'all' || w.sources.some(function (s) { return s.key === d.tab; })) ? d.tab : 'all';
+    var chapterTabs = '<nav class="tabs cat-ch-tabs" role="tablist" aria-label="' + esc(t('cat.chaptersTabs')) + '">' +
+      '<button type="button" role="tab" class="tab' + (tab === 'all' ? ' is-active' : '') + '" aria-selected="' + (tab === 'all') + '" data-lib="cat-ch-tab" data-id="all" data-work="' + esc(key) + '">' + icon('list') + esc(t('cat.allChapters')) + '<span class="tab__count">' + (w.allChapters || []).length + '</span></button>' +
+      w.sources.map(function (s) {
+        return '<button type="button" role="tab" class="tab' + (tab === s.key ? ' is-active' : '') + '" aria-selected="' + (tab === s.key) + '" data-lib="cat-ch-tab" data-id="' + esc(s.key) + '" data-work="' + esc(key) + '">' + sourceIconHtml(s.sourceId, 'src-icon--xs') + esc(s.name) + '<span class="tab__count">' + s.chapterList.length + '</span></button>';
+      }).join('') + '</nav>';
+    var unified = function () {
+      var list = w.allChapters || [], all = d.showAll && d.showAll.all, rows = all ? list : list.slice(0, 100);
+      return '<section class="card card--wide cat-source">' +
+        '<p class="muted small">' + esc(t('cat.allChaptersHelp', { count: list.length, sources: w.sources.length })) + '</p>' +
+        (rows.length ? '<ul class="cat-chapters cat-chapters--all">' + rows.map(function (c) {
+          return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n != null ? c.n : '—') + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span>' +
+            '<span class="cat-ch__links">' + c.links.map(function (l) {
+              return l.u ? '<a class="chip chip--link cat-ch__src' + (l.pr ? ' is-premium' : '') + '" href="' + esc(l.u) + '" target="_blank" rel="noopener noreferrer" title="' + esc(t('cat.readOn', { source: l.name }) + (l.pr ? ' — ' + t('cat.premium') : '')) + '">' + sourceIconHtml(l.sourceId, 'src-icon--xs') + esc(l.name) + (l.pr ? icon('lock') : '') + '</a>'
+                : '<span class="chip">' + esc(l.name) + '</span>';
+            }).join('') + '</span>' + (c.d ? '<span class="muted small">' + esc(c.d) + '</span>' : '') + '</li>';
+          }).join('') + '</ul>' : '<p class="muted">' + esc(t('cat.noChapters')) + '</p>') +
+        (!all && list.length > 100 ? '<button class="btn btn--text btn--small" data-lib="cat-all-chapters" data-key="all" data-work="' + esc(key) + '">' + esc(t('cat.showAll', { count: list.length })) + '</button>' : '') +
+      '</section>';
+    };
+    var sources = tab === 'all' ? unified() : w.sources.filter(function (s) { return s.key === tab; }).map(function (s, i) {
       var all = d.showAll && d.showAll[s.key];
       var rows = all ? s.chapterList : s.chapterList.slice(0, 50);
       return '<section class="card card--wide cat-source">' +
@@ -1576,7 +1604,7 @@
       '<div class="detail">' +
         '<div class="detail__cover cover cover--large">' + (w.cover ? '<img class="cover__img" alt="" src="' + catCover(w.coverKey) + '" />' : '') + placeholder('cbz') + '</div>' +
         '<div class="detail__body">' +
-          '<h1 class="detail__title">' + esc(w.title) + '</h1>' +
+          '<h1 class="detail__title">' + esc(w.title) + (w.editions && w.editions.length ? ' ' + w.editions.map(function (e) { return editionTag(e); }).join(' ') : '') + '</h1>' +
           '<div class="detail__meta">' + [w.type ? '<span class="badge badge--primary">' + esc(t('type.' + w.type)) + '</span>' : '', w.year ? esc(w.year) : '',
             w.status && w.status !== 'unknown' ? '<span class="badge">' + esc(t('series.status.' + w.status)) + '</span>' : '', esc(t('cat.chapters', { count: w.chapters })),
             w.lastChapter ? esc(t('cat.lastChapter', { n: w.lastChapter })) : ''].filter(Boolean).join('<span class="dot">·</span>') + '</div>' +
@@ -1587,7 +1615,7 @@
           '<p class="muted small">' + esc(t('cat.foundOn', { sources: w.sources.map(function (s) { return s.name; }).join(', ') })) + '</p>' +
           (isAdmin() && w.groupId ? '<button class="btn btn--text btn--danger" data-lib="cat-unmerge" data-id="' + esc(w.groupId) + '" data-work="' + esc(key) + '">' + esc(t('cat.unmerge')) + '</button>' : '') +
         '</div>' +
-      '</div>' + missingList + sources;
+      '</div>' + missingList + versionTabs + chapterTabs + sources;
   }
 
   // Merge tab (admins): the same work on several sites. Suggestions to confirm, and the works merged already
@@ -3784,6 +3812,7 @@
       case 'log-delete':
         if (!confirm(t('logs.deleteConfirm'))) return;
         return api('DELETE', '/api/logs/' + encodeURIComponent(id)).then(function () { logsPage.enter(A().parseRoute()); }, fail);
+      case 'cat-ch-tab': { var cw = catWorkState(btn.dataset.work); if (cw) { cw.tab = id; A().renderPage(); } return; }
       case 'cat-file-open': catFilesState().raw = false; return openSiteFile(id);
       case 'cat-file-raw': catFilesState().raw = true; return A().renderPage();
       case 'cat-merge-check': return loadCatMerge();

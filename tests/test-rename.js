@@ -45,6 +45,14 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   const { preferEnglish, taggedEnglish } = require(path.join(APP, 'library', 'titles.js'));
   ok(preferEnglish(['Shingeki no Kyojin', 'Attack on Titan', '進撃の巨人']) === 'Attack on Titan' && preferEnglish(['나 혼자만 레벨업', 'Solo Leveling']) === 'Solo Leveling' && preferEnglish(['One Piece', 'ワンピース']) === 'One Piece' &&
     taggedEnglish([{ 'ja-ro': 'Kimetsu no Yaiba' }, { en: 'Demon Slayer' }]) === 'Demon Slayer' && taggedEnglish([{ en_jp: 'Romaji' }]) === null, 'titles: the English one is preferred (tagged or by how it reads)');
+  // What isn't part of a title, and version markers (catalog titles; the library uses the bracketed markers)
+  const { parseTitle } = require(path.join(APP, 'library', 'titles.js'));
+  const pt = (x, o) => { const p = parseTitle(x, o); return p.title + (p.editions.length ? ' [' + p.editions.join('+') + ']' : ''); };
+  const titleCases = [['Solo Leveling (Official) - engsub', 'Solo Leveling'], ['One Piece [AI ANIMATION]', 'One Piece [animated]'], ['Tomb Raider King [AI CC]', 'Tomb Raider King [animated]'],
+    ['Berserk (Raw) Uncensored', 'Berserk [raw+uncensored]'], ['Berserk - Full Colored', 'Berserk [colored]'], ['Kingdom Uncen', 'Kingdom [uncensored]'], ['Eat Raw', 'Eat Raw'], ['Lookism (2019)', 'Lookism (2019)']];
+  const badTitles = titleCases.filter(([x, want]) => pt(x) !== want).map(([x]) => x + ' → ' + pt(x));
+  ok(!badTitles.length && pt('Tower of God - Fake Scans', { sourceNames: ['Fake Scans'] }) === 'Tower of God' && pt('Work (Manga) [MOTION]', { bare: false, noise: false }) === 'Work (Manga) [animated]',
+    `titles: noise taken out, versions found (several, with or without brackets)${badTitles.length ? ' (' + badTitles.join('; ') + ')' : ''}`);
   // The same rules for chapter names read on sites (external catalog)
   const { chapterTitle } = require(path.join(APP, 'library', 'naming.js'));
   const siteNames = [['Chapter 44 - 44', 'Chapter 44'], ['Chapter 44 - Ch. 44', 'Chapter 44'], ['Ch. 044 - Ch. 44  Jan 4, 2025  1.2k views', 'Chapter 44'], ['Vol.2 Ch.15 - Escape 3 days ago', 'Chapter 15 - Escape'],

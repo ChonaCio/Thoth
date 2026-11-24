@@ -1026,3 +1026,17 @@ body.is-reading { overflow: hidden; }
 .wz-click__result { grid-column: 2 / -1; margin: 0; color: var(--text-muted); overflow-wrap: anywhere; }
 .wz-click__result.is-bad { color: var(--danger); }
 @media (max-width: 520px) { .wz-click { grid-template-columns: auto minmax(0, 1fr) auto; } .wz-click select { grid-column: 2 / 3; } }
+
+/* Catalog work page: chapters of every source in one list, each with its sources' links */
+.cat-ch-tabs { margin-top: 1.5rem; overflow-y: hidden; }
+.cat-ch-tabs .tab { display: inline-flex; align-items: center; gap: 6px; }
+.cat-chapters--all li { grid-template-columns: 4.5em minmax(0, 1fr) auto; }
+.cat-chapters--all .cat-ch__links { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.cat-chapters--all li > .muted { grid-column: 2 / -1; margin-top: -4px; }
+.cat-ch__src { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; padding: 2px 8px; }
+.cat-ch__src.is-premium { opacity: .7; }
+.cat-ch__src svg { width: 12px; height: 12px; fill: currentColor; }
+@media (max-width: 560px) { .cat-chapters--all li { grid-template-columns: 3.5em minmax(0, 1fr); } .cat-chapters--all .cat-ch__links { grid-column: 2; justify-content: flex-start; } }
+.cat-ch-tabs button.tab { background: none; border: 0; border-radius: 0; font: inherit; color: var(--text-muted); cursor: pointer; }
+.cat-ch-tabs button.tab.is-active { color: var(--primary); }
+.cat-source > .cat-chapters { width: 100%; align-self: stretch; }

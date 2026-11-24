@@ -39,4 +39,68 @@ function preferEnglish(titles) {
   return best;
 }
 
-module.exports = { englishScore, isEnglishTag, taggedEnglish, preferEnglish };
+/* ---------------- what isn't part of a title: noise and version markers ----------------
+ * "Solo Leveling (Official) - engsub"            → Solo Leveling
+ * "Tower of God - Fake Scans"  (the source's name) → Tower of God
+ * "One Piece [AI ANIMATION]"                       → One Piece, version animated
+ * "Berserk (Raw) Uncensored", "Berserk - Full Colored" → Berserk, versions raw + uncensored / colored
+ * Versions: colored, raw, uncensored, animated (as the library's: "Work (Colored)"). */
+const EDITION_ORDER = ['colored', 'raw', 'uncensored', 'animated'];
+const MARKERS = [
+  [/^(?:ai[\s_-]*animation|ai[\s_-]*cc|ai[\s_-]*anime|motion(?:[\s_-]*comics?)?|animated|animation|anime[\s_-]*version)$/i, 'animated'],
+  [/^(?:full[\s_-]*colou?r(?:ed)?|colou?r(?:ed)?(?:[\s_-]*version)?|digital[\s_-]*colou?r(?:ed)?)$/i, 'colored'],
+  [/^(?:raws?|raw[\s_-]*(?:scans?|version))$/i, 'raw'],
+  [/^(?:uncensored|uncen(?:sored)?)$/i, 'uncensored'],
+  [/^(?:regular|normal|original(?:[\s_-]*version)?|base)$/i, 'base']
+];
+// Bare words at the end that are versions ("Solo Leveling Raw"): only these, never "base" words (a title may end in "Original")
+const BARE_END = /(?:^|[\s\-–—|:,])((?:full[\s_-]*)?colou?r(?:ed)?|raws?|uncensored|uncen|ai[\s_-]*animation|ai[\s_-]*cc|motion(?:[\s_-]*comics?)?)\s*$/i;
+// Not part of a title: "(Official)", "[Eng Sub]", " - engsub"…
+const NOISE = /^(?:official(?:[\s_-]*(?:translation|release|english))?|eng(?:lish)?[\s_-]*sub(?:bed|s)?|engsub|eng|english|en|scans?|scanlations?|webtoon|manhwa|manga|manhua|webcomic|novel|hd|new|completed?|ongoing|free)$/i;
+const markerOf = s => { const x = String(s).trim(); for (const [re, e] of MARKERS) if (re.test(x)) return e; return null; };
+const escapeRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// → { title, editions: ['raw', 'uncensored'], edition: the main one (animated > colored > uncensored > raw) or null }
+// opts.sourceNames: names to drop as a tail (" - Fake Scans"); opts.bare: also bare version words at the end
+// opts.noise: false keeps noise words (only versions are taken out; the library's folder names)
+function parseTitle(raw, { sourceNames = [], bare = true, noise = true } = {}) {
+  const isNoise = p => noise && NOISE.test(String(p).trim());
+  let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  const editions = new Set();
+  // "Read Solo Leveling Manga Online - Site" → Solo Leveling
+  const read = noise && /^read\s+(.+?)\s+(?:manga|manhwa|manhua|webtoon|comics?|novel)?\s*(?:online|for free)\b/i.exec(t);
+  if (read) t = read[1];
+  // A source's name as a tail or in brackets
+  for (const name of sourceNames.filter(n => n && String(n).trim().length > 1)) {
+    const n = escapeRe(String(name).trim());
+    t = t.replace(new RegExp(`\\s*[\\[(]\\s*${n}\\s*[\\])]`, 'gi'), ' ').replace(new RegExp(`\\s*[-–—|:]\\s*${n}\\s*$`, 'i'), '').trim();
+  }
+  // Bracketed parts: versions and noise go, anything else stays ("(2019)", "(Novel)" is noise)
+  for (let i = 0; i < 6; i++) {
+    const before = t;
+    t = t.replace(/\s*[\[(]\s*([^\])[(]{1,40}?)\s*[\])]/g, (whole, inner) => {
+      const parts = inner.split(/\s*[,/+&]\s*|\s+-\s+/);
+      const kinds = parts.map(p => markerOf(p) || (isNoise(p) ? 'noise' : null));
+      if (kinds.every(Boolean)) { kinds.forEach(k => { if (k !== 'noise' && k !== 'base') editions.add(k); }); return ' '; }
+      return whole;
+    }).replace(/\s+/g, ' ').trim();
+    // Tails after a separator: " - engsub", " | Official", " - Raw"
+    const tail = /\s*[-–—|:]\s*([^-–—|:]{1,30})$/.exec(t);
+    if (tail) {
+      const k = markerOf(tail[1]) || (isNoise(tail[1]) ? 'noise' : null);
+      if (k) { if (k !== 'noise' && k !== 'base') editions.add(k); t = t.slice(0, tail.index).trim(); }
+    }
+    if (bare) {
+      const m = BARE_END.exec(t);
+      // (only with enough title left: "Eat Raw" stays a title)
+      if (m && m.index > 0 && t.slice(0, m.index).replace(/[\s\-–—|:,]+$/, '').length >= 5) { const k = markerOf(m[1]); if (k) { editions.add(k); t = t.slice(0, m.index).trim(); } }
+    }
+    t = t.replace(/[\s\-–—|:,]+$/, '').trim();
+    if (t === before) break;
+  }
+  const list = EDITION_ORDER.filter(e => editions.has(e));
+  const main = ['animated', 'colored', 'uncensored', 'raw'].find(e => editions.has(e)) || null;
+  return { title: t || String(raw || '').trim(), editions: list, edition: main };
+}
+
+module.exports = { englishScore, isEnglishTag, taggedEnglish, preferEnglish, parseTitle, EDITION_ORDER };

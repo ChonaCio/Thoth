@@ -581,6 +581,18 @@ sites added as **sources**, with its metadata and chapter list.
 - **Premium chapters** (behind coins, a pass, early access, or unavailable on MangaDex) are marked *Premium*: listed,
   but not readable for free right now; the chapters your library lacks say so too (a free copy on another source
   is preferred).
+- **Titles without noise, and versions.** What sites add to a title is taken out: `(Official)`, ` - engsub`,
+  `[Eng Sub]`, the source's own name (` - Site name`), "Read … Online". Version markers — `[AI ANIMATION]`, `[AI CC]`,
+  `[MOTION]` (Animated); `Raw`; `Colored`, `Full Colored` (Colored); `Uncensored`, `Uncen` (Uncensored), several at once,
+  in brackets or not — say which version a work is, and **versions of a work are one catalog entry**, as in a
+  library: its card says "N versions" and its page has a tab per version (Regular first) over the chapters. Works
+  are only merged with works of the same version. (Libraries recognize the same markers in brackets:
+  `One Piece [AI ANIMATION]` is the Animated version.)
+- **A work's chapters:** tabs over the list — **All chapters** (every chapter of every source once, with a link to
+  each source that has it; premium ones marked) and one tab per source.
+- **Changed reading settings are applied to every work:** when a source's selectors, clicks, patterns or kind of
+  site change, its next *Update* reads every work again (not only the ones the site changed), so nothing keeps
+  what the old settings found.
 - **English titles first:** a work's title is its English one when the site gives several (tagged by language,
   or the one that reads as English), also for works merged across sources.
 - Covers are fetched by the server and cached (`data/cache/catalog-covers/`): browsers never contact the sites.

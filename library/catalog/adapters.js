@@ -410,7 +410,12 @@ async function applyActions(ctx, page, actions) {
         // What it loaded, added at the end of the page (a full page: its body; a fragment: as it is)
         const body = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(res.text) || [null, res.text])[1];
         const add = '<div data-thoth-added="' + report.length + '">' + body + '</div>';
-        text = /<\/body>/i.test(text) ? text.replace(/<\/body>(?![\s\S]*<\/body>)/i, add + '</body>') : text + add;
+        // Where the page would show it: the panel the button controls (aria-controls, data-target, href="#…",
+        // data-tab), else at the end of the page
+        const panelId = String(el.attr('aria-controls') || el.attr('data-bs-target') || el.attr('data-target') || (/^#/.test(el.attr('href') || '') ? el.attr('href') : '') || el.attr('data-tab') || '').replace(/^#/, '').trim();
+        const panel = panelId && /^[\w-]+$/.test(panelId) ? new RegExp(`<[a-zA-Z][^>]*\\sid\\s*=\\s*["']${panelId}["'][^>]*>`).exec(text) : null;
+        if (panel) text = text.slice(0, panel.index + panel[0].length) + add + text.slice(panel.index + panel[0].length);
+        else text = /<\/body>/i.test(text) ? text.replace(/<\/body>(?![\s\S]*<\/body>)/i, add + '</body>') : text + add;
         report.push({ selector, found: true, url: res.url, result: 'added' });
       }
     } catch (e) {

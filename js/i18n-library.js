@@ -3991,4 +3991,39 @@
     "wz.act.otherSite": "Leva a outro site ({url}): não seguido",
     "wz.act.clicked": "Clicado (na página, com os scripts dela)"
   });
+  add('en', {
+    "cat.allChapters": "All chapters",
+    "cat.allChaptersHelp": "{count} chapters across {sources} source(s), each once, with a link to every source that has it.",
+    "cat.chaptersTabs": "Chapters",
+    "cat.noChapters": "No chapters found yet.",
+    "cat.readOn": "Read on {source}"
+  });
+  add('es', {
+    "cat.allChapters": "Todos los capítulos",
+    "cat.allChaptersHelp": "{count} capítulos entre {sources} fuente(s), cada uno una vez, con un enlace a cada fuente que lo tiene.",
+    "cat.chaptersTabs": "Capítulos",
+    "cat.noChapters": "Aún no se encontraron capítulos.",
+    "cat.readOn": "Leer en {source}"
+  });
+  add('fr', {
+    "cat.allChapters": "Tous les chapitres",
+    "cat.allChaptersHelp": "{count} chapitres sur {sources} source(s), chacun une fois, avec un lien vers chaque source qui l’a.",
+    "cat.chaptersTabs": "Chapitres",
+    "cat.noChapters": "Aucun chapitre trouvé pour l’instant.",
+    "cat.readOn": "Lire sur {source}"
+  });
+  add('de', {
+    "cat.allChapters": "Alle Kapitel",
+    "cat.allChaptersHelp": "{count} Kapitel aus {sources} Quelle(n), jedes einmal, mit einem Link zu jeder Quelle, die es hat.",
+    "cat.chaptersTabs": "Kapitel",
+    "cat.noChapters": "Noch keine Kapitel gefunden.",
+    "cat.readOn": "Auf {source} lesen"
+  });
+  add('pt', {
+    "cat.allChapters": "Todos os capítulos",
+    "cat.allChaptersHelp": "{count} capítulos em {sources} fonte(s), cada um uma vez, com um link para cada fonte que o tem.",
+    "cat.chaptersTabs": "Capítulos",
+    "cat.noChapters": "Nenhum capítulo encontrado ainda.",
+    "cat.readOn": "Ler em {source}"
+  });
 })();

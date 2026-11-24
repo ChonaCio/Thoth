@@ -10,7 +10,7 @@ const { fork, spawn } = require('child_process');
 const store = require('../db');
 const cstore = require('./store');
 const tasks = require('../tasks');
-const { preferEnglish } = require('../titles');
+const { preferEnglish, parseTitle, EDITION_ORDER } = require('../titles');
 const { ADAPTERS, TYPES } = require('./adapters');
 const { publicUrl, UA } = require('./fetcher');
 const { normTitle, fromUrl } = require('../metadata/providers');
@@ -394,7 +394,15 @@ function sourceWorks(id) {
   const c = loaded.get(id);
   if (c && c.mtime === mtime) return c.list;
   const data = st ? cstore.readWorks(sourceDir(id)) : { works: {} };
-  const list = Object.values(data.works).map(w => Object.assign(w, { key: id + ':' + w.sid, sourceId: id }));
+  // Titles as the site shows them can carry noise (" - engsub", "(Official)", the site's name) and the version
+  // ("[AI ANIMATION]", "(Raw)", "Full Colored"): w.title is the clean title, w.rawTitle the site's, w.editions the version
+  const src = db.catalogSources[id] || {};
+  const names = [src.name, src.detected && src.detected.found && src.detected.found.name].filter(Boolean);
+  const list = Object.values(data.works).map(w => {
+    const p = parseTitle(w.rawTitle || w.title, { sourceNames: names });
+    const alt = [...new Set((w.rawAltTitles || w.altTitles || []).map(a => parseTitle(a, { sourceNames: names }).title).filter(a => a && a !== p.title))];
+    return Object.assign(w, { key: id + ':' + w.sid, sourceId: id, rawTitle: w.rawTitle || w.title, title: p.title, editions: p.editions, rawAltTitles: w.rawAltTitles || w.altTitles || [], altTitles: alt });
+  });
   loaded.set(id, { mtime, list });
   catalogVersion++;
   return list;
@@ -435,11 +443,42 @@ function libraryMatch(w) {
 
 // Works as shown: merged groups count once (the primary's metadata, every source's chapters)
 let itemsMemo = { ver: null, items: null };
+// A version's key: 'base', 'colored', 'raw+uncensored'…; its rank (Regular first, then as the library orders them)
+const editionKey = list => (list && list.length ? list.slice().sort((a, b) => EDITION_ORDER.indexOf(a) - EDITION_ORDER.indexOf(b)).join('+') : 'base');
+const editionRank = key => (key === 'base' ? 0 : key.includes('+') ? 10 + key.split('+').length : 1 + EDITION_ORDER.indexOf(key));
 function catalogItems() {
-  const ver = catalogVersion + ':' + store.generation() + ':' + Object.keys(db.catalogSources).join(',') + ':' + JSON.stringify(Object.keys(db.catalogMerges.groups).length);
+  const ver = catalogVersion + ':' + store.generation() + ':' + Object.keys(db.catalogSources).join(',') + ':' + JSON.stringify(Object.keys(db.catalogMerges.groups).length) + ':' + catalogVersion;
   const works = allWorks();
   const v2 = ver + ':' + works.length + ':' + catalogVersion;
   if (itemsMemo.ver === v2) return itemsMemo.items;
+  const units = unitItems(works);
+  // Versions: units with the same clean title and different versions are one work (like a library's "Work" and
+  // "Work (Colored)"); a second unit of a version already taken stays its own work
+  const byTitle = new Map();
+  for (const u of units) { const k = normTitle(u.title) || u.key; if (!byTitle.has(k)) byTitle.set(k, []); byTitle.get(k).push(u); }
+  const items = [], byKey = new Map();
+  for (const group of byTitle.values()) {
+    group.sort((a, b) => editionRank(a.edition) - editionRank(b.edition) || b.chapters - a.chapters);
+    const taken = new Map(), rest = [];
+    for (const u of group) { if (taken.has(u.edition)) rest.push([u]); else taken.set(u.edition, u); }
+    for (const list of [[...taken.values()], ...rest]) {
+      const versions = list.map(u => ({ key: u.key, edition: u.edition, editions: u.editions, chapters: u.chapters, sources: u.sources.map(x => x.name) }));
+      for (const u of list) { u.versions = versions; byKey.set(u.key, u); }
+      const main = list[0];
+      // The work as listed: its main version, found by any version's titles and sources
+      main._text = null;
+      main._allTitles = [...new Set(list.flatMap(u => [u.title].concat(u.altTitles)))];
+      main._allSources = [...new Set(list.flatMap(u => u.sources.map(x => x.sourceId)))];
+      main.inLibrary = main.inLibrary || (list.find(u => u.inLibrary) || {}).inLibrary || null;
+      items.push(main);
+    }
+    for (const u of group) for (const x of u.sources) byKey.set(x.key, u);
+  }
+  itemsMemo = { ver: v2, items, byKey };
+  return items;
+}
+// One entry per work of one version: a merged group (the same work on several sites) or a single work
+function unitItems(works) {
   const byKey = new Map(works.map(w => [w.key, w]));
   const inGroup = new Map();
   for (const [gid, g] of Object.entries(db.catalogMerges.groups)) for (const k of g.keys) if (byKey.has(k)) inGroup.set(k, gid);
@@ -455,7 +494,6 @@ function catalogItems() {
       items.push(makeItem(primary, members, gid));
     } else items.push(makeItem(w, [w], null));
   }
-  itemsMemo = { ver: v2, items };
   return items;
 }
 function makeItem(primary, members, groupId) {
@@ -465,6 +503,7 @@ function makeItem(primary, members, groupId) {
   const genres = terms.unify(...members.map(m => m.genres || []));
   return {
     key: groupId ? 'g:' + groupId : primary.key, groupId, title, altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== title))].slice(0, 20),
+    editions: primary.editions || [], edition: editionKey(primary.editions),
     cover: Boolean(members.find(m => m.cover)), coverKey: (members.find(m => m.key === primary.key && m.cover) || members.find(m => m.cover) || primary).key,
     summary: primary.summary || (members.find(m => m.summary) || {}).summary || '', authors: [...new Set(members.flatMap(m => m.authors || []))].slice(0, 12), genres,
     status: primary.status || 'unknown', type: primary.type || null, year: primary.year || null,
@@ -479,8 +518,8 @@ const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/
 function list(q) {
   let items = catalogItems();
   const term = searchable(q.q);
-  if (term) items = items.filter(it => (it._text || (it._text = searchable([it.title].concat(it.altTitles, it.authors).join('\n')))).includes(term));
-  if (q.source) items = items.filter(it => it.sources.some(s => s.sourceId === q.source));
+  if (term) items = items.filter(it => (it._text || (it._text = searchable((it._allTitles || [it.title].concat(it.altTitles)).concat(it.authors).join('\n')))).includes(term));
+  if (q.source) items = items.filter(it => (it._allSources || it.sources.map(s => s.sourceId)).includes(q.source));
   if (q.inLibrary === 'yes') items = items.filter(it => it.inLibrary); else if (q.inLibrary === 'no') items = items.filter(it => !it.inLibrary);
   if (q.genre) { const k = terms.keyOf(terms.canonical(q.genre)); items = items.filter(it => it.genres.some(g => terms.keyOf(g) === k)); }
   if (q.merged === 'yes') items = items.filter(it => it.groupId);
@@ -493,7 +532,7 @@ function list(q) {
   const offset = Math.max(0, Number(q.offset) || 0), limit = Math.min(200, Math.max(1, Number(q.limit) || 60));
   return { total: items.length, offset, items: items.slice(offset, offset + limit).map(publicItem) };
 }
-const publicItem = it => { const o = Object.assign({}, it); delete o._text; return o; };
+const publicItem = it => { const o = Object.assign({}, it); delete o._text; delete o._allTitles; delete o._allSources; return o; };
 function facets() {
   const items = catalogItems();
   const genres = new Map();
@@ -506,7 +545,8 @@ function facets() {
 }
 // One work in full: every source's metadata and chapters; for a work the library has, which chapters it lacks
 function detail(key) {
-  const it = catalogItems().find(x => x.key === key || x.sources.some(s => s.key === key));
+  catalogItems();
+  const it = itemsMemo.byKey.get(key);
   if (!it) throw err(404, 'notFound');
   const sources = it.sources.map(s => {
     const w = workByKey(s.key) || {};
@@ -523,7 +563,23 @@ function detail(key) {
     for (const s of sources) for (const c of s.chapterList) { const n = parseFloat(c.n); if (Number.isFinite(n) && !have.has(String(n)) && (!nums.has(String(n)) || (nums.get(String(n)).pr && !c.pr))) nums.set(String(n), { n: c.n, t: c.t, u: c.u, source: s.name, pr: Boolean(c.pr) }); }
     missing = { have: have.size, chapters: [...nums.values()].sort((a, b) => parseFloat(a.n) - parseFloat(b.n)) };
   }
-  return Object.assign(publicItem(it), { sources, missing });
+  return Object.assign(publicItem(it), { sources, missing, allChapters: unifiedChapters(sources) });
+}
+// Every chapter on any of the work's sources, once per number (or name, without one), with each source's link:
+// [{ n, t, d, pr (premium on every source that has it), links: [{ name, sourceId, u, pr }] }], newest first
+function unifiedChapters(sources) {
+  const byN = new Map();
+  for (const s of sources) for (const c of s.chapterList) {
+    const num = parseFloat(c.n);
+    const k = Number.isFinite(num) ? 'n' + num : 't' + String(c.t || c.id).toLowerCase();
+    let e = byN.get(k);
+    if (!e) byN.set(k, (e = { n: c.n != null ? String(Number.isFinite(num) ? num : c.n) : null, t: c.t || '', d: c.d || '', pr: true, links: [], sort: Number.isFinite(num) ? num : -1 }));
+    if (!e.t && c.t) e.t = c.t;
+    if (c.d && (!e.d || c.d < e.d)) e.d = c.d;
+    if (!c.pr) e.pr = false;
+    if (!e.links.some(l => l.sourceId === s.sourceId && l.u === c.u)) e.links.push({ name: s.name, sourceId: s.sourceId, u: c.u || null, pr: Boolean(c.pr), l: c.l || null });
+  }
+  return [...byN.values()].sort((a, b) => b.sort - a.sort).map(e => { delete e.sort; return e; });
 }
 
 /* ---------------- merging the same work found on several sites ---------------- */
@@ -539,7 +595,7 @@ function mergeSuggestions({ limit = 200, source = null } = {}) {
   const add = (reason, key, wkey, detail) => { const k = reason + '\0' + key; if (!keys.has(k)) keys.set(k, { keys: [], detail }); const e = keys.get(k); if (!e.keys.includes(wkey)) e.keys.push(wkey); };
   for (const w of works) {
     if (w.links && w.links.mangadex) add('link', 'mangadex:' + w.links.mangadex, w.key, { url: w.url });
-    for (const t of [w.title].concat(w.altTitles || [])) { const n = normTitle(t); if (n && n.length > 2) add('title', n, w.key, { title: t }); }
+    for (const t of [w.title].concat(w.altTitles || [])) { const n = normTitle(t); if (n && n.length > 2) add('title', n + '|' + editionKey(w.editions), w.key, { title: t }); }
   }
   for (const [k, e] of keys) {
     if (e.keys.length < 2 || e.keys.length > 12) continue;
@@ -651,7 +707,7 @@ function autoMerge() {
   for (const w of works) {
     if (w.links && w.links.mangadex) push(byLink, String(w.links.mangadex), w);
     const t = normTitle(w.title);
-    if (t && t.length > 2) push(byTitle, t, w);
+    if (t && t.length > 2) push(byTitle, t + '|' + editionKey(w.editions), w);
   }
   const pairs = [];
   for (const list of byLink.values()) if (list.length >= 2 && list.length <= 6) for (let i = 1; i < list.length; i++) pairs.push([list[0], list[i], { reason: 'link', detail: { title: list[0].title } }]);

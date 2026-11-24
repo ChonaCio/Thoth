@@ -43,6 +43,7 @@ function madaraWork(slug) {
     <div class="summary__content"><p>About ${w.title}.</p></div>
     <div id="manga-chapters-holder" data-id="${slug}">${w.ajax ? '' : list}</div></body></html>`;
 }
+let m0;
 const site = http.createServer((req, res) => {
   const u = new URL(req.url, SITE);
   hits.push(req.method + ' ' + u.pathname + u.search);
@@ -80,8 +81,13 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/custom/w/blue-moon') return send(200, `<h1 class="t">Blue Moon</h1><div class="genres"><span>Fantasy</span><span>Science Fiction</span></div><ol class="chs"><li><a href="/custom/w/blue-moon/6">Ep. 6</a></li><li><a href="/custom/w/blue-moon/5">Ep. 5</a></li></ol>`);
   // Chapters behind a tab that loads them; genres in a tab that's only hidden
   if (u.pathname === '/tabs/list') return send(200, '<div class="w"><a href="/tabs/work">Tabbed Work</a></div>');
+  if (u.pathname === '/tabs-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset><url><loc>${SITE}/tabs/work</loc><lastmod>2025-01-01</lastmod></url></urlset>`, 'application/xml');
   if (u.pathname === '/tabs/work') return send(200, '<h1 class="t">Tabbed Work</h1><nav><button class="info-tab">Info</button><button class="ch-tab" data-url="/tabs/work/chapters">Chapters</button></nav><div class="info" style="display:none"><span class="g">Mystery</span></div><div id="tab-body"></div>');
   if (u.pathname === '/tabs/work/chapters') return send(200, '<ul><li class="c"><a href="/tabs/c2">Chapter 2</a></li><li class="c"><a href="/tabs/c1">Chapter 1</a></li></ul>');
+  // Titles with noise and version markers: one work in three versions
+  const VER = { a: 'Night Sky (Official) - engsub', b: 'Night Sky [AI ANIMATION]', c: 'Night Sky (Raw) Uncensored - Version Site' };
+  if (u.pathname === '/ver/list') return send(200, Object.keys(VER).map(k => `<div class="v"><a href="/ver/w/${k}">${VER[k]}</a></div>`).join(''));
+  if ((m0 = /^\/ver\/w\/(\w)$/.exec(u.pathname)) && VER[m0[1]]) return send(200, `<h1>${VER[m0[1]]}</h1><ul><li class="c"><a href="/ver/w/${m0[1]}/1">Chapter 1</a></li></ul>`);
   // A site behind bot protection
   if (u.pathname.startsWith('/guarded')) return send(403, '<html><title>Just a moment...</title><div id="cf-chl-widget"></div></html>');
   send(404, 'not found');
@@ -217,6 +223,28 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const saved = (await call('POST', '/api/catalog/sources', Object.assign({}, tabbed, { actions: { chapters: [{ selector: 'button.ch-tab', mode: 'sideways' }, { selector: '' }] } }))).data.source;
   ok(saved.actions.chapters.length === 1 && saved.actions.chapters[0].mode === 'add' && !saved.actions.work, 'a source keeps its clicks (cleaned: empty ones dropped, unknown modes made "add")');
   await call('DELETE', `/api/catalog/sources/${saved.id}`);
+  // The clicks in real crawls, also when they're added after a first crawl and the next one is an update
+  const tsrc = (await call('POST', '/api/catalog/sources', Object.assign({}, tabbed, { listing: 'sitemap', sitemaps: [SITE + '/tabs-sitemap.xml'], workPattern: '/tabs/*/' }))).data.source;
+  await call('POST', `/api/catalog/sources/${tsrc.id}/crawl`, { mode: 'full' });
+  let tc = await crawled(tsrc.id);
+  const chOf = async () => (await call('GET', `/api/catalog/work?key=${encodeURIComponent((await call('GET', `/api/catalog?source=${tsrc.id}`)).data.items[0].key)}`)).data.work.sources[0].chapterList.length;
+  ok(tc.works === 1 && await chOf() === 0, 'without the click, a crawl finds no chapters on that site');
+  await call('PATCH', `/api/catalog/sources/${tsrc.id}`, { actions: { chapters: [{ selector: 'button.ch-tab', mode: 'add' }] } });
+  await call('POST', `/api/catalog/sources/${tsrc.id}/crawl`, { mode: 'update' });
+  tc = await crawled(tsrc.id);
+  ok(await chOf() === 2 && tc.lastStats.read === 1, `after adding the click, the next update reads the work again with it (${await chOf()} chapters; its sitemap hadn't changed)`);
+  await call('DELETE', `/api/catalog/sources/${tsrc.id}`);
+  // ---- titles: noise taken out, versions recognized and grouped like a library's ----
+  const vsrc = (await call('POST', '/api/catalog/sources', { name: 'Version Site', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/ver/list', item: 'div.v', workTitle: 'h1', chapter: 'li.c' } })).data.source;
+  await call('POST', `/api/catalog/sources/${vsrc.id}/crawl`, { mode: 'full' });
+  await crawled(vsrc.id);
+  const vlist = (await call('GET', `/api/catalog?source=${vsrc.id}`)).data;
+  const night = vlist.items[0];
+  ok(vlist.total === 1 && night.title === 'Night Sky' && night.versions.length === 3 && night.versions.map(v => v.edition).join() === 'base,animated,raw+uncensored',
+    `one work in three versions, titles without their noise ("${night.title}": ${night.versions.map(v => v.edition).join(', ')})`);
+  const anim = (await call('GET', `/api/catalog/work?key=${encodeURIComponent(night.versions[1].key)}`)).data.work;
+  ok(anim.title === 'Night Sky' && anim.editions.join() === 'animated' && anim.versions.length === 3 && anim.sources[0].chapterList.length === 1, 'a version’s page: its own chapters, the work’s versions as tabs');
+  await call('DELETE', `/api/catalog/sources/${vsrc.id}`);
   // Several works at once (the source's setting) with as many requests to the site in progress, even when its
   // pages answer faster than the pause (each lane pauses between its own requests; starts staggered)
   await call('PATCH', `/api/catalog/sources/${madara.id}`, { concurrency: 3 });
@@ -324,6 +352,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(cat.total === 1 && cat.items[0].sources.length === 2 && cat.items[0].chapters === 4, 'merged: one catalog entry with both sources');
   det = (await call('GET', `/api/catalog/work?key=${encodeURIComponent(cat.items[0].key)}`)).data.work;
   ok(det.sources.length === 2 && det.missing.chapters.map(c => c.n).join() === '3,4,5,6', 'its chapters come from both sites (missing: 3–6)');
+  ok(det.allChapters.length === 6 && det.allChapters[0].n === '6' && det.allChapters.every(c => c.links.length === 1 && c.links[0].u) && det.allChapters.find(c => c.n === '4').links[0].name === 'Madara site',
+    `one chapter list for every source, each with its source's link (${det.allChapters.map(c => c.n + ':' + c.links.map(l => l.name).join('+')).join(' ')})`);
   ok(!(await call('GET', '/api/catalog/merge-suggestions')).data.groups.some(x => x.key === g.key), 'a merged group is no longer suggested');
   await call('DELETE', `/api/catalog/merge/${mg.groupId}`);
   ok((await call('GET', '/api/catalog?q=blue%20moon')).data.total === 2, 'separating them again');

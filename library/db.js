@@ -109,17 +109,14 @@ const stableId = (...parts) => crypto.createHash('sha1').update(parts.join('\0')
  * the versions differently, and across libraries.
  */
 const EDITIONS = ['base', 'colored', 'raw', 'uncensored', 'animated'];
-const EDITION_WORDS = [
-  [/^(colou?red|colou?r|full[ -]?colou?r)$/i, 'colored'],
-  [/^raw$/i, 'raw'],
-  [/^(uncensored|uncen)$/i, 'uncensored'],
-  [/^(animated|motion)$/i, 'animated'],
-  [/^(regular|normal|base|original)$/i, 'base']
-];
-// "Work (Colored)" → { title: 'Work', edition: 'colored' }; no recognized suffix → edition null
+// "Work (Colored)" → { title: 'Work', edition: 'colored' }; no recognized suffix → edition null.
+// The same markers as the external catalog (library/titles.js): "[AI ANIMATION]", "[AI CC]", "[MOTION]" → animated,
+// "(Full Colored)" → colored, "(Uncen)" → uncensored; several ("(Raw) (Uncensored)") → the main one
+// (animated > colored > uncensored > raw). Folder names keep everything else (only bracketed markers count here).
+const { parseTitle } = require('./titles');
 function splitEdition(name) {
-  const m = /^(.*\S)\s*[([]\s*([^)\]]+?)\s*[)\]]\s*$/.exec(String(name || ''));
-  if (m) for (const [re, edition] of EDITION_WORDS) if (re.test(m[2])) return { title: m[1], edition };
+  const p = parseTitle(name, { bare: false, noise: false });
+  if (p.edition || p.title !== String(name || '').replace(/\s+/g, ' ').trim()) return { title: p.title, edition: p.edition || 'base' };
   return { title: String(name || ''), edition: null };
 }
 
