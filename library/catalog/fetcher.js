@@ -10,6 +10,8 @@
 const UA = 'Thoth-Library-Server/1.0';
 const UA_TOKEN = 'thoth-library-server';
 const MAX_BYTES = 8 * 1024 * 1024;
+// Sitemaps may be up to 50 MB uncompressed (sitemaps.org): get(url, { maxBytes: SITEMAP_BYTES })
+const SITEMAP_BYTES = 64 * 1024 * 1024;
 
 function publicUrl(url, allowLocal) {
   let u;
@@ -157,17 +159,18 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
     throw err('redirects', 'Too many redirects');
   }
   function done(res) { if (res && res.counted) { res.counted = false; stats.active--; if (res.release) res.release(); } }
-  async function readBody(res) {
-    try { return await readAll(res); } finally { done(res); }
+  async function readBody(res, max) {
+    try { return await readAll(res, max); } finally { done(res); }
   }
-  async function readAll(res) {
+  async function readAll(res, max) {
+    max = Math.max(MAX_BYTES, Math.min(SITEMAP_BYTES, Number(max) || MAX_BYTES));
     const reader = res.body.getReader();
     const chunks = []; let size = 0;
     for (;;) {
       const { done, value } = await reader.read();
       if (done) break;
       size += value.length;
-      if (size > MAX_BYTES) { try { await reader.cancel(); } catch {} throw err('tooLarge', 'Page too large'); }
+      if (size > max) { try { await reader.cancel(); } catch {} throw err('tooLarge', `Too large (over ${Math.round(max / 1048576)} MB)`); }
       chunks.push(value);
     }
     stats.bytes += size;
@@ -243,7 +246,7 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
       if (tried.has(sig)) continue; // (a variant that would repeat a request already made)
       tried.add(sig);
       const { res, url: finalUrl } = await raw(url, Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, extra) }));
-      const body = await readBody(res);
+      const body = await readBody(res, opts.maxBytes);
       const text = require('./text').decodeText(body, res.headers.get('content-type') || '');
       if (CHALLENGE.test(text.slice(0, 20000)) && res.status >= 400) throw err('blocked', `${new URL(url).host} asks to prove you're a person (bot protection): it can't be crawled`);
       if (res.status < 400) {
@@ -267,7 +270,7 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
     if (learned && access.mode !== 'plain') { const extra = await variantHeaders(learned, url); if (extra) opts = Object.assign({}, opts, { headers: Object.assign({}, opts.headers || {}, extra) }); }
     for (let attempt = 0; ; attempt++) {
       const { res, url: finalUrl } = await raw(url, opts);
-      const body = await readBody(res);
+      const body = await readBody(res, opts.maxBytes);
       // (in the charset the page declares: a site in Windows-1252, Shift_JIS, GBK, EUC-KR… isn't garbled)
       const text = require('./text').decodeText(body, res.headers.get('content-type') || '');
       // A bot challenge: stop (not worked around)
@@ -320,4 +323,4 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
     robotsInfo: origin => robotsMeta.get(origin) || null };
 }
 
-module.exports = { cookiePairs, headerLines, createFetcher, parseRobots, robotsAllows, sitemapsIn, publicUrl, UA };
+module.exports = { cookiePairs, headerLines, createFetcher, parseRobots, robotsAllows, sitemapsIn, publicUrl, UA, MAX_BYTES, SITEMAP_BYTES };

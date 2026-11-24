@@ -25,6 +25,16 @@ const site = http.createServer((req, res) => {
     if (req.headers.host.startsWith('localhost')) { res.writeHead(503); return res.end('down'); }
     res.writeHead(404); return res.end();
   }
+  // A big sitemap (≈ 10 MB: more than a page may be, less than a sitemap may be) and one too big even for that
+  if (u.pathname === '/big/sitemap.xml' || u.pathname === '/huge/sitemap.xml') {
+    const n = u.pathname.startsWith('/big') ? 85000 : 650000; // (≈ 112 bytes each: ≈ 9 MB, ≈ 70 MB)
+    res.writeHead(200, { 'Content-Type': 'application/xml' });
+    res.write('<?xml version="1.0"?><urlset>');
+    for (let i = 0; i < n; i += 1000) res.write(Array.from({ length: Math.min(1000, n - i) }, (_, k) => `<url><loc>${BASE}/manga/work-${i + k}/chapter-1</loc><lastmod>2026-01-01T00:00:00+00:00</lastmod></url>`).join('') + '\n');
+    return res.end('</urlset>');
+  }
+  // Chapter rows that are links themselves
+  if (u.pathname === '/series/linkrows') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Link rows</h1><div class="chs">${[3, 2, 1].map(n => `<a class="ch" href="/series/linkrows/chapter-${n}">Chapter ${n} <span class="date">2026-01-0${n}</span></a>`).join('')}</div>`); }
   if (u.pathname === '/latin1') { res.writeHead(200, { 'Content-Type': 'text/html; charset=iso-8859-1' }); return res.end(Buffer.from([0x3c, 0x70, 0x3e, 0x43, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e])); }
   // Work pages that show only the newest chapters; the rest where the page's script would get it
   const recent = n => Array.from({ length: 3 }, (_, i) => `<li><a href="/series/${n}/chapter-${30 - i}">Chapter ${30 - i}</a></li>`).join('');
@@ -199,6 +209,22 @@ const site = http.createServer((req, res) => {
   const nctx = { src: { autoDetect: true, workPattern: '/manga/*', sitemaps: [BASE + '/nest/sitemap.xml'], baseUrl: BASE, includeChapters: true }, get: fs2.get };
   const nworks = []; for await (const pg of smod.sitemapWorks(nctx)) nworks.push(...pg.map(w => w.sid));
   check(nworks.sort().join() === '/manga/nested-one,/manga/nested-two,/manga/root-work' && nctx.sitemapChapters.get('/manga/nested-one').length === 2, 'a crawl gets the works and the chapters from every level', nworks.join());
+
+  console.log('Big sitemaps');
+  const fbig = createFetcher({ gapMs: 0, allowLocal: true });
+  let big = null, bigErr = null; try { big = await smod.readSitemap(fbig.get, BASE + '/big/sitemap.xml'); } catch (e) { bigErr = e; }
+  check(big && big.urls.length === 85000 && big.bytes > 8 * 1024 * 1024, 'a sitemap over the 8 MB page limit is read whole', bigErr ? bigErr.message : big && big.bytes);
+  let pageErr = null; try { await fbig.get(BASE + '/big/sitemap.xml'); } catch (e) { pageErr = e; }
+  check(pageErr && pageErr.code === 'tooLarge', 'an ordinary page that size is still refused');
+  let hugeErr = null; try { await smod.readSitemap(fbig.get, BASE + '/huge/sitemap.xml'); } catch (e) { hugeErr = e; }
+  check(hugeErr && hugeErr.code === 'tooLarge' && /64 MB/.test(hugeErr.message), 'one over 64 MB is refused, saying so', hugeErr && hugeErr.message);
+
+  console.log('Chapter rows that are links');
+  const flr = createFetcher({ gapMs: 0, allowLocal: true });
+  const lrSrc = { type: 'custom', baseUrl: BASE, includeChapters: true, fullChapters: false, selectors: { workTitle: 'h1', chapter: 'div.chs a.ch', chapterDate: 'span.date' } };
+  const lr = await adapters.ADAPTERS.custom.fetchWork({ src: lrSrc, get: flr.get, incremental: false, known: new Set() }, { sid: '/series/linkrows', url: BASE + '/series/linkrows', title: 'x' });
+  check(lr.chapters.length === 3 && lr.chapters[0].u === BASE + '/series/linkrows/chapter-3' && lr.chapters[0].n === '3' && /2026-01-03/.test(lr.chapters[0].d),
+    'each row is its own link (its address, number and date read)', JSON.stringify(lr.chapters.slice(0, 1)));
 
   site.close();
   console.log(failed ? `\n${failed} CRAWL RULE CHECK(S) FAILED` : `\nALL ${passed} CRAWL RULE CHECKS PASSED`);

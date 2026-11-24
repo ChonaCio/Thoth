@@ -578,9 +578,15 @@ sites added as **sources**, with its metadata and chapter list.
   press *Pick* next to a setting, hover the page (the element under the pointer is outlined) and click it — the
   wizard writes a selector the crawler understands, outlines everything it matches and shows a sample (for a work
   in the list it finds the repeating block; link, title and cover are found inside it; genres and authors match
-  all their siblings). *Navigate* mode follows the site's links instead. The page is fetched by the server (with
+  all their siblings). When the rows are links themselves (`<a class="chapter">Chapter 3 <span>date</span></a>`
+  one after another), the link is taken as the row, and the row is its own chapter link. *Navigate* mode follows
+  the site's links instead. The page is fetched by the server (with
   the crawler's politeness rules) and shown **with the site's images, styles and fonts**, which your browser loads
   from the site. Options above the preview:
+  - *First match* — picks an element by what it is (its tag, classes, some attributes, the box it sits in)
+    instead of its exact place: the first element on the page (or in each row) that has them is used. After
+    picking, each characteristic is a chip you can turn on or off; the selector, how many elements match and the
+    first one's value update as you do (the first match is outlined in orange).
   - *Images and styles* — off shows a copy that loads nothing from the site (styles inlined, images as placeholders).
   - *Site scripts* — runs the site's own scripts, for pages that build their content with scripts; the preview is
     then fully isolated from Thoth (it can't reach the app, its cookies or its API). Off (the default), the site's
@@ -604,6 +610,11 @@ sites added as **sources**, with its metadata and chapter list.
   guard in Thoth that only lets it reach public addresses on ports 80/443 (never this machine or the local
   network) and refuses the ad and pop-under networks; pop-up windows aren't opened; robots.txt, the site's pace and bot-protection stops apply to the pages as for any crawl. In Docker,
   install Chromium in the image and run Thoth as a non-root user (Chromium's sandbox refuses root).
+- **Source buttons.** Each source card has the same buttons in the same places: crawling on the left (*Update* or
+  *Crawl*, *Full crawl*, *Stop*, *Clean crawl…*), the source on the right (*Test*, *Edit*, *Remove*). One that
+  can't be used right now is greyed out and says why on hover (e.g. *Stop* when nothing is running).
+- **Big sitemaps.** Pages are read up to 8 MB; sitemaps up to 64 MB (the sitemaps.org limit is 50 MB
+  uncompressed), `.xml.gz` ones too once unpacked.
 - **Clean crawl.** *Clean crawl…* (Sources tab toolbar, and on each source) removes what was crawled — works,
   chapter lists and everything crawls remember (pages seen, sitemaps read, progress) — for every source or one,
   so the next crawl trusts nothing from before. The sources, their settings and what detection found are kept.

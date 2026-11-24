@@ -1013,6 +1013,17 @@ body.is-reading { overflow: hidden; }
 .wz-preview__holder .wz-preview__frame { flex: 1; }
 .wz-preview__opts .checkbox { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
 .wz-preview__opts .checkbox input { width: auto; flex: none; min-width: 0; padding: 0; }
+/* External catalog source tiles: the same buttons in the same places (crawling | the source) */
+.cat-src__actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
+.cat-src__group { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-src__actions .btn:disabled { pointer-events: auto; cursor: not-allowed; opacity: .45; } /* (still shows why on hover) */
+.wz-builder { margin: 4px 0 6px; padding: 6px 8px; border: 1px dashed var(--border); border-radius: 8px; }
+.wz-builder p { margin: 2px 0; }
+.wz-builder__parts { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 4px 0; }
+.wz-builder__part { display: inline-flex; align-items: center; gap: 4px; padding: 2px 8px; border: 1px solid var(--border); border-radius: 999px; cursor: pointer; font-size: 12px; }
+.wz-builder__part input { width: auto; margin: 0; }
+.wz-builder__part code { word-break: break-all; }
+.wz-builder__part:has(input:checked) { border-color: var(--primary, #1a73e8); }
 .wz-preview__blocked { color: var(--text-muted, inherit); }
 .wz-preview__blocked > span { display: inline-flex; align-items: center; gap: 4px; cursor: help; }
 .wz-preview__blocked .icon { width: 14px; height: 14px; }

@@ -1813,6 +1813,29 @@
         (w.firstChapters && w.firstChapters.length ? '<p class="muted small">' + esc(w.firstChapters.map(function (c) { return (c.n || '?') + ' ' + (c.t || ''); }).join(' · ')) + '</p>' : '') : '') +
       '<p class="muted small">' + esc(t('cat.testRequests', { count: x.requests })) + '</p></div>';
   }
+  // A source's buttons, always the same ones in the same places: crawling on the left, the source itself on the
+  // right. One that can't be used now is greyed out, with why on hover
+  function catSourceActions(s) {
+    var busy = Boolean(s.job), crawled = Boolean(s.lastCrawlAt || s.works);
+    var b = function (o) {
+      var why = o.off ? o.why : o.title;
+      return '<button type="button" class="btn ' + (o.cls || 'btn--outline') + ' btn--small" data-lib="' + o.act + '" data-id="' + esc(s.id) + '"' + (o.mode ? ' data-mode="' + o.mode + '"' : '') +
+        (o.off ? ' disabled aria-disabled="true"' : '') + (why ? ' title="' + esc(why) + '"' : '') + '>' + icon(o.icon) + esc(o.label) + '</button>';
+    };
+    var whileBusy = t('cat.why.crawling');
+    return '<div class="cat-src__actions">' +
+      '<div class="cat-src__group" role="group" aria-label="' + esc(t('cat.grpCrawl')) + '">' +
+        b({ act: 'cat-src-crawl', mode: s.lastCrawlAt ? 'update' : 'full', cls: 'btn--primary', icon: 'sync', label: t(s.lastCrawlAt ? 'cat.update' : (s.interrupted ? 'cat.resume' : 'cat.crawl')), off: busy, why: whileBusy }) +
+        b({ act: 'cat-src-crawl', mode: 'full', icon: 'travel_explore', label: t('cat.fullCrawl'), off: busy || !s.lastCrawlAt, why: busy ? whileBusy : t('cat.why.firstIsFull') }) +
+        b({ act: 'cat-src-stop', icon: 'stop', label: t('proc.stop'), off: !busy, why: t('cat.why.notCrawling') }) +
+        b({ act: 'cat-clear-catalog', icon: 'restart_alt', label: t('cat.cleanCrawl'), title: t('cat.cleanHelp'), off: busy || !crawled, why: busy ? whileBusy : t('cat.why.nothingCrawled') }) +
+      '</div>' +
+      '<div class="cat-src__group" role="group" aria-label="' + esc(t('cat.grpSource')) + '">' +
+        b({ act: 'cat-src-test', cls: 'btn--text', icon: 'search', label: t('cat.test') }) +
+        b({ act: 'cat-src-edit', cls: 'btn--text', icon: 'edit', label: t('cat.edit') }) +
+        b({ act: 'cat-src-delete', cls: 'btn--text btn--danger', icon: 'delete', label: t('manage.delete'), off: busy, why: whileBusy }) +
+      '</div></div>';
+  }
   function catalogSources() {
     var st = catSourcesState();
     var head = catalogTabs('sources') + '<p class="page-lead">' + esc(t('cat.sourcesIntro')) + '</p>' +
@@ -1840,15 +1863,7 @@
         (s.lastError ? '<p class="notice notice--error small">' + esc(s.lastError) + '</p>' : '') +
         (s.interrupted ? '<p class="notice notice--info small">' + esc(t('cat.interrupted')) + '</p>' : '') +
         crawlLine(s) +
-        '<div class="lib-card__actions">' +
-          (s.job ? '<button class="btn btn--outline btn--small" data-lib="cat-src-stop" data-id="' + s.id + '">' + icon('stop') + esc(t('proc.stop')) + '</button>'
-            : '<button class="btn btn--primary btn--small" data-lib="cat-src-crawl" data-id="' + s.id + '" data-mode="' + (s.lastCrawlAt ? 'update' : 'full') + '">' + icon('sync') + esc(t(s.lastCrawlAt ? 'cat.update' : (s.interrupted ? 'cat.resume' : 'cat.crawl'))) + '</button>' +
-              (s.lastCrawlAt ? '<button class="btn btn--text btn--small" data-lib="cat-src-crawl" data-id="' + s.id + '" data-mode="full">' + esc(t('cat.fullCrawl')) + '</button>' : '')) +
-          (!s.job && (s.lastCrawlAt || s.works) ? '<button class="btn btn--text btn--small" data-lib="cat-clear-catalog" data-id="' + s.id + '" title="' + esc(t('cat.cleanHelp')) + '">' + icon('restart_alt') + esc(t('cat.cleanCrawl')) + '</button>' : '') +
-          '<button class="btn btn--text btn--small" data-lib="cat-src-test" data-id="' + s.id + '">' + icon('search') + esc(t('cat.test')) + '</button>' +
-          '<button class="btn btn--text btn--small" data-lib="cat-src-edit" data-id="' + s.id + '">' + icon('edit') + esc(t('cat.edit')) + '</button>' +
-          '<button class="btn btn--text btn--small btn--danger" data-lib="cat-src-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('manage.delete')) + '</button>' +
-        '</div>' + testReport(st.tests[s.id]) +
+        catSourceActions(s) + testReport(st.tests[s.id]) +
       '</section>';
     }).join('') + '</div>' + danger;
   }
@@ -2173,6 +2188,7 @@
         '<label class="checkbox small" title="' + esc(t('wz.blockHelp')) + '"><input type="checkbox" id="wz-pv-block"' + (pv.block ? ' checked' : '') + ' /><span>' + esc(t('wz.block')) + '</span></label>' +
         '<span class="small wz-preview__blocked" id="wz-pv-blocked">' + wzBlockedHtml() + '</span>' +
         '<label class="checkbox small" title="' + esc(t('wz.revealHelp')) + '"><input type="checkbox" id="wz-pv-reveal"' + (pv.reveal ? ' checked' : '') + ' /><span>' + esc(t('wz.reveal')) + '</span></label>' +
+        '<label class="checkbox small" title="' + esc(t('wz.looseHelp')) + '"><input type="checkbox" id="wz-pv-loose"' + (pv.loose ? ' checked' : '') + ' /><span>' + esc(t('wz.loose')) + '</span></label>' +
         '<label class="small wz-wait">' + esc(t('wz.wait')) + ' <input type="number" id="wz-pv-wait" min="0" max="60" step="1" value="' + esc(pv.wait) + '" /> ' + esc(t('wz.seconds')) + '</label>' +
       '</div>';
   }
@@ -2190,7 +2206,29 @@
     var n = b ? b.popups + b.redirects + b.ads + b.overlays : 0;
     return n ? '<span title="' + esc(t('wz.block.detail', b)) + '">' + icon('block') + esc(t('wz.block.count', { n: n })) + '</span>' : '';
   }
+  // "First match": the characteristics of what was picked, each on or off; the selector is built from those on
+  function wzBuildSel(parts) {
+    var own = parts.filter(function (p) { return p.on && p.k !== 'parent'; });
+    if (!own.length) own = [parts[0]];
+    var tag = own.filter(function (p) { return p.k === 'tag'; }).map(function (p) { return p.css; }).join('');
+    var rest = own.filter(function (p) { return p.k !== 'tag'; }).map(function (p) { return p.css; }).join('');
+    var par = parts.filter(function (p) { return p.on && p.k === 'parent'; })[0];
+    return (par ? par.css + ' ' : '') + (tag || (rest ? '' : parts[0].css)) + rest;
+  }
+  function wzBuilderHtml() {
+    var pv = wz && wz.pv, b = pv && pv.builder;
+    if (!b || !pv.loose || wz.draft.selectors[b.field] !== b.selector) return '';
+    return '<div class="wz-builder"><p class="small">' + esc(t('wz.loose.by', { field: wzFieldLabel(b.field) })) + '</p><div class="wz-builder__parts">' +
+      b.parts.map(function (p, i) {
+        return '<label class="wz-builder__part"><input type="checkbox" data-wz-part="' + i + '"' + (p.on ? ' checked' : '') + ' /><code>' + esc(p.k === 'parent' ? t('wz.loose.inside', { sel: p.css }) : p.css) + '</code></label>';
+      }).join('') + '</div><p class="small muted">' + esc(b.result || '') + '</p></div>';
+  }
+  function wzTestBuilder() {
+    var b = wz.pv.builder, frame = $('#wz-frame');
+    if (b && frame && frame.contentWindow) frame.contentWindow.postMessage({ thoth: 'config', test: { selector: b.selector, rel: b.rel, attr: b.attr } }, '*');
+  }
   function wzStatus() {
+    var bd = $('#wz-pv-builder'); if (bd && wz) bd.innerHTML = wzBuilderHtml();
     var bl = $('#wz-pv-blocked'); if (bl && wz) { bl.innerHTML = wzBlockedHtml(); if (window.renderIcons) window.renderIcons(bl); }
     var p = $('#wz-pv-status'); if (p && wz) p.textContent = wzStatusText();
     // A click made in Interact mode can become one of this step's clicks before collecting
@@ -2215,7 +2253,7 @@
         '<ol class="wizard__steps" id="wz-steps"></ol>' +
         '<div class="wizard__body' + (preview ? ' wizard__body--split' : '') + '"><div class="wizard__form" id="wz-form"></div>' +
           (preview ? '<section class="wz-preview" aria-label="' + esc(t('wz.preview')) + '"><div class="wz-preview__bar" id="wz-pv-bar"></div>' +
-            '<p class="small wz-preview__status" id="wz-pv-status" role="status"></p><div class="wz-preview__keep" id="wz-pv-keep"></div><div id="wz-pv-error"></div><div class="wz-preview__holder" id="wz-frame-holder"></div></section>' : '') + '</div>' +
+            '<p class="small wz-preview__status" id="wz-pv-status" role="status"></p><div class="wz-preview__keep" id="wz-pv-keep"></div><div id="wz-pv-builder"></div><div id="wz-pv-error"></div><div class="wz-preview__holder" id="wz-frame-holder"></div></section>' : '') + '</div>' +
         '<footer class="wizard__foot" id="wz-foot"></footer></div>';
     }
     $('#wz-steps', dlg).innerHTML = steps.map(function (s, k) { return '<li class="' + (k === i ? 'is-current' : k < i ? 'is-done' : '') + '"><button type="button" data-wz-go="' + s + '"' + (k === i ? ' aria-current="step"' : '') + '>' + (k + 1) + '. ' + esc(t(WZ_TITLES[s])) + '</button></li>'; }).join('');
@@ -2338,7 +2376,7 @@
     var pv = wz.pv;
     var adHosts = pv.block && Array.isArray(page.adHosts) ? page.adHosts : [];
     var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors, reveal: Boolean(pv.reveal),
-      block: Boolean(pv.block), adHosts: adHosts,
+      block: Boolean(pv.block), adHosts: adHosts, loose: Boolean(pv.loose),
       clicks: pv.scripts ? wzActionsFor(wz.step).filter(function (a) { return a.kind !== 'scroll'; }).map(function (a) { return a.selector; }).filter(Boolean) : [] };
     var picker = '(' + wzPickerMain.toString() + ')(' + JSON.stringify(cfg).replace(/</g, '\\u003c') + ');';
     var nonce = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
@@ -2394,7 +2432,7 @@
   function wzSendConfig() {
     var frame = $('#wz-frame'), pv = wz && wz.pv;
     if (!frame || !frame.contentWindow || !pv) return;
-    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors, reveal: Boolean(pv.reveal) } }, '*');
+    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors, reveal: Boolean(pv.reveal), loose: Boolean(pv.loose) } }, '*');
   }
   // Is what was picked in the page as the site sends it (what crawls read: they don't run the site's scripts)?
   function wzInSource(field, selector) {
@@ -2423,6 +2461,10 @@
     }
     if (m.type === 'leaving') { if (frame.bounce) frame.bounce(); return; }
     if (m.type === 'overlay') { pv.info = t('wz.block.overlay'); return wzStatus(); }
+    if (m.type === 'tested' && pv.builder && m.selector === pv.builder.selector) {
+      pv.builder.result = t(pv.builder.rel ? 'wz.loose.countRows' : 'wz.loose.count', { count: Number(m.count) || 0, sample: String(m.sample || '—').slice(0, 80) });
+      return wzStatus();
+    }
     if (m.type === 'waiting') { pv.ready = false; pv.clicking = 0; pv.waitLeft = Math.max(0, Math.min(60, Number(m.left) || 0)); return wzStatus(); }
     if (m.type === 'scrolled' && pv.scrollFor) {
       // What scrolling asked the site for: the same site's requests, the ones that look like a list first
@@ -2461,6 +2503,14 @@
         return;
       }
       wz.draft.selectors[field] = m.selector;
+      // "First match": what it was picked by, to change (each part checked: a short CSS piece, nothing else)
+      var fspec = wzSpec(field), okParts = Array.isArray(m.parts) && m.parts.length && m.parts.length <= 20 && m.parts.every(function (p) {
+        return p && /^(tag|id|class|attr|parent)$/.test(p.k) && typeof p.css === 'string' && p.css.length <= 200;
+      });
+      pv.builder = okParts ? { field: field, selector: m.selector, attr: fspec.attr || '', suffix: fspec.attr ? '@' + fspec.attr : '',
+        rel: fspec.kind === 'rel' ? String(wz.draft.selectors[fspec.rel] || '').split('@')[0] : '',
+        parts: m.parts.map(function (p) { return { k: p.k, css: p.css, on: Boolean(p.on) }; }) } : null;
+      if (pv.builder) pv.builder.result = t(pv.builder.rel ? 'wz.loose.countRows' : 'wz.loose.count', { count: Number(m.count) || 0, sample: String((m.samples || [])[0] || '—').slice(0, 80) });
       if ((field === 'link' || field === 'item') && /^https?:\/\//i.test(String(m.workUrl || ''))) wz.sampleWork = String(m.workUrl);
       var samples = (Array.isArray(m.samples) ? m.samples : []).slice(0, 3).map(function (x) { return String(x).slice(0, 80); });
       pv.info = t('wz.picked', { field: wzFieldLabel(field), selector: m.self ? t('wz.itself') : m.selector, count: Number(m.count) || 0 }) + (samples.length ? ' — ' + samples.join(' | ') : '') +
@@ -2623,6 +2673,38 @@
       return parts.join(' ');
     };
     var all = function (root, s) { try { return root.querySelectorAll(s); } catch (e) { return []; } };
+    // "First match": an element by its characteristics, not its exact place — its tag, id, classes, a few
+    // attributes and the box it sits in, each one on or off (the wizard toggles them); the first match is used
+    var partsOf = function (tgt, inside) {
+      var parts = [{ k: 'tag', css: tgt.tagName.toLowerCase(), on: true }];
+      if (tgt.id && /^[a-zA-Z][\w-]*$/.test(tgt.id)) parts.push({ k: 'id', css: '#' + tgt.id, on: false });
+      Array.prototype.forEach.call(tgt.classList, function (c) { if (/^-?[a-zA-Z_][\w-]*$/.test(c) && !/^thoth-/.test(c)) parts.push({ k: 'class', css: '.' + c, on: goodClass(c) }); });
+      Array.prototype.forEach.call(tgt.attributes, function (a) {
+        if (!/^(itemprop|property|rel|role|name|type|title|lang|data-[\w-]+)$/.test(a.name) || a.value.length > 60 || !/^[\w .:\/#-]*$/.test(a.value)) return;
+        if (parts.filter(function (p) { return p.k === 'attr'; }).length < 6) parts.push({ k: 'attr', css: a.value ? '[' + a.name + '="' + a.value + '"]' : '[' + a.name + ']', on: false });
+      });
+      var par = tgt.parentElement;
+      if (par && par !== inside && par.tagName !== 'BODY' && par.tagName !== 'HTML') parts.push({ k: 'parent', css: stepOf(par), on: false });
+      return parts;
+    };
+    var buildSel = function (parts) {
+      var own = parts.filter(function (p) { return p.on && p.k !== 'parent'; });
+      if (!own.length) own = [parts[0]];
+      var tag = own.filter(function (p) { return p.k === 'tag'; }).map(function (p) { return p.css; }).join('');
+      var rest = own.filter(function (p) { return p.k !== 'tag'; }).map(function (p) { return p.css; }).join('');
+      var par = parts.filter(function (p) { return p.on && p.k === 'parent'; })[0];
+      return (par ? par.css + ' ' : '') + (tag || (rest ? '' : parts[0].css)) + rest;
+    };
+    // The wizard trying a selector it built: what it matches marked, how many, the first one's value
+    var testSel = function (q) {
+      var css = String(q.selector || '').split('@')[0], ms;
+      if (q.rel) ms = Array.prototype.map.call(all(document, q.rel), function (row) { try { return css ? row.querySelector(css) : row; } catch (e) { return null; } }).filter(Boolean);
+      else ms = Array.prototype.slice.call(all(document, css));
+      mark(ms);
+      Array.prototype.forEach.call(document.querySelectorAll('.thoth-first'), function (x) { x.classList.remove('thoth-first'); });
+      if (ms[0] && !q.rel) ms[0].classList.add('thoth-first');
+      post({ type: 'tested', selector: q.selector, count: ms.length, sample: ms[0] ? sampleOf(ms[0], q.attr) : '' });
+    };
     var mark = function (list) {
       Array.prototype.forEach.call(document.querySelectorAll('.thoth-match'), function (x) { x.classList.remove('thoth-match'); });
       Array.prototype.forEach.call(list, function (x) { if (x && x.classList) x.classList.add('thoth-match'); });
@@ -2655,9 +2737,24 @@
         return post({ type: 'picked', field: field, selector: cs, count: 1, samples: [(c.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 60)] });
       }
       if (spec.kind === 'repeat') {
+        // Rows that are links themselves (<a class="chapter">Chapter 3 <span>date</span></a>, one after another):
+        // the link is the row, when it has siblings like it (a lone link inside each <li> isn't: the <li> is)
+        var link = el.closest && el.closest('a[href]');
+        if (link && link.parentElement && link.tagName !== 'BODY') {
+          // (every match in a box like this one's: a bare "a" would take every link of the page)
+          var boxStep = stepOf(link.parentElement);
+          var ls = pathSelector(link, null, function (x) {
+            var ms = all(document, x);
+            return ms.length >= 2 && ms.length <= 2000 && Array.prototype.every.call(ms, function (m) { return m.parentElement && stepOf(m.parentElement) === boxStep; });
+          });
+          var lm = all(document, ls);
+          var sibs = Array.prototype.filter.call(lm, function (x) { return x.parentElement === link.parentElement; }).length;
+          if (lm.length >= 2 && lm.length <= 2000 && sibs >= 2 && Array.prototype.indexOf.call(lm, link) !== -1) r = { selector: ls, matches: lm };
+        }
+        // Otherwise the nearest block around what was clicked that repeats
         var cur = el;
-        while (cur && cur.parentElement && !BLOCK.test(cur.tagName.toLowerCase())) cur = cur.parentElement;
-        for (; cur && cur.tagName !== 'BODY'; cur = cur.parentElement) {
+        while (!r && cur && cur.parentElement && !BLOCK.test(cur.tagName.toLowerCase())) cur = cur.parentElement;
+        for (; !r && cur && cur.tagName !== 'BODY'; cur = cur.parentElement) {
           var s = pathSelector(cur, null, function (x) { var n = all(document, x).length; return n >= 2 && n <= 2000; });
           if (all(document, s).length >= 2) { r = { selector: s, matches: all(document, s) }; break; }
         }
@@ -2670,7 +2767,11 @@
         var target = spec.attr === 'href' ? (el.closest('a[href]') || el.querySelector('a[href]')) : spec.attr === 'src' ? (el.tagName === 'IMG' ? el : el.querySelector('img') || (el.closest('a, div, figure') || el).querySelector('img')) : el;
         if (!target || !root.contains(target)) return post({ type: 'error', code: 'pickNotFound' });
         if (target === root) r = { selector: '', self: true, matches: [target] };
-        else {
+        else if (cfg.loose) {
+          // (first match inside each row)
+          var rparts = partsOf(target, root), rl = buildSel(rparts);
+          r = { selector: rl + attr, parts: rparts, matches: Array.prototype.map.call(all(document, parentSel), function (x) { try { return x.querySelector(rl); } catch (e) { return null; } }).filter(Boolean) };
+        } else {
           var rs = pathSelector(target, root, function (x) { try { return root.querySelector(x) === target; } catch (e) { return false; } });
           r = { selector: rs + attr, matches: Array.prototype.map.call(all(document, parentSel), function (x) { return x.querySelector(rs); }).filter(Boolean) };
         }
@@ -2686,19 +2787,25 @@
         var ss = pathSelector(tgt, null, unique);
         if (!unique(ss)) ss = pathSelector(tgt, null, function (x) { try { return document.querySelector(x) === tgt; } catch (e) { return false; } });
         r = { selector: ss + attr, matches: [tgt] };
+        // "First match": by its characteristics (every element that has them is marked; the first is used)
+        if (cfg.loose) { var sparts = partsOf(tgt, null), sl = buildSel(sparts); r = { selector: sl + attr, parts: sparts, matches: Array.prototype.slice.call(all(document, sl)) }; }
       }
       mark(r.matches);
+      Array.prototype.forEach.call(document.querySelectorAll('.thoth-first'), function (x) { x.classList.remove('thoth-first'); });
+      if (r.parts && r.matches[0] && spec.kind !== 'rel') r.matches[0].classList.add('thoth-first');
       var first = r.matches[0], a = first && (first.closest ? first.closest('a[href]') : null) || (first && first.querySelector ? first.querySelector('a[href]') : null);
-      post({ type: 'picked', field: field, selector: r.selector, self: Boolean(r.self), count: r.matches.length,
+      post({ type: 'picked', field: field, selector: r.selector, self: Boolean(r.self), count: r.matches.length, parts: r.parts || null,
         samples: Array.prototype.slice.call(r.matches, 0, 3).map(function (x) { return sampleOf(x, spec.attr); }).filter(Boolean), workUrl: a ? a.href : null });
     }
     var style = document.createElement('style');
-    style.textContent = '.thoth-hl{outline:2px solid #1a73e8!important;outline-offset:1px;background-color:rgba(26,115,232,.12)!important}.thoth-match{outline:2px dashed #188038!important;outline-offset:1px}';
+    style.textContent = '.thoth-hl{outline:2px solid #1a73e8!important;outline-offset:1px;background-color:rgba(26,115,232,.12)!important}.thoth-match{outline:2px dashed #188038!important;outline-offset:1px}' +
+      '.thoth-first{outline:3px solid #e8710a!important;outline-offset:2px}';
     (document.head || document.documentElement).appendChild(style);
     var cursor = function () { document.documentElement.style.cursor = ready && cfg.mode === 'pick' ? 'crosshair' : ''; };
     window.addEventListener('message', function (e) {
       if (e.source !== parent || !e.data || e.data.thoth !== 'config') return;
       if (e.data.scroll) return scrollList(e.data.scroll.selector);
+      if (e.data.test) return testSel(e.data.test);
       cfg = e.data.cfg || cfg; cursor(); showHidden();
       if (cfg.mode !== 'pick' && last) { last.classList.remove('thoth-hl'); last = null; }
     });
@@ -2775,6 +2882,18 @@
       return wzRender();
     }
     if (e.type === 'change' && el.id === 'wz-pv-scripts') { pv.scripts = el.checked; return wzRender(); }
+    if (e.type === 'change' && el.id === 'wz-pv-loose') { pv.loose = el.checked; pv.builder = null; wzSendConfig(); wzStatus(); return; }
+    if (e.type === 'change' && el.dataset && el.dataset.wzPart != null && pv.builder) {
+      var b = pv.builder, part = b.parts[Number(el.dataset.wzPart)];
+      if (!part) return;
+      part.on = el.checked;
+      if (!b.parts.some(function (p) { return p.on && p.k !== 'parent'; })) b.parts[0].on = true; // (something of its own always counts)
+      b.selector = wzBuildSel(b.parts) + b.suffix;
+      wz.draft.selectors[b.field] = b.selector;
+      var si = $('#wz-sel-' + b.field); if (si) si.value = b.selector;
+      wzStatus(); wzTestBuilder();
+      return;
+    }
     if (e.type === 'change' && el.id === 'wz-pv-block') { pv.block = el.checked; pv.info = null; return wzRender(); }
     if (e.type === 'change' && el.id === 'wz-pv-reveal') { pv.reveal = el.checked; return wzSendConfig(); }
     if (e.type === 'change' && el.id === 'wz-pv-wait') { pv.wait = Math.max(0, Math.min(60, Math.round(Number(el.value) || 0))); return wzRender(); }

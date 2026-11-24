@@ -19,9 +19,14 @@ const hashOf = text => crypto.createHash('sha1').update(String(text)).digest('he
 const contentHash = text => hashOf(String(text).replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim());
 async function readSitemap(get, url) {
   const t0 = Date.now();
-  const res = await get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5' });
+  // (sitemaps may be far bigger than pages: up to 50 MB uncompressed)
+  const { SITEMAP_BYTES } = require('./fetcher');
+  const res = await get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5', maxBytes: SITEMAP_BYTES });
   let text = res.text;
-  if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf).toString('utf8'); // .xml.gz
+  if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) { // .xml.gz
+    try { text = zlib.gunzipSync(res.buf, { maxOutputLength: SITEMAP_BYTES }).toString('utf8'); }
+    catch (e) { throw Object.assign(new Error(/RangeError|maxOutputLength|buffer/i.test(e.name + e.message) ? `Too large once unpacked (over ${SITEMAP_BYTES / 1048576} MB)` : 'Not a readable .gz file'), { code: 'tooLarge' }); }
+  }
   let isSitemap = /<(?:\w+:)?(urlset|sitemapindex)[\s>]/i.test(text);
   let parsed = parseSitemap(text);
   // A text sitemap: one address per line

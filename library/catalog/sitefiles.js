@@ -20,9 +20,10 @@ async function readSiteFile({ url, allowLocal }) {
     const sitemaps = require('./fetcher').sitemapsIn(text);
     return { url, kind: 'robots', found: true, size: Buffer.byteLength(text), hash: hash(text), text: text.slice(0, MAX_TEXT), truncated: text.length > MAX_TEXT, sitemaps: sitemaps.map(loc => ({ loc })) };
   }
-  const res = await fetcher.get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5' });
+  const { SITEMAP_BYTES } = require('./fetcher');
+  const res = await fetcher.get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5', maxBytes: SITEMAP_BYTES });
   let text = res.text;
-  if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf).toString('utf8'); // .xml.gz
+  if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf, { maxOutputLength: SITEMAP_BYTES }).toString('utf8'); // .xml.gz
   const sm = parseSitemap(text);
   // (other sitemaps listed as ordinary entries are shown as sitemaps, as crawls follow them)
   const { looksLikeSitemap } = require('./sitemap');

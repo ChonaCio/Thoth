@@ -679,7 +679,9 @@ const custom = {
     work.chapters = await withHiddenChapters(ctx, chDoc, chRes.url, (d, base) => d.select(s.chapter).map(li => {
       const link = s.chapterLink || 'a@href';
       const [lsel, lat] = link.includes('@') ? link.split('@') : [link, 'href'];
-      const a = lsel ? li.first(lsel) : li;
+      // (a row that is itself the link — <a class="chapter">Chapter 3 <span>date</span></a> one after another —
+      // is its own link: its descendants have no <a>)
+      const a = lsel ? li.first(lsel) || (li.el.tag === 'a' && (!s.chapterLink || /^a(\[href\])?$/i.test(lsel.trim())) ? li : null) : li;
       const u = a && abs(a.attr(lat || 'href'), base);
       const t = s.chapterTitle ? pick(li, s.chapterTitle, base) : (a ? a.text() : li.text());
       return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
