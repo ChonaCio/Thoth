@@ -53,6 +53,14 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/sm/series.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(xml('url', ['/manga/alpha', '/manga/beta', '/manhwa/gamma', '/manhwa/delta', '/genre/action', '/manga/page'])); }
   const cm = /^\/sm\/chapters-2026-0(\d)\.xml$/.exec(u.pathname);
   if (cm) { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(xml('url', ['alpha', 'beta', 'gamma'].map((w, i) => `/${i === 2 ? 'manhwa' : 'manga'}/${w}/chapter-${cm[1]}`))); }
+  // Nested sitemaps in every form: a <urlset> listing other sitemaps (one by a relative address), an index under
+  // it, a text sitemap, and chapter sitemaps two levels down
+  const urlset = locs => `<?xml version="1.0"?><urlset>${locs.map(l => `<url><loc>${l}</loc></url>`).join('')}</urlset>`;
+  if (u.pathname === '/nest/sitemap.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(urlset([BASE + '/nest/chapters-01.xml', 'level2.xml', BASE + '/manga/root-work'])); }
+  if (u.pathname === '/nest/level2.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(`<?xml version="1.0"?><sitemapindex><sitemap><loc>${BASE}/nest/works-sitemap.txt</loc></sitemap><sitemap><loc>${BASE}/nest/chapters-02.xml</loc></sitemap></sitemapindex>`); }
+  if (u.pathname === '/nest/works-sitemap.txt') { res.writeHead(200, { 'Content-Type': 'text/plain' }); return res.end(`${BASE}/manga/nested-one\n${BASE}/manga/nested-two\n`); }
+  const nc = /^\/nest\/chapters-0(\d)\.xml$/.exec(u.pathname);
+  if (nc) { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(urlset([`${BASE}/manga/nested-one/chapter-${nc[1]}`, `${BASE}/manga/nested-two/chapter-${nc[1]}`])); }
   if (u.pathname === '/busy') { if (tooMany++ < 1) { res.writeHead(429, { 'Retry-After': '0' }); return res.end('slow down'); } res.writeHead(200); return res.end('ok'); }
   res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>hi</p>');
 });
@@ -178,6 +186,19 @@ const site = http.createServer((req, res) => {
     'a crawl lists every work and gets each one\'s chapters from the chapter sitemaps', listed2.join());
   check(Object.values(ctx2.discovery).find(r => r.url.endsWith('/sm/series.xml')).found === 4 && Object.values(ctx2.discovery).find(r => /chapters-2026-01/.test(r.url)).kind === 'chapters',
     'each sitemap is recorded: kind, what it gave');
+
+  console.log('Nested sitemaps');
+  const nlog = [], nurls = [];
+  for await (const x of smod.walk(fs2.get, [BASE + '/nest/sitemap.xml'], { onFile: r => nlog.push(r) })) nurls.push(...x.urls.map(u => u.loc.replace(BASE, '')));
+  const st = p => (nlog.find(r => r.url === BASE + p) || {});
+  check(st('/nest/sitemap.xml').kind === undefined || st('/nest/sitemap.xml').status === 'read', 'the top sitemap read');
+  check(st('/nest/chapters-01.xml').parent === BASE + '/nest/sitemap.xml' && st('/nest/level2.xml').parent === BASE + '/nest/sitemap.xml' && st('/nest/works-sitemap.txt').parent === BASE + '/nest/level2.xml' && st('/nest/chapters-02.xml').parent === BASE + '/nest/level2.xml',
+    'sitemaps listed as ordinary entries (one by a relative address), an index under them and a text sitemap are all followed, each with its parent', nlog.map(r => r.url.replace(BASE, '') + '<' + String(r.parent || '').replace(BASE, '') + ':' + r.status).join(' '));
+  check(['/manga/root-work', '/manga/nested-one', '/manga/nested-two', '/manga/nested-one/chapter-1', '/manga/nested-two/chapter-2'].every(p => nurls.includes(p)) && !nurls.some(p => /\.xml|\.txt/.test(p)),
+    'their addresses: works and chapters from every level, no sitemap taken for a page', nurls.join(' '));
+  const nctx = { src: { autoDetect: true, workPattern: '/manga/*', sitemaps: [BASE + '/nest/sitemap.xml'], baseUrl: BASE, includeChapters: true }, get: fs2.get };
+  const nworks = []; for await (const pg of smod.sitemapWorks(nctx)) nworks.push(...pg.map(w => w.sid));
+  check(nworks.sort().join() === '/manga/nested-one,/manga/nested-two,/manga/root-work' && nctx.sitemapChapters.get('/manga/nested-one').length === 2, 'a crawl gets the works and the chapters from every level', nworks.join());
 
   site.close();
   console.log(failed ? `\n${failed} CRAWL RULE CHECK(S) FAILED` : `\nALL ${passed} CRAWL RULE CHECKS PASSED`);

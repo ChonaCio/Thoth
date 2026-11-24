@@ -24,6 +24,11 @@ async function readSiteFile({ url, allowLocal }) {
   let text = res.text;
   if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf).toString('utf8'); // .xml.gz
   const sm = parseSitemap(text);
+  // (other sitemaps listed as ordinary entries are shown as sitemaps, as crawls follow them)
+  const { looksLikeSitemap } = require('./sitemap');
+  const abs = loc => { try { return new URL(loc, res.url).href; } catch { return loc; } };
+  sm.sitemaps = sm.sitemaps.map(x => Object.assign({}, x, { loc: abs(x.loc) }));
+  sm.urls = sm.urls.map(x => Object.assign({}, x, { loc: abs(x.loc) })).filter(x => { if (looksLikeSitemap(x.loc, res.url)) { sm.sitemaps.push(x); return false; } return true; });
   return { url: res.url, kind: 'sitemap', found: true, size: Buffer.byteLength(text), hash: hash(text), text: text.slice(0, MAX_TEXT), truncated: text.length > MAX_TEXT,
     sitemaps: sm.sitemaps, urls: sm.urls.slice(0, MAX_URLS), urlCount: sm.urls.length };
 }

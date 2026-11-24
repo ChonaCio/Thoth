@@ -628,7 +628,10 @@ sites added as **sources**, with its metadata and chapter list.
     didn't change, not even downloaded; *Failed*, *Refused*, *Not a sitemap*, *Disallowed*; *Not read yet*), HTTP,
     entries, what it gave, hash, `<lastmod>`, size, time, when it was checked and when its content last changed.
     The document icon reads a file now: its text, the sitemaps it lists and its addresses (searchable).
-- **How sitemaps are understood** (as in Folio): the sitemaps robots.txt names, else the usual places; an index's
+- **How sitemaps are understood** (as in Folio): the sitemaps robots.txt names, else the usual places, and every
+  sitemap nested in them, at any depth and however it's listed: a sitemap index, other sitemaps listed as ordinary
+  entries (`sitemap.xml` listing `chapters-01.xml`…; `.xml`, `.xml.gz`, or a `.txt` named like a sitemap),
+  relative addresses, and plain-text sitemaps (one address per line). An index's
   lists of works are read before its chapter sitemaps (a site with one chapter sitemap per month doesn't use up a
   limit before its works). Any address shaped like a work — a work word and the work's own segment
   (`/manga/one-piece`, `/series/x`, `/manhwa/y`, `/comics/…`, `/webtoon/…`, `/title/…`…) — is a work, so a site

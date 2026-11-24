@@ -22,8 +22,31 @@ async function readSitemap(get, url) {
   const res = await get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5' });
   let text = res.text;
   if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf).toString('utf8'); // .xml.gz
-  const isSitemap = /<(?:\w+:)?(urlset|sitemapindex)[\s>]/i.test(text);
-  return Object.assign(parseSitemap(text), { hash: contentHash(text), http: res.status || 200, ms: Date.now() - t0, bytes: Buffer.byteLength(text), isSitemap });
+  let isSitemap = /<(?:\w+:)?(urlset|sitemapindex)[\s>]/i.test(text);
+  let parsed = parseSitemap(text);
+  // A text sitemap: one address per line
+  if (!isSitemap && !/<[a-z!?]/i.test(text.slice(0, 2000))) {
+    const lines = text.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    if (lines.length && lines.every(l => /^https?:\/\/\S+$/i.test(l))) { isSitemap = true; parsed = { sitemaps: [], urls: lines.map(loc => ({ loc, lastmod: null })) }; }
+  }
+  // Nested sitemaps, however they're listed: relative addresses made absolute, and other sitemaps listed as
+  // ordinary <url> entries (sitemap.xml listing chapters-01.xml…) followed like an index's
+  const absUrl = loc => { try { return new URL(loc, res.url || url).href; } catch { return null; } };
+  const sitemaps = parsed.sitemaps.map(x => Object.assign({}, x, { loc: absUrl(x.loc) })).filter(x => x.loc);
+  const urls = [];
+  for (const x of parsed.urls) {
+    const loc = absUrl(x.loc);
+    if (!loc) continue;
+    if (looksLikeSitemap(loc, url)) sitemaps.push({ loc, lastmod: x.lastmod }); else urls.push(Object.assign({}, x, { loc }));
+  }
+  return { sitemaps, urls, hash: contentHash(text), http: res.status || 200, ms: Date.now() - t0, bytes: Buffer.byteLength(text), isSitemap };
+}
+// An address that's another sitemap: an .xml / .xml.gz / .txt file of the same site (named like a sitemap for .txt)
+function looksLikeSitemap(loc, from) {
+  let u, f; try { u = new URL(loc); f = new URL(from); } catch { return false; }
+  const host = h => h.replace(/^www\./, '');
+  if (host(u.hostname) !== host(f.hostname)) return false;
+  return /\.xml(\.gz)?$/i.test(u.pathname) || (/\.txt$/i.test(u.pathname) && /sitemap/i.test(u.pathname)) || /sitemap[^/]*\.(xml|txt)/i.test(u.pathname + u.search);
 }
 // A sitemap file's kind: an index (of other sitemaps), a chapter sitemap, or a list of works (or other pages)
 const CHAPTER_FILE = /chapter|episode|capitulo/i;
@@ -258,4 +281,4 @@ async function* sitemapWorks(ctx) {
   }
 }
 
-module.exports = { parseSitemap, readSitemap, walk, patternRegex, inferPatterns, defaultPatterns, workMatcher, isChapterSegment, DEFAULT_WORK_RE, templateOf, titleFromSlug, sitemapWorks, pathOf, contentHash };
+module.exports = { looksLikeSitemap, parseSitemap, readSitemap, walk, patternRegex, inferPatterns, defaultPatterns, workMatcher, isChapterSegment, DEFAULT_WORK_RE, templateOf, titleFromSlug, sitemapWorks, pathOf, contentHash };
