@@ -34,6 +34,24 @@ function settingsKey(src) {
   return require('crypto').createHash('sha1').update(JSON.stringify(pick)).digest('hex').slice(0, 16);
 }
 
+// The chapters the sitemaps list for a work, added to what its page showed (once each; the page's own keep their names)
+const { chapterNum } = require('./adapters');
+function withSitemapChapters(list, fromSitemaps) {
+  if (!fromSitemaps || !fromSitemaps.length) return list;
+  const byId = new Map(list.map(c => [String(c.id), c]));
+  for (const x of fromSitemaps) {
+    let p; try { p = decodeURI(new URL(x.u).pathname); } catch { continue; }
+    const id = p.replace(/\/+$/, '');
+    const have = byId.get(id) || list.find(c => c.u && c.u.replace(/\/+$/, '') === x.u.replace(/\/+$/, ''));
+    if (have) { if (!have.d && x.d) have.d = String(x.d).slice(0, 10); continue; }
+    const last = p.split('/').filter(Boolean).pop() || '';
+    const n = chapterNum(last.replace(/[-_]+/g, ' '));
+    const c = { id, n: n || null, t: n ? 'Chapter ' + n : last.replace(/[-_]+/g, ' '), u: x.u, d: x.d ? String(x.d).slice(0, 10) : '', l: null, fromSitemap: true };
+    byId.set(id, c); list.push(c);
+  }
+  return list;
+}
+
 let current = null;
 const FIELDS = ['title', 'altTitles', 'cover', 'summary', 'authors', 'genres', 'tags', 'status', 'type', 'year', 'url', 'languages', 'links'];
 const filled = v => v != null && v !== '' && !(Array.isArray(v) && !v.length) && v !== 'unknown';
@@ -97,7 +115,7 @@ async function crawl(msg, send) {
   let lastFlush = Date.now();
   const flush = () => { store.writeWorks(dir, { sourceId: src.id, works }); chapters.flush(); lastFlush = Date.now(); send({ type: 'flushed', reqId: msg.reqId }); };
   const ctx = { src, get: (u, o) => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.get(u, o); }, incremental,
-    sitemapState: store.readSitemapState(dir) }; // (what the sitemaps held at the last crawl: an update reads only what changed)
+    sitemapState: store.readSitemapState(dir), knownSids: new Set(Object.keys(works)) }; // (what the sitemaps held at the last crawl: an update reads only what changed)
   const failed = new Set(); // works whose page couldn't be read: looked at again next time
   const queue = [];
   let listingComplete = false, aborted = null;
@@ -119,7 +137,7 @@ async function crawl(msg, send) {
     }
     listingComplete = !src.maxWorks || stats.listed < src.maxWorks;
     const sc = ctx.sitemapCounts;
-    say(`${stats.listed} work(s) listed (${stats.added} new)` + (sc ? `; sitemaps: ${sc.files} read, ${sc.unchanged} unchanged, ${sc.notRead} not downloaded (same date)` : ''));
+    say(`${stats.listed} work(s) listed (${stats.added} new)` + (sc ? `; sitemaps: ${sc.files} read, ${sc.unchanged} unchanged, ${sc.notRead} not downloaded (same date)` + (sc.chapters ? `; ${sc.chapters} chapter addresses in them` : '') : ''));
     // 2. Each work's details and chapter list: several works at once (msg.concurrency lanes taking the next
     // work from the list). The fetcher still spaces the requests to one site by gapMs, so more lanes only
     // help while pages are slow to answer; they never make the crawl hit the site faster than that.
@@ -143,7 +161,7 @@ async function crawl(msg, send) {
         const old = chapters.get(sid);
         const known = new Set(((old && old.chapters) || []).map(c => String(c.id)));
         const full = await adapter.fetchWork(Object.assign({}, ctx, { known }), Object.assign({}, w));
-        if (full.chapters) full.chapters = full.chapters.map(c => standardChapter(c, src));
+        if (full.chapters) full.chapters = withSitemapChapters(full.chapters, ctx.sitemapChapters && ctx.sitemapChapters.get(sid)).map(c => standardChapter(c, src));
         // The English title when the page gives several (the site's main one kept among the other titles)
         const best = preferEnglish([full.title].concat(full.altTitles || []));
         if (best && best !== full.title) { full.altTitles = [full.title].concat((full.altTitles || []).filter(t => t !== best)); full.title = best; }

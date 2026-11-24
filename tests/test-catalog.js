@@ -97,6 +97,10 @@ const site = http.createServer((req, res) => {
     const next = all[at + 2] ? Buffer.from(String(all[at + 2])).toString('base64') : null;
     return send(200, JSON.stringify({ data: part.map(n => ({ number: n, title: 'Chapter ' + n, isLocked: n === 6, createdAt: '2025-01-0' + n + 'T00:00:00Z' })), nextCursor: next }), 'application/json');
   }
+  // Sitemaps: an index with a works sitemap and a chapters sitemap (all 6 chapters; the page shows 2)
+  if (u.pathname === '/scroll-sitemap.xml') return send(200, `<?xml version="1.0"?><sitemapindex><sitemap><loc>${SITE}/scroll-works-sitemap.xml</loc></sitemap><sitemap><loc>${SITE}/scroll-chapter-sitemap.xml</loc></sitemap></sitemapindex>`, 'application/xml');
+  if (u.pathname === '/scroll-works-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset><url><loc>${SITE}/scroll/series/blade</loc></url></urlset>`, 'application/xml');
+  if (u.pathname === '/scroll-chapter-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${[1, 2, 3, 4, 5, 6].map(n => `<url><loc>${SITE}/scroll/series/blade/chapter-${n}</loc><lastmod>2025-02-0${n}</lastmod></url>`).join('')}</urlset>`, 'application/xml');
   // A site behind bot protection
   if (u.pathname.startsWith('/guarded')) return send(403, '<html><title>Just a moment...</title><div id="cf-chl-widget"></div></html>');
   send(404, 'not found');
@@ -258,6 +262,14 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(blade.length === 6 && blade.find(c => c.n === '6').pr === true && blade.find(c => c.n === '1').u === SITE + '/scroll/series/blade/chapter-1',
     'a crawl reads them too: chapters from the answers, linked like the page’s own links, locked ones marked');
   await call('DELETE', `/api/catalog/sources/${ss.id}`);
+  // ---- chapter sitemaps: every chapter, also the ones the page doesn't show ----
+  const smsrc = (await call('POST', '/api/catalog/sources', { name: 'Chapter sitemaps', type: 'custom', baseUrl: SITE, includeChapters: true, listing: 'sitemap', sitemaps: [SITE + '/scroll-sitemap.xml'], workPattern: '/scroll/series/*', selectors: { workTitle: 'h1', chapter: 'li.c' } })).data.source;
+  await call('POST', `/api/catalog/sources/${smsrc.id}/crawl`, { mode: 'full' });
+  const smDone = await crawled(smsrc.id);
+  const smCh = (await call('GET', `/api/catalog/work?key=${encodeURIComponent((await call('GET', `/api/catalog?source=${smsrc.id}`)).data.items[0].key)}`)).data.work.sources[0].chapterList;
+  ok(smCh.length === 6 && smCh.find(c => c.n === '1').t === 'Chapter 1' && smCh.find(c => c.n === '1').d === '2025-02-01' && smDone.lastStats.sitemaps.chapters === 6,
+    `the chapters sitemap gives every chapter, also those the work's page doesn't show (page 2 → ${smCh.length}; ${smDone.lastStats.sitemaps.chapters} chapter addresses)`);
+  await call('DELETE', `/api/catalog/sources/${smsrc.id}`);
   // ---- titles: noise taken out, versions recognized and grouped like a library's ----
   const vsrc = (await call('POST', '/api/catalog/sources', { name: 'Version Site', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/ver/list', item: 'div.v', workTitle: 'h1', chapter: 'li.c' } })).data.source;
   await call('POST', `/api/catalog/sources/${vsrc.id}/crawl`, { mode: 'full' });

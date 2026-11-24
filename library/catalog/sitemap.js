@@ -102,6 +102,10 @@ const titleFromSlug = url => { const seg = pathOf(url).split('/').filter(Boolean
 //   - a file whose content hash is the same is skipped;
 //   - in a changed file, only works that are new or whose fingerprint changed are read.
 // Without a saved state, an update yields the works dated after the last crawl (undated ones always).
+// Chapter sitemaps are read too (when chapters are wanted): every chapter address is matched to its work (the
+// longest start of its path that is a work's address) and kept in ctx.sitemapChapters (sid → [{ u, d }]), so a
+// crawl has every chapter even when a work's page shows only some (a list that loads more as it's scrolled…).
+// A work listed only through its chapters is read when it's known already (ctx.knownSids) or was listed before.
 async function* sitemapWorks(ctx) {
   const { src, get } = ctx;
   const re = patternRegex(src.workPattern);
@@ -109,8 +113,16 @@ async function* sitemapWorks(ctx) {
   const chRe = patternRegex(src.chapterPattern);
   const since = ctx.incremental && src.lastCrawlAt ? Date.parse(src.lastCrawlAt) - 86400000 : 0;
   const roots = (src.sitemaps && src.sitemaps.length ? src.sitemaps : [new URL('/sitemap.xml', src.baseUrl).href]);
-  // Child sitemaps that obviously list other things (tags, authors, chapters, images) are skipped
-  const filter = loc => !/(tag|categor|author|artist|genre|image|video|news|page|post|chapter|episode)s?[-_]?sitemap|sitemap[-_]?(tag|categor|author|artist|genre|image|video|news|page|post|chapter|episode)/i.test(loc);
+  // Child sitemaps that obviously list other things (tags, authors, images…) are skipped; chapter sitemaps only
+  // when chapters aren't wanted
+  const wantChapters = src.includeChapters !== false;
+  const other = wantChapters ? 'tag|categor|author|artist|genre|image|video|news|page|post' : 'tag|categor|author|artist|genre|image|video|news|page|post|chapter|episode';
+  const otherRe = new RegExp(`(${other})s?[-_]?sitemap|sitemap[-_]?(${other})`, 'i');
+  const filter = loc => !otherRe.test(loc);
+  const chapters = ctx.sitemapChapters = new Map();
+  const known = ctx.knownSids || new Set();
+  // A chapter's address: by the chapter pattern when there is one, else anything under a work that looks like a chapter
+  const isChapter = p => (chRe ? chRe.test(p) : /chap|episode|(^|[_-])(ch|ep)[-_.]?\d|^\d+(\.\d+)?$/i.test(p.split('/').filter(Boolean).pop() || ''));
   const prev = ctx.sitemapState && ctx.sitemapState.files ? ctx.sitemapState : null;
   const delta = Boolean(ctx.incremental && prev);
   const next = ctx.sitemapNext = { at: new Date().toISOString(), files: {} };
@@ -131,8 +143,13 @@ async function* sitemapWorks(ctx) {
     for (const u of urls) {
       const p = pathOf(u.loc);
       if (re.test(p)) { const e = entry(p.replace(/\/+$/, '')); e.url = u.loc; e.lastmod = u.lastmod || null; e.parts.push('=' + (u.lastmod || '')); continue; }
-      const sid = chRe && chRe.test(p) ? workOf(p) : null;
-      if (sid) entry(sid).parts.push(p + ' ' + (u.lastmod || ''));
+      const sid = wantChapters && isChapter(p) ? workOf(p) : null;
+      if (sid) {
+        entry(sid).parts.push(p + ' ' + (u.lastmod || ''));
+        if (!chapters.has(sid)) chapters.set(sid, []);
+        chapters.get(sid).push({ u: u.loc, d: u.lastmod || '' });
+        counts.chapters = (counts.chapters || 0) + 1;
+      }
     }
     const works = {};
     for (const [sid, e] of entries) works[sid] = hashOf(e.parts.sort().join('\n')).slice(0, 16);
@@ -142,7 +159,7 @@ async function* sitemapWorks(ctx) {
     const page = [];
     for (const [sid, e] of entries) {
       // (a work seen only through its chapters is read only when it was listed before)
-      if (seen.has(sid) || (!e.url && !(old && old.works && sid in old.works))) continue;
+      if (seen.has(sid) || (!e.url && !(old && old.works && sid in old.works) && !known.has(sid))) continue;
       seen.add(sid);
       if (delta && old) { if (old.works && old.works[sid] === works[sid]) continue; }
       else if (since && e.lastmod && Date.parse(e.lastmod) < since) continue;

@@ -581,6 +581,11 @@ sites added as **sources**, with its metadata and chapter list.
 - **Premium chapters** (behind coins, a pass, early access, or unavailable on MangaDex) are marked *Premium*: listed,
   but not readable for free right now; the chapters your library lacks say so too (a free copy on another source
   is preferred).
+- **Chapter sitemaps.** Sources listed from sitemaps also read the sites' **chapter sitemaps** (when chapters are
+  wanted): every chapter address is matched to its work by the start of its path (`/manga/x/chapter-12` →
+  `/manga/x`; by the chapter pattern when the source has one) and added to the chapters its page shows, with the
+  sitemap's date. A work gets its full chapter list even when its page shows only some (a list that loads more as
+  it's scrolled, "Show all"…). The crawl's log says how many chapter addresses the sitemaps held.
 - **Lists that load more as they're scrolled.** A *Before collecting* row can be **Scroll to load more** instead of a
   click: pick the list that scrolls (or leave it empty for the page) and press **Scroll it** — with *Site scripts* on,
   the preview scrolls it and notes what the page asks the site for (e.g. a chapters API with a page number or a
