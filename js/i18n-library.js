@@ -4271,4 +4271,59 @@
     "wz.shellPage": "Esta página chega quase vazia: o site a monta com seus scripts no navegador, então a prévia mostra só o fundo. As varreduras leem as páginas como o site as envia, então também não encontram nada aqui. Se o site tiver sitemaps, ative as configurações automáticas no primeiro passo; ou tente outra de suas páginas.",
     "wz.shellScripts": "Esta página é montada pelos scripts do site, e eles não puderam rodar na prévia (o site não deixa carregá-los fora dele). As varreduras leem as páginas como o site as envia, e esta chega quase vazia. Se o site tiver sitemaps, ative as configurações automáticas no primeiro passo; ou tente outra de suas páginas."
   });
+  add('en', {
+    "wz.shellPage": "This page arrives almost empty: the site builds it with its scripts in the browser, so the preview shows only its background, and crawls (which read pages as the site sends them) find nothing in it. Build its pages in a browser on the server to read them as a visitor sees them.",
+    "wz.shellScripts": "This page is built by the site's scripts, and they won't run in the preview (the site only lets them load on its own pages). Build its pages in a browser on the server to read them as a visitor sees them.",
+    "wz.shellRendered": "Even built in a browser, this page stays almost empty. Give its scripts more time (Crawling step), try another of its pages, or use automatic settings if the site has sitemaps.",
+    "wz.renderOn": "Build pages in a browser",
+    "wz.render": "Build pages in a browser",
+    "wz.renderHelp": "For sites that build their pages with scripts: list and work pages are opened in a headless Chrome, Edge or Chromium on the server and read once their scripts have run. Much slower; needs one of those browsers installed on the server (or THOTH_BROWSER set to it).",
+    "wz.renderWait": "Time for the scripts (seconds)",
+    "wz.renderWaitHelp": "How long a page gets to build itself (the browser moves on sooner when nothing is pending). Default: 8.",
+    "wz.rendering": "Building the page in a browser on the server…"
+  });
+  add('es', {
+    "wz.shellPage": "Esta página llega casi vacía: el sitio la construye con sus scripts en el navegador, así que la vista previa solo muestra el fondo y los rastreos (que leen las páginas tal como el sitio las envía) no encuentran nada. Construye sus páginas en un navegador en el servidor para leerlas como las ve un visitante.",
+    "wz.shellScripts": "Esta página la construyen los scripts del sitio, y no se ejecutan en la vista previa (el sitio solo deja cargarlos en sus propias páginas). Construye sus páginas en un navegador en el servidor para leerlas como las ve un visitante.",
+    "wz.shellRendered": "Incluso construida en un navegador, esta página sigue casi vacía. Da más tiempo a sus scripts (paso Rastreo), prueba otra de sus páginas o usa la configuración automática si el sitio tiene sitemaps.",
+    "wz.renderOn": "Construir páginas en un navegador",
+    "wz.render": "Construir páginas en un navegador",
+    "wz.renderHelp": "Para sitios que construyen sus páginas con scripts: las páginas de la lista y de las obras se abren en un Chrome, Edge o Chromium sin ventana en el servidor y se leen cuando sus scripts terminan. Mucho más lento; necesita uno de esos navegadores instalado en el servidor (o THOTH_BROWSER con su ruta).",
+    "wz.renderWait": "Tiempo para los scripts (segundos)",
+    "wz.renderWaitHelp": "Cuánto tiempo tiene una página para construirse (el navegador sigue antes si no queda nada pendiente). Predeterminado: 8.",
+    "wz.rendering": "Construyendo la página en un navegador en el servidor…"
+  });
+  add('fr', {
+    "wz.shellPage": "Cette page arrive presque vide : le site la construit avec ses scripts dans le navigateur, donc l'aperçu n'en montre que le fond et les explorations (qui lisent les pages telles que le site les envoie) n'y trouvent rien. Construisez ses pages dans un navigateur sur le serveur pour les lire comme un visiteur les voit.",
+    "wz.shellScripts": "Cette page est construite par les scripts du site, qui ne s'exécutent pas dans l'aperçu (le site ne les laisse charger que sur ses propres pages). Construisez ses pages dans un navigateur sur le serveur pour les lire comme un visiteur les voit.",
+    "wz.shellRendered": "Même construite dans un navigateur, cette page reste presque vide. Donnez plus de temps à ses scripts (étape Exploration), essayez une autre de ses pages ou utilisez les réglages automatiques si le site a des sitemaps.",
+    "wz.renderOn": "Construire les pages dans un navigateur",
+    "wz.render": "Construire les pages dans un navigateur",
+    "wz.renderHelp": "Pour les sites qui construisent leurs pages avec des scripts : les pages de liste et d'œuvre sont ouvertes dans un Chrome, Edge ou Chromium sans fenêtre sur le serveur et lues une fois leurs scripts exécutés. Beaucoup plus lent ; il faut l'un de ces navigateurs installé sur le serveur (ou THOTH_BROWSER avec son chemin).",
+    "wz.renderWait": "Temps pour les scripts (secondes)",
+    "wz.renderWaitHelp": "Le temps qu'une page a pour se construire (le navigateur passe à la suite plus tôt si plus rien n'est en attente). Par défaut : 8.",
+    "wz.rendering": "Construction de la page dans un navigateur sur le serveur…"
+  });
+  add('de', {
+    "wz.shellPage": "Diese Seite kommt fast leer an: Die Website baut sie mit ihren Skripten im Browser auf, daher zeigt die Vorschau nur den Hintergrund, und Crawls (die Seiten so lesen, wie die Website sie sendet) finden darin nichts. Lass ihre Seiten in einem Browser auf dem Server aufbauen, um sie so zu lesen, wie Besucher sie sehen.",
+    "wz.shellScripts": "Diese Seite wird von den Skripten der Website aufgebaut, und die laufen in der Vorschau nicht (die Website lässt sie nur auf ihren eigenen Seiten laden). Lass ihre Seiten in einem Browser auf dem Server aufbauen, um sie so zu lesen, wie Besucher sie sehen.",
+    "wz.shellRendered": "Auch in einem Browser aufgebaut bleibt diese Seite fast leer. Gib ihren Skripten mehr Zeit (Schritt Durchsuchen), probiere eine andere ihrer Seiten oder nutze die automatischen Einstellungen, falls die Website Sitemaps hat.",
+    "wz.renderOn": "Seiten in einem Browser aufbauen",
+    "wz.render": "Seiten in einem Browser aufbauen",
+    "wz.renderHelp": "Für Websites, die ihre Seiten mit Skripten aufbauen: Listen- und Werkseiten werden in einem fensterlosen Chrome, Edge oder Chromium auf dem Server geöffnet und gelesen, sobald ihre Skripte gelaufen sind. Viel langsamer; einer dieser Browser muss auf dem Server installiert sein (oder THOTH_BROWSER auf ihn zeigen).",
+    "wz.renderWait": "Zeit für die Skripte (Sekunden)",
+    "wz.renderWaitHelp": "Wie lange sich eine Seite aufbauen darf (der Browser macht früher weiter, wenn nichts mehr aussteht). Standard: 8.",
+    "wz.rendering": "Die Seite wird in einem Browser auf dem Server aufgebaut…"
+  });
+  add('pt', {
+    "wz.shellPage": "Esta página chega quase vazia: o site a monta com seus scripts no navegador, então a prévia mostra só o fundo e as varreduras (que leem as páginas como o site as envia) não encontram nada nela. Monte as páginas dele em um navegador no servidor para lê-las como um visitante as vê.",
+    "wz.shellScripts": "Esta página é montada pelos scripts do site, e eles não rodam na prévia (o site só deixa carregá-los nas próprias páginas). Monte as páginas dele em um navegador no servidor para lê-las como um visitante as vê.",
+    "wz.shellRendered": "Mesmo montada em um navegador, esta página continua quase vazia. Dê mais tempo aos scripts (passo Rastreio), tente outra de suas páginas ou use as configurações automáticas se o site tiver sitemaps.",
+    "wz.renderOn": "Montar páginas em um navegador",
+    "wz.render": "Montar páginas em um navegador",
+    "wz.renderHelp": "Para sites que montam suas páginas com scripts: as páginas de lista e de obra são abertas em um Chrome, Edge ou Chromium sem janela no servidor e lidas quando seus scripts terminam. Muito mais lento; precisa de um desses navegadores instalado no servidor (ou THOTH_BROWSER com o caminho dele).",
+    "wz.renderWait": "Tempo para os scripts (segundos)",
+    "wz.renderWaitHelp": "Quanto tempo uma página tem para se montar (o navegador segue antes se nada estiver pendente). Padrão: 8.",
+    "wz.rendering": "Montando a página em um navegador no servidor…"
+  });
 })();

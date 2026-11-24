@@ -31,6 +31,7 @@ function standardChapter(c, src) {
 function settingsKey(src) {
   const pick = { type: src.type, listing: src.listing, workPattern: src.workPattern, chapterPattern: src.chapterPattern, listPath: src.listPath, languages: src.languages,
     contentRating: src.contentRating, includeChapters: src.includeChapters !== false, selectors: src.selectors || {}, actions: src.actions || {} };
+  if (src.render) pick.render = src.renderWaitMs || true; // (only when on: other sources keep their key)
   return require('crypto').createHash('sha1').update(JSON.stringify(pick)).digest('hex').slice(0, 16);
 }
 
@@ -115,6 +116,8 @@ async function crawl(msg, send) {
   let lastFlush = Date.now();
   const flush = () => { store.writeWorks(dir, { sourceId: src.id, works }); chapters.flush(); lastFlush = Date.now(); send({ type: 'flushed', reqId: msg.reqId }); };
   const ctx = { src, get: (u, o) => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.get(u, o); }, incremental,
+    // (list and work pages, built in a browser when the source asks: sites that build their pages with scripts)
+    page: src.render ? u => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.render(u, { waitMs: src.renderWaitMs }); } : null,
     sitemapState: store.readSitemapState(dir), knownSids: new Set(Object.keys(works)) }; // (what the sitemaps held at the last crawl: an update reads only what changed)
   const failed = new Set(); // works whose page couldn't be read: looked at again next time
   const queue = [];
@@ -246,7 +249,7 @@ async function test(msg) {
   const src = Object.assign({}, msg.source, { includeChapters: true });
   const adapter = ADAPTERS[src.type];
   const fetcher = createFetcher({ gapMs: 300, allowLocal: msg.allowLocal });
-  const ctx = { src, get: fetcher.get, incremental: false, known: new Set() };
+  const ctx = { src, get: fetcher.get, page: src.render ? u => fetcher.render(u, { waitMs: src.renderWaitMs }) : null, incremental: false, known: new Set() };
   const out = { works: [], firstPageCount: 0, work: null, errors: [] };
   try {
     for await (const page of lister(src, adapter)(ctx)) { out.firstPageCount = page.length; out.works = page.slice(0, 8); break; }

@@ -32,17 +32,18 @@ const hash = t => crypto.createHash('sha1').update(String(t)).digest('hex');
 // A page for the element picker: `source` (the page as the site sent it; the wizard shows it with the site's
 // images and styles, its scripts only if asked) and, with inert, `html` (nothing loaded from the site at all)
 const MAX_SOURCE = 3 * 1024 * 1024;
-async function previewPage({ url, allowLocal, inert = false, actions = [] }) {
+async function previewPage({ url, allowLocal, inert = false, actions = [], render = false, waitMs = 0 }) {
   const fetcher = createFetcher({ gapMs: 300, allowLocal });
-  // The clicks asked for first, made as crawls make them (what they lead to is fetched)
-  const first = await fetcher.get(url);
+  // The clicks asked for first, made as crawls make them (what they lead to is fetched). render: the page as a
+  // browser builds it (a source with "Build pages in a browser")
+  const first = render ? await fetcher.render(url, { waitMs }) : await fetcher.get(url);
   const done = await require('./adapters').applyActions({ get: fetcher.get }, { text: first.text, url: first.url }, actions);
   const res = { url: done.url, text: done.text };
   const actionsReport = done.report;
   const base = res.url;
   let html = res.text;
   const title = (/<title[^>]*>([\s\S]*?)<\/title>/i.exec(html) || [])[1] || '';
-  if (!inert) return { url: base, title: title.trim().slice(0, 200), source: html.slice(0, MAX_SOURCE), truncated: html.length > MAX_SOURCE, actions: actionsReport, requests: fetcher.stats.requests };
+  if (!inert) return { url: base, title: title.trim().slice(0, 200), source: html.slice(0, MAX_SOURCE), truncated: html.length > MAX_SOURCE, actions: actionsReport, requests: fetcher.stats.requests, rendered: Boolean(render) };
   // The site's stylesheets, inlined (only from the same site; what robots.txt allows; a few)
   const css = [];
   const links = [...html.matchAll(/<link\b[^>]*>/gi)].map(m => m[0]).filter(tag => /rel\s*=\s*["']?[^"'>]*stylesheet/i.test(tag));
@@ -68,7 +69,7 @@ async function previewPage({ url, allowLocal, inert = false, actions = [] }) {
     css.map(c => `<style>${c.replace(/url\(\s*(['"]?)(?!data:)[^)'"]+\1\s*\)/gi, 'none').replace(/@import[^;]+;/gi, '')}</style>`).join('') +
     `<style>img{background:repeating-linear-gradient(45deg,#ddd 0 6px,#eee 6px 12px);min-width:24px;min-height:24px}</style>`;
   html = /<head[^>]*>/i.test(html) ? html.replace(/<head[^>]*>/i, m => m + head) : head + html;
-  return { url: base, title: title.trim().slice(0, 200), html, source: res.text.slice(0, MAX_SOURCE), actions: actionsReport, requests: fetcher.stats.requests };
+  return { url: base, title: title.trim().slice(0, 200), html, source: res.text.slice(0, MAX_SOURCE), actions: actionsReport, requests: fetcher.stats.requests, rendered: Boolean(render) };
 }
 
 module.exports = { readSiteFile, previewPage };

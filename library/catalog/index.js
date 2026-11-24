@@ -78,6 +78,10 @@ function parseSource(body, current) {
   }
   // Clicks to make before collecting (other sites): { list, work, chapters: [{ selector, mode: 'open' | 'add' }] }
   if ('actions' in b) s.actions = cleanActions(b.actions);
+  // Pages built in a headless browser on the server (sites that build their pages with scripts), and how long
+  // their scripts get (ms)
+  if ('render' in b) { if (b.render) s.render = true; else { delete s.render; delete s.renderWaitMs; } }
+  if ('renderWaitMs' in b && s.render) s.renderWaitMs = Math.max(1000, Math.min(60000, Math.round(Number(b.renderWaitMs) || 8000)));
   if ('enabled' in b) s.enabled = b.enabled !== false;
   if ('autoDetect' in b) s.autoDetect = b.autoDetect !== false;
   if ('siteUrl' in b) { const u = String(b.siteUrl || '').trim().replace(/\/+$/, ''); if (u && !publicUrl(u, ALLOW_LOCAL)) throw err(400, 'invalidUrl'); if (u) s.siteUrl = u; }
@@ -368,10 +372,12 @@ function readSiteFile(id, url) {
 }
 // A page of a site, made inert, for the source wizard's element picker (any public page: administrators only)
 // actions: clicks to make first (as crawls make them), with a report of each
-function previewPage(url, { inert = false, actions = null } = {}) {
+// render: the page built in a headless browser first (what a source with "Build pages in a browser" reads)
+function previewPage(url, { inert = false, actions = null, render = false, waitMs = 0 } = {}) {
   if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
   const acts = actions ? cleanActions({ work: actions }).work || [] : [];
-  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL, inert: Boolean(inert), actions: acts });
+  return ask({ type: 'preview', url: String(url), allowLocal: ALLOW_LOCAL, inert: Boolean(inert), actions: acts, render: Boolean(render),
+    waitMs: render ? Math.max(1000, Math.min(60000, Math.round(Number(waitMs) || 8000))) : 0 });
 }
 
 // Scheduled crawls: an update when the schedule says so (a full crawl the first time or after an interruption)

@@ -532,8 +532,15 @@ sites added as **sources**, with its metadata and chapter list.
     scripts and inline handlers are removed and only the picker can run. Crawls never run a site's scripts, so a
     pick that only exists after them is marked (*not in the page as the site sends it*). Some sites send an almost
     empty page and build everything with scripts that refuse to run anywhere but on the site itself; the preview
-    then stays dark and a note above it says so — crawls can't read such pages with selectors either, so use
-    automatic settings (sitemaps) or another of the site's pages.
+    then stays dark and a note above it says so, with a **Build pages in a browser** button (see below).
+- **Build pages in a browser** (*Crawling* step). For sites that build their pages with scripts: the list and work
+  pages are opened in a headless **Chrome, Edge or Chromium installed on the server** and read once their scripts
+  have run (*Time for the scripts*, 8 s by default), in the preview and in crawls. Much slower than plain fetches.
+  The browser is found in the usual install places, or set `THOTH_BROWSER` to its path (extra arguments:
+  `THOTH_BROWSER_ARGS`). It runs with a throwaway profile and no images, and all its traffic goes through a small
+  guard in Thoth that only lets it reach public addresses on ports 80/443 (never this machine or the local
+  network); robots.txt, the site's pace and bot-protection stops apply to the pages as for any crawl. In Docker,
+  install Chromium in the image and run Thoth as a non-root user (Chromium's sandbox refuses root).
   - *Wait N s before picking* — the picker waits for the page to finish loading (its images and styles), then
     that many seconds more (up to 60), with a countdown; ↻ shows the page again.
 - **Clicks before collecting.** When data is behind a tab or a button ("Chapters", "Show all", "More info"), the

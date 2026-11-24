@@ -1047,6 +1047,8 @@ body.is-reading { overflow: hidden; }
 .wz-click__loads .field__help { flex-basis: 100%; }
 .wz-preview__note { display: flex; gap: 8px; align-items: flex-start; margin: 0 12px 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,.12)); color: var(--text); }
 .wz-preview__note svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+.wz-preview__note p { margin: 0 0 6px; }
+.wz-preview__note .btn svg { width: 16px; height: 16px; margin: 0; }
 .wz-preview__keep { padding: 0 12px 8px; }
 .wz-preview__keep:empty { display: none; }
 

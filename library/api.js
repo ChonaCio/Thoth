@@ -788,7 +788,7 @@ async function handle(ctx) {
       // actions: the clicks to make first (JSON list of { selector, mode })
       let actions = null;
       try { actions = q.get('actions') ? JSON.parse(q.get('actions')) : null; } catch { throw httpError(400, 'invalid'); }
-      return send(200, { page: await catalog.previewPage(q.get('url'), { inert: q.get('inert') === '1', actions }) });
+      return send(200, { page: await catalog.previewPage(q.get('url'), { inert: q.get('inert') === '1', actions, render: q.get('render') === '1', waitMs: Number(q.get('waitMs')) || 0 }) });
     }
     // Text never part of a title (removed from every catalog title, for merging): one per line
     if (p === '/api/catalog/title-cleanup' && method === 'GET') return send(200, catalog.titleCleanup());

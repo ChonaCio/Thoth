@@ -185,9 +185,30 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
       return { status: res.status, url: finalUrl, text, buf: body, json: () => JSON.parse(text), type: res.headers.get('content-type') || '' };
     }
   }
+  // A page built in a headless browser (render.js): the same checks and pace as get(), the page's DOM once its
+  // scripts ran → { text, url, status }
+  async function render(url, opts = {}) {
+    if (!publicUrl(url, allowLocal)) throw err('notPublic', `Not a public address: ${url}`);
+    const u = new URL(url);
+    if (!robotsAllows(await rulesFor(u.origin), url)) throw err('robots', `robots.txt doesn't allow ${u.pathname}${u.search}`);
+    stats.waiting++;
+    let release;
+    try { release = await slot(u.host); } finally { stats.waiting--; }
+    stats.requests++;
+    if (onRequest) onRequest(url);
+    stats.active++; stats.maxActive = Math.max(stats.maxActive, stats.active);
+    try {
+      const r = await require('./render').renderPage(url, { allowLocal, waitMs: opts.waitMs });
+      stats.bytes += Buffer.byteLength(r.text);
+      if (/cf-chl|challenge-platform|Just a moment\.\.\.|Attention Required|Bot challenge|captcha/i.test(r.text.slice(0, 20000)) && r.text.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').length < 3000) {
+        throw err('blocked', `${u.host} asks to prove you're a person (bot protection): it can't be crawled`);
+      }
+      return { status: 200, url: r.url, text: r.text, json: () => JSON.parse(r.text), type: 'text/html', rendered: true };
+    } finally { stats.active--; release(); }
+  }
   // How it fetches from a site now: { parallel, crawlDelay } (crawlDelay: robots.txt asked for one at a time)
   const limits = host => { const h = host ? hosts.get(host) : [...hosts.values()][0]; return { parallel: h && h.crawlDelay != null ? 1 : parallel, crawlDelay: h ? h.crawlDelay : null }; };
-  return { get, stats, limits, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url),
+  return { get, render, stats, limits, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url),
     robotsFile: async origin => { await rulesFor(origin); return robotsText.get(origin) || null; } };
 }
 

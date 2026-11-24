@@ -564,7 +564,7 @@ const custom = {
     for (let page = start; page < start + 5000; page++) {
       const url = abs(s.listUrl.replace('{page}', page), src.baseUrl);
       let res;
-      try { res = await get(url); } catch (e) { if (e.code === 'http' && e.status === 404 && page > start) return; throw e; }
+      try { res = await (ctx.page || get)(url); } catch (e) { if (e.code === 'http' && e.status === 404 && page > start) return; throw e; }
       res = await applyActions(ctx, { text: res.text, url: res.url }, (src.actions || {}).list);
       const doc = parse(res.text);
       const items = doc.select(s.item).map(it => {
@@ -582,7 +582,7 @@ const custom = {
     const { src, get } = ctx;
     const s = src.selectors || {};
     const acts = src.actions || {};
-    const res = await applyActions(ctx, await get(stub.url).then(r => ({ text: r.text, url: r.url })), acts.work);
+    const res = await applyActions(ctx, await (ctx.page || get)(stub.url).then(r => ({ text: r.text, url: r.url })), acts.work);
     const doc = parse(res.text);
     const meta = p => (doc.first(`meta[property="${p}"]`) || { attr: () => null }).attr('content');
     const work = Object.assign({}, stub, {
