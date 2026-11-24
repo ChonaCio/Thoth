@@ -778,10 +778,13 @@ async function handle(ctx) {
     // Layout templates for the generic reader; which fit a site
     if (p === '/api/catalog/templates' && method === 'GET') return send(200, { templates: catalog.templates() });
     if (p === '/api/catalog/sources/find-template' && method === 'POST') return send(200, await catalog.findTemplate((body || {}).url));
-    // Clear the crawled catalog (body { confirm: 'CLEAR' }); the sources stay
+    // Clear crawled data for a clean crawl (body { confirm: 'CLEAR', sources?: [ids], keepMerges?, crawl? }); the
+    // sources and their settings stay
     if (p === '/api/catalog/clear' && method === 'POST') {
-      if (String((body || {}).confirm || '') !== 'CLEAR') throw httpError(400, 'confirmClear');
-      return send(200, catalog.clearCatalog());
+      const b = body || {};
+      if (String(b.confirm || '') !== 'CLEAR') throw httpError(400, 'confirmClear');
+      if (b.sources != null && (!Array.isArray(b.sources) || b.sources.length > 500 || b.sources.some(x => typeof x !== 'string'))) throw httpError(400, 'invalid');
+      return send(200, catalog.clearCatalog({ sources: b.sources || null, keepMerges: b.keepMerges === true, crawl: b.crawl === true }));
     }
     if (p === '/api/catalog/sources' && method === 'GET') return send(200, { sources: catalog.listSources(), jobs: catalog.jobs(), defaultConcurrency: catalog.info().concurrency });
     // POST { name, baseUrl } → settings detected from the site; or the full settings (with type) as given

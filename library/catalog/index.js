@@ -207,23 +207,47 @@ function removeSource(id) {
   catalogVersion++;
 }
 
-// Clear the crawled catalog: every source's works, chapters and crawl state (the next crawl is a full one), the
-// manual merges, splits and "not the same" marks, and the cached covers. Kept: the sources and their settings.
-function clearCatalog() {
-  if (Object.keys(db.catalogSources).some(liveCrawl)) throw err(409, 'catalogCrawling');
+// Clear crawled data, for a clean crawl: the sources' works, chapters and crawl state (what was seen, sitemap
+// hashes, discovery records, logs of progress: the next crawl is a full one that trusts nothing from before).
+// Kept: the sources, their settings and what detection found. Options:
+//   sources     only these sources (default: all; then the cached covers go too)
+//   keepMerges  keep the manual merges, splits and "not the same" marks (they name works by source and address,
+//               so they apply again once the works are back); otherwise those of the cleared sources go
+//   crawl       start a full crawl of each cleared source right away
+function clearCatalog({ sources = null, keepMerges = false, crawl: recrawl = false } = {}) {
+  const all = Object.keys(db.catalogSources);
+  const ids = Array.isArray(sources) && sources.length ? [...new Set(sources.map(String))] : all;
+  for (const id of ids) if (!db.catalogSources[id]) throw err(404, 'notFound');
+  if (ids.some(liveCrawl)) throw err(409, 'catalogCrawling');
+  const whole = ids.length === all.length;
   let removed = 0;
-  for (const id of Object.keys(db.catalogSources)) {
+  for (const id of ids) {
     removed += sourceWorks(id).length;
+    // (a crawl waiting in line would have started from the old state: it's dropped, and asked again below)
+    for (let i = queue.length - 1; i >= 0; i--) if (queue[i].sourceId === id) queue.splice(i, 1);
     const dir = sourceDir(id);
     for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) if (f !== 'detected.json') fs.rmSync(path.join(dir, f), { recursive: true, force: true });
     loaded.delete(id);
+    recent.delete(id);
   }
-  db.catalogMerges = { groups: {}, dismissed: [], apart: [] };
+  if (!keepMerges) {
+    if (whole) db.catalogMerges = { groups: {}, dismissed: [], apart: [] };
+    else {
+      const ours = k => ids.some(id => String(k).startsWith(id + ':'));
+      for (const [gid, g] of Object.entries(db.catalogMerges.groups || {})) {
+        g.keys = g.keys.filter(k => !ours(k));
+        if (g.keys.length < 2) delete db.catalogMerges.groups[gid];
+      }
+      db.catalogMerges.apart = (db.catalogMerges.apart || []).filter(p => !String(p).split('|').some(ours));
+      db.catalogMerges.dismissed = (db.catalogMerges.dismissed || []).filter(d => !String(d).split(',').some(ours));
+    }
+  }
   store.saveLibrary();
-  fs.rmSync(COVER_DIR, { recursive: true, force: true });
+  if (whole) fs.rmSync(COVER_DIR, { recursive: true, force: true });
   catalogVersion++;
-  console.log(`[catalog] cleared: ${removed} works removed (sources kept)`);
-  return { removed };
+  console.log(`[catalog] cleared ${whole ? 'every source' : ids.length + ' source(s)'}: ${removed} works removed (sources kept${keepMerges ? ', manual merges kept' : ''})`);
+  const crawls = recrawl ? ids.filter(id => db.catalogSources[id].enabled !== false).map(id => crawl(id, { mode: 'full', reason: 'clean' })).filter(Boolean).length : 0;
+  return { removed, sources: ids.length, crawls };
 }
 
 /* ---------------- crawling: independent crawler processes ----------------

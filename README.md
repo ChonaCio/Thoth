@@ -604,6 +604,13 @@ sites added as **sources**, with its metadata and chapter list.
   guard in Thoth that only lets it reach public addresses on ports 80/443 (never this machine or the local
   network) and refuses the ad and pop-under networks; pop-up windows aren't opened; robots.txt, the site's pace and bot-protection stops apply to the pages as for any crawl. In Docker,
   install Chromium in the image and run Thoth as a non-root user (Chromium's sandbox refuses root).
+- **Clean crawl.** *Clean crawl…* (Sources tab toolbar, and on each source) removes what was crawled — works,
+  chapter lists and everything crawls remember (pages seen, sitemaps read, progress) — for every source or one,
+  so the next crawl trusts nothing from before. The sources, their settings and what detection found are kept.
+  Options: *Start a full crawl right away* (on by default; paused sources are left alone) and *Keep my manual
+  merges and splits* (on by default; they apply again once the works are back). Clearing every source also empties
+  the cached covers. Type CLEAR to confirm; a source being crawled can't be cleared until its crawl stops.
+  API: `POST /api/catalog/clear { confirm: 'CLEAR', sources?: [ids], keepMerges?, crawl? }`.
   - *Wait N s before picking* — the picker waits for the page to finish loading (its images and styles), then
     that many seconds more (up to 60), with a countdown; ↻ shows the page again.
 - **Clicks before collecting.** When data is behind a tab or a button ("Chapters", "Show all", "More info"), the

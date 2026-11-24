@@ -484,6 +484,23 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   await call('DELETE', `/api/catalog/sources/${custom.id}`);
   ok((await call('GET', '/api/catalog')).data.total === 3 && !fs.existsSync(path.join(DATA, 'catalog', custom.id)), 'removing a source removes its works');
 
+  // ---- clean crawl of one source: its crawled data removed, a full crawl started; manual merges kept or not ----
+  ok((await call('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: 'all' })).status === 400 && (await call('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: ['nope'] })).status === 404,
+    'a clean crawl names existing sources');
+  const two = (await call('GET', '/api/catalog')).data.items.filter(i => i.key.startsWith(madaraId + ':')).slice(0, 2).map(i => i.key);
+  await call('POST', '/api/catalog/merge', { keys: two, primary: two[0] });
+  const mergedTotal = (await call('GET', '/api/catalog')).data.total, groupsN = (await call('GET', '/api/catalog/merged')).data.groups.length;
+  hits.length = 0;
+  let cc = (await call('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: [madaraId], keepMerges: true, crawl: true })).data;
+  ok(cc.sources === 1 && cc.crawls === 1 && cc.removed === 3 && (await call('GET', '/api/catalog')).data.total === 0, 'a clean crawl of one source removes its works and starts its crawl', JSON.stringify(cc));
+  await crawled(madaraId);
+  ok((await call('GET', '/api/catalog')).data.total === mergedTotal && (await call('GET', '/api/catalog/merged')).data.groups.length === groupsN && hits.some(h => h.includes('/madara')),
+    'it crawls the site again from scratch; the kept manual merge applies again');
+  cc = (await call('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: [madaraId], crawl: true })).data;
+  await crawled(madaraId);
+  ok((await call('GET', '/api/catalog/merged')).data.groups.length === groupsN - 1 && (await call('GET', '/api/catalog')).data.total === mergedTotal + 1,
+    'without keeping them, that source\'s manual merges go');
+
   // ---- clearing the crawled catalog ----
   ok((await call('POST', '/api/catalog/clear', {})).status === 400, 'clearing needs CLEAR typed');
   const nSources = (await call('GET', '/api/catalog/sources')).data.sources.length;

@@ -1816,13 +1816,14 @@
   function catalogSources() {
     var st = catSourcesState();
     var head = catalogTabs('sources') + '<p class="page-lead">' + esc(t('cat.sourcesIntro')) + '</p>' +
-      '<div class="toolbar"><div class="toolbar__group"><button class="btn btn--primary btn--pill" data-lib="cat-src-add">' + icon('add') + esc(t('cat.addSource')) + '</button></div></div>';
+      '<div class="toolbar"><div class="toolbar__group"><button class="btn btn--primary btn--pill" data-lib="cat-src-add">' + icon('add') + esc(t('cat.addSource')) + '</button>' +
+      (st.data && st.data.sources.length ? '<button class="btn btn--outline btn--pill" data-lib="cat-clear-catalog" title="' + esc(t('cat.cleanHelp')) + '">' + icon('restart_alt') + esc(t('cat.cleanCrawl')) + '</button>' : '') + '</div></div>';
     if (st.error) return head + errorBanner(st.error);
     if (!st.data) return head + spinner;
     if (!st.data.sources.length) return head + emptyState('travel_explore', t('cat.noSourcesTitle'), t('cat.noSourcesAdmin'));
     // (clearing the crawled catalog: works, chapters, merges and covers; the sources stay)
     var danger = '<section class="card cat-danger"><h2 class="card__title">' + esc(t('cat.clearTitle')) + '</h2><p class="muted small">' + esc(t('cat.clearHelp')) + '</p>' +
-      '<button type="button" class="btn btn--outline btn--danger btn--small" data-lib="cat-clear-catalog"' + (st.data.sources.some(function (x) { return x.job; }) ? ' disabled' : '') + '>' + icon('delete') + esc(t('cat.clearButton')) + '</button></section>';
+      '<button type="button" class="btn btn--outline btn--danger btn--small" data-lib="cat-clear-catalog">' + icon('delete') + esc(t('cat.clearButton')) + '</button></section>';
     return head + '<div class="lib-list">' + st.data.sources.map(function (s) {
       var stats = s.lastStats;
       return '<section class="card lib-card cat-src">' +
@@ -1843,6 +1844,7 @@
           (s.job ? '<button class="btn btn--outline btn--small" data-lib="cat-src-stop" data-id="' + s.id + '">' + icon('stop') + esc(t('proc.stop')) + '</button>'
             : '<button class="btn btn--primary btn--small" data-lib="cat-src-crawl" data-id="' + s.id + '" data-mode="' + (s.lastCrawlAt ? 'update' : 'full') + '">' + icon('sync') + esc(t(s.lastCrawlAt ? 'cat.update' : (s.interrupted ? 'cat.resume' : 'cat.crawl'))) + '</button>' +
               (s.lastCrawlAt ? '<button class="btn btn--text btn--small" data-lib="cat-src-crawl" data-id="' + s.id + '" data-mode="full">' + esc(t('cat.fullCrawl')) + '</button>' : '')) +
+          (!s.job && (s.lastCrawlAt || s.works) ? '<button class="btn btn--text btn--small" data-lib="cat-clear-catalog" data-id="' + s.id + '" title="' + esc(t('cat.cleanHelp')) + '">' + icon('restart_alt') + esc(t('cat.cleanCrawl')) + '</button>' : '') +
           '<button class="btn btn--text btn--small" data-lib="cat-src-test" data-id="' + s.id + '">' + icon('search') + esc(t('cat.test')) + '</button>' +
           '<button class="btn btn--text btn--small" data-lib="cat-src-edit" data-id="' + s.id + '">' + icon('edit') + esc(t('cat.edit')) + '</button>' +
           '<button class="btn btn--text btn--small btn--danger" data-lib="cat-src-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('manage.delete')) + '</button>' +
@@ -4404,15 +4406,27 @@
       }
       case 'cat-clear-filters': { var cf = catState(); CAT_ADV.forEach(function (k) { cf[k] = ''; }); A().renderPage(); return fetchCatalog(); }
       case 'cat-clear-catalog': {
-        var typed = prompt(t('cat.clearConfirm'));
-        if (typed === null) return;
-        if (typed.trim() !== 'CLEAR') return A().toast(t('cat.clearTypeIt'));
-        btn.disabled = true;
-        return api('POST', '/api/catalog/clear', { confirm: 'CLEAR' }).then(function (r) {
-          A().toast(t('cat.cleared', { count: r.removed }));
-          cache.catalog = null; cache.catWork = null; catSourcesState().data = null;
-          A().renderPage();
-        }, function (e) { btn.disabled = false; A().toast(A().errMsg(e)); });
+        // Clean crawl: the crawled data of every source, or of one, removed (settings kept), and optionally a
+        // full crawl started right away
+        var srcs = (catSourcesState().data || { sources: [] }).sources;
+        return openForm({
+          title: t('cat.cleanTitle'), submitLabel: t('cat.cleanSubmit'), note: t('cat.cleanNote'),
+          fields: [
+            { name: 'which', label: t('cat.cleanWhich'), type: 'select', value: btn.dataset.id || '',
+              options: [{ value: '', label: t('cat.cleanAll', { count: srcs.length }) }].concat(srcs.map(function (s) { return { value: s.id, label: s.name + (s.job ? ' — ' + t('cat.cleanBusy') : '') }; })) },
+            { name: 'crawl', type: 'checkbox', value: true, label: t('cat.cleanRecrawl'), help: t('cat.cleanRecrawlHelp') },
+            { name: 'keepMerges', type: 'checkbox', value: true, label: t('cat.cleanKeepMerges'), help: t('cat.cleanKeepMergesHelp') },
+            { name: 'confirm', label: t('cat.cleanType') }
+          ],
+          onSubmit: function (v) {
+            if (v.confirm !== 'CLEAR') return Promise.reject({ code: 'confirmClear' });
+            return api('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: v.which ? [v.which] : undefined, keepMerges: v.keepMerges, crawl: v.crawl }).then(function (r) {
+              A().toast(t(r.crawls ? 'cat.cleanedCrawling' : 'cat.cleared', { count: r.removed, crawls: r.crawls }));
+              cache.catalog = null; cache.catWork = null; catSourcesState().data = null;
+              A().renderPage();
+            });
+          }
+        });
       }
       case 'cat-all-chapters': {
         var cw = catWorkState(btn.dataset.work);
