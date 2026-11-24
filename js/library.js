@@ -1787,10 +1787,16 @@
     chapter: { page: 'work', kind: 'repeat' }, chapterLink: { page: 'work', kind: 'rel', rel: 'chapter', attr: 'href' }, chapterTitle: { page: 'work', kind: 'rel', rel: 'chapter' }, chapterDate: { page: 'work', kind: 'rel', rel: 'chapter' }
   };
   var wz = null;
-  var wzCopyAct = function (a) { return { selector: a.selector || '', mode: a.mode === 'open' ? 'open' : 'add' }; };
+  var wzCopyAct = function (a) { return { kind: a.kind === 'scroll' ? 'scroll' : 'click', selector: a.selector || '', mode: a.mode === 'open' ? 'open' : 'add', loads: (a.loads || []).slice(0, 2) }; };
   // A setting being picked: a selector ('item'…) or a click ('act:work:0')
   var WZ_CLICK = { kind: 'click' };
-  var wzSpec = function (key) { return /^act:(list|work|chapters):\d$/.test(key || '') ? WZ_CLICK : WZ_SEL[key] || null; };
+  var WZ_SCROLLBOX = { kind: 'scrollbox' };
+  var wzSpec = function (key) {
+    var m = /^act:(list|work|chapters):(\d)$/.exec(key || '');
+    if (!m) return WZ_SEL[key] || null;
+    var a = wz.draft.actions[m[1]][Number(m[2])];
+    return a && a.kind === 'scroll' ? WZ_SCROLLBOX : WZ_CLICK;
+  };
   var wzFieldLabel = function (key) { var m = /^act:(\w+):(\d)$/.exec(key || ''); return m ? t('wz.clickN', { n: Number(m[2]) + 1 }) : t('cat.sel.' + key); };
   // The clicks the preview makes for a step (the chapters' come after the work page's)
   var wzActionsFor = function (step) { var a = wz.draft.actions; return step === 'list' ? a.list : step === 'work' ? a.work : step === 'chapters' ? a.work.concat(a.chapters) : []; };
@@ -1907,7 +1913,7 @@
   }
   // "Before collecting, click": the buttons or tabs to press first on this page (a tab with the chapters, "Show
   // all"…), each picked in the preview; what each did in the preview is shown under it
-  var WZ_ACT_RESULTS = { opened: 'wz.act.opened', added: 'wz.act.added', inPage: 'wz.act.inPage', notFound: 'wz.act.notFound', failed: 'wz.act.failed', otherSite: 'wz.act.otherSite', clicked: 'wz.act.clicked', missing: 'wz.act.notFound' };
+  var WZ_ACT_RESULTS = { scrolled: 'wz.act.scrolled', noRequest: 'wz.act.noRequest', opened: 'wz.act.opened', added: 'wz.act.added', inPage: 'wz.act.inPage', notFound: 'wz.act.notFound', failed: 'wz.act.failed', otherSite: 'wz.act.otherSite', clicked: 'wz.act.clicked', missing: 'wz.act.notFound' };
   function wzActionsBox(group) {
     var list = wz.draft.actions[group], pv = wz.pv;
     // The preview's report: for this step's clicks (on the chapters step, after the work page's)
@@ -1916,14 +1922,19 @@
     return '<div class="wz-clicks"><h3 class="wz-clicks__title">' + esc(t('wz.clicksTitle')) + '</h3><p class="muted small">' + esc(t('wz.clicksHelp')) + '</p>' +
       list.map(function (a, i) {
         var key = 'act:' + group + ':' + i, r = report[offset + i];
-        return '<div class="wz-click"><span class="wz-click__n">' + (i + 1) + '</span>' +
-          '<input type="text" id="wz-' + key.replace(/:/g, '-') + '" data-wz="' + key + '" value="' + esc(a.selector) + '" placeholder="' + esc(t('wz.clickPlaceholder')) + '" aria-label="' + esc(t('wz.clickN', { n: i + 1 })) + '" />' +
+        var scroll = a.kind === 'scroll';
+        return '<div class="wz-click' + (scroll ? ' wz-click--scroll' : '') + '"><span class="wz-click__n">' + (i + 1) + '</span>' +
+          '<input type="text" id="wz-' + key.replace(/:/g, '-') + '" data-wz="' + key + '" value="' + esc(a.selector) + '" placeholder="' + esc(t(scroll ? 'wz.scrollPlaceholder' : 'wz.clickPlaceholder')) + '" aria-label="' + esc(t('wz.clickN', { n: i + 1 })) + '" />' +
           '<button type="button" class="btn btn--outline btn--small wz-pick' + (pv.target === key ? ' is-active' : '') + '" data-wz-pick="' + key + '" aria-pressed="' + (pv.target === key) + '" title="' + esc(t('wz.pickHelp')) + '">' + icon('ads_click') + esc(t('wz.pick')) + '</button>' +
           '<select class="select select--compact" data-wz="actmode:' + group + ':' + i + '" aria-label="' + esc(t('wz.clickMode')) + '">' +
-            '<option value="add"' + (a.mode !== 'open' ? ' selected' : '') + '>' + esc(t('wz.clickAdd')) + '</option>' +
-            '<option value="open"' + (a.mode === 'open' ? ' selected' : '') + '>' + esc(t('wz.clickOpen')) + '</option></select>' +
+            '<option value="add"' + (!scroll && a.mode !== 'open' ? ' selected' : '') + '>' + esc(t('wz.clickAdd')) + '</option>' +
+            '<option value="open"' + (!scroll && a.mode === 'open' ? ' selected' : '') + '>' + esc(t('wz.clickOpen')) + '</option>' +
+            '<option value="scroll"' + (scroll ? ' selected' : '') + '>' + esc(t('wz.scrollKind')) + '</option></select>' +
+          (scroll ? '<div class="wz-click__loads"><input type="url" data-wz="actloads:' + group + ':' + i + '" value="' + esc(a.loads[0] || '') + '" placeholder="https://…" aria-label="' + esc(t('wz.scrollLoads')) + '" />' +
+            '<button type="button" class="btn btn--outline btn--small" data-wz-act="act-scroll" data-group="' + group + '" data-i="' + i + '" title="' + esc(t('wz.scrollTryHelp')) + '"' + (pv.scripts ? '' : ' disabled') + '>' + icon('sync') + esc(t('wz.scrollTry')) + '</button>' +
+            '<small class="field__help">' + esc(t(pv.scripts ? 'wz.scrollLoadsHelp' : 'wz.scrollNeedsScripts')) + '</small></div>' : '') +
           '<button type="button" class="icon-btn" data-wz-act="act-del" data-group="' + group + '" data-i="' + i + '" aria-label="' + esc(t('wz.clickRemove')) + '">' + icon('close') + '</button>' +
-          (r ? '<p class="small wz-click__result' + (/notFound|failed|otherSite|missing/.test(r.result) ? ' is-bad' : '') + '">' + esc(t(WZ_ACT_RESULTS[r.result] || 'wz.act.inPage', { url: r.url || '', error: r.error || '' })) + '</p>' : '') +
+          (r ? '<p class="small wz-click__result' + (/notFound|failed|otherSite|missing|noRequest/.test(r.result) ? ' is-bad' : '') + '">' + esc(t(WZ_ACT_RESULTS[r.result] || 'wz.act.inPage', { url: r.url || '', error: r.error || '', pages: r.pages || 0, chapters: r.chapters || 0 })) + '</p>' : '') +
         '</div>';
       }).join('') +
       (list.length < 5 ? '<button type="button" class="btn btn--text btn--small" data-wz-act="act-add" data-group="' + group + '">' + icon('add') + esc(t('wz.clickAdd1')) + '</button>' : '') +
@@ -1944,11 +1955,13 @@
       '<button type="button" class="btn btn--text btn--small" data-wz-act="reload" title="' + esc(t('wz.reload')) + '" aria-label="' + esc(t('wz.reload')) + '">' + icon('sync') + '</button>' +
       '<div class="seg" role="group" aria-label="' + esc(t('wz.mode')) + '">' +
         '<button type="button" class="seg__btn' + (pv.mode === 'pick' ? ' is-active' : '') + '" data-wz-mode="pick" aria-pressed="' + (pv.mode === 'pick') + '">' + icon('ads_click') + esc(t('wz.modePick')) + '</button>' +
+        '<button type="button" class="seg__btn' + (pv.mode === 'interact' ? ' is-active' : '') + '" data-wz-mode="interact" aria-pressed="' + (pv.mode === 'interact') + '" title="' + esc(t('wz.interactHelp')) + '">' + icon('touch_app') + esc(t('wz.modeInteract')) + '</button>' +
         '<button type="button" class="seg__btn' + (pv.mode === 'navigate' ? ' is-active' : '') + '" data-wz-mode="navigate" aria-pressed="' + (pv.mode === 'navigate') + '">' + icon('open_in_new') + esc(t('wz.modeNavigate')) + '</button>' +
       '</div>' +
       '<div class="wz-preview__opts">' +
         '<label class="checkbox small"><input type="checkbox" id="wz-pv-images"' + (pv.images ? ' checked' : '') + ' /><span>' + esc(t('wz.images')) + '</span></label>' +
         '<label class="checkbox small" title="' + esc(t('wz.scriptsHelp')) + '"><input type="checkbox" id="wz-pv-scripts"' + (pv.scripts ? ' checked' : '') + (pv.images ? '' : ' disabled') + ' /><span>' + esc(t('wz.scripts')) + '</span></label>' +
+        '<label class="checkbox small" title="' + esc(t('wz.revealHelp')) + '"><input type="checkbox" id="wz-pv-reveal"' + (pv.reveal ? ' checked' : '') + ' /><span>' + esc(t('wz.reveal')) + '</span></label>' +
         '<label class="small wz-wait">' + esc(t('wz.wait')) + ' <input type="number" id="wz-pv-wait" min="0" max="60" step="1" value="' + esc(pv.wait) + '" /> ' + esc(t('wz.seconds')) + '</label>' +
       '</div>';
   }
@@ -1957,9 +1970,15 @@
     if (pv.loading) return t('wz.fetching');
     if (pv.page && !pv.ready) return pv.clicking ? t('wz.clicking', { n: pv.clicking }) : pv.waitLeft > 0 ? t('wz.waiting', { s: pv.waitLeft }) : t('wz.pageLoading');
     if (pv.info) return pv.info;
-    return pv.mode === 'navigate' ? t('wz.navigateHelp') : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField');
+    if (pv.scrolling) return t('wz.scrolling');
+    return pv.mode === 'navigate' ? t('wz.navigateHelp') : pv.mode === 'interact' ? (pv.interacted ? t('wz.interacted', { selector: pv.interacted }) : t('wz.interactHelp')) : target ? t('wz.pickingFor', { field: target }) : t('wz.chooseField');
   }
-  function wzStatus() { var p = $('#wz-pv-status'); if (p && wz) p.textContent = wzStatusText(); }
+  function wzStatus() {
+    var p = $('#wz-pv-status'); if (p && wz) p.textContent = wzStatusText();
+    // A click made in Interact mode can become one of this step's clicks before collecting
+    var x = $('#wz-pv-keep'), pv = wz && wz.pv, group = wz && ({ list: 'list', work: 'work', chapters: 'chapters' })[wz.step];
+    if (x) x.innerHTML = pv && pv.mode === 'interact' && pv.interacted && group && wz.draft.actions[group].length < 5 ? '<button type="button" class="btn btn--outline btn--small" data-wz-act="keep-click">' + icon('add') + esc(t('wz.keepClick')) + '</button>' : '';
+  }
   function wzRender() {
     var dlg = $('#src-wizard');
     if (!dlg || !wz) return;
@@ -1978,7 +1997,7 @@
         '<ol class="wizard__steps" id="wz-steps"></ol>' +
         '<div class="wizard__body' + (preview ? ' wizard__body--split' : '') + '"><div class="wizard__form" id="wz-form"></div>' +
           (preview ? '<section class="wz-preview" aria-label="' + esc(t('wz.preview')) + '"><div class="wz-preview__bar" id="wz-pv-bar"></div>' +
-            '<p class="small wz-preview__status" id="wz-pv-status" role="status"></p><div id="wz-pv-error"></div><div class="wz-preview__holder" id="wz-frame-holder"></div></section>' : '') + '</div>' +
+            '<p class="small wz-preview__status" id="wz-pv-status" role="status"></p><div class="wz-preview__keep" id="wz-pv-keep"></div><div id="wz-pv-error"></div><div class="wz-preview__holder" id="wz-frame-holder"></div></section>' : '') + '</div>' +
         '<footer class="wizard__foot" id="wz-foot"></footer></div>';
     }
     $('#wz-steps', dlg).innerHTML = steps.map(function (s, k) { return '<li class="' + (k === i ? 'is-current' : k < i ? 'is-done' : '') + '"><button type="button" data-wz-go="' + s + '"' + (k === i ? ' aria-current="step"' : '') + '>' + (k + 1) + '. ' + esc(t(WZ_TITLES[s])) + '</button></li>'; }).join('');
@@ -2006,7 +2025,7 @@
     }
     // The clicks of this step: made by the server (as crawls make them) — the page is fetched again when they
     // change; with the site's scripts, made in the page itself (real clicks)
-    var acts = JSON.stringify(wzActionsFor(wz.step).filter(function (a) { return a.selector; }));
+    var acts = JSON.stringify(wzActionsFor(wz.step).filter(function (a) { return a.selector || (a.kind === 'scroll' && a.loads.length); }));
     if (pv.page && !pv.loading && !pv.scripts && pv.page.actionsKey !== acts && pv.base) return wzLoadPreview(pv.base);
     var key = pv.page ? [pv.seq, pv.images ? 1 : 0, pv.scripts ? 1 : 0, pv.wait, pv.reloads || 0, pv.scripts ? acts : ''].join('|') : 'empty' + (pv.loading ? '-loading' : '');
     var frame = $('#wz-frame');
@@ -2036,7 +2055,7 @@
   function wzLoadPreview(url) {
     var pv = wz.pv, seq = pv.seq = (pv.seq || 0) + 1; // (only the latest page asked for is shown)
     pv.url = url; pv.base = url; pv.typed = null; pv.loading = true; pv.error = null; pv.info = null; pv.page = null; pv.srcDoc = null;
-    var acts = wzActionsFor(wz.step).filter(function (a) { return a.selector; }), actsKey = JSON.stringify(acts), step = wz.step;
+    var acts = wzActionsFor(wz.step).filter(function (a) { return a.selector || (a.kind === 'scroll' && a.loads.length); }), actsKey = JSON.stringify(acts), step = wz.step;
     wzRender();
     api('GET', '/api/catalog/preview?' + Store.qs({ url: url, inert: pv.images ? undefined : '1', actions: acts.length && !pv.scripts ? actsKey : undefined })).then(function (r) {
       if (pv.seq !== seq) return;
@@ -2051,8 +2070,8 @@
   // The document the frame shows: the site's page (its images, styles, and scripts if asked) + the picker
   function wzBuildDoc(page) {
     var pv = wz.pv;
-    var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors,
-      clicks: pv.scripts ? wzActionsFor(wz.step).map(function (a) { return a.selector; }).filter(Boolean) : [] };
+    var cfg = { wait: Number(pv.wait) || 0, mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors, reveal: Boolean(pv.reveal),
+      clicks: pv.scripts ? wzActionsFor(wz.step).filter(function (a) { return a.kind !== 'scroll'; }).map(function (a) { return a.selector; }).filter(Boolean) : [] };
     var picker = '(' + wzPickerMain.toString() + ')(' + JSON.stringify(cfg).replace(/</g, '\\u003c') + ');';
     var nonce = Array.prototype.map.call(crypto.getRandomValues(new Uint8Array(12)), function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
     if (!pv.images && page.html) {
@@ -2093,7 +2112,7 @@
   function wzSendConfig() {
     var frame = $('#wz-frame'), pv = wz && wz.pv;
     if (!frame || !frame.contentWindow || !pv) return;
-    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors } }, '*');
+    frame.contentWindow.postMessage({ thoth: 'config', cfg: { mode: pv.mode, field: pv.target, spec: wzSpec(pv.target), selectors: wz.draft.selectors, reveal: Boolean(pv.reveal) } }, '*');
   }
   // Is what was picked in the page as the site sends it (what crawls read: they don't run the site's scripts)?
   function wzInSource(field, selector) {
@@ -2117,6 +2136,19 @@
     var m = e.data, pv = wz.pv;
     if (!m || m.thoth !== 'picker') return;
     if (m.type === 'waiting') { pv.ready = false; pv.clicking = 0; pv.waitLeft = Math.max(0, Math.min(60, Number(m.left) || 0)); return wzStatus(); }
+    if (m.type === 'scrolled' && pv.scrollFor) {
+      // What scrolling asked the site for: the same site's requests, the ones that look like a list first
+      var sa = /^act:(\w+):(\d)$/.exec(pv.scrollFor), act = sa && wz.draft.actions[sa[1]][Number(sa[2])];
+      pv.scrolling = false; pv.scrollFor = null;
+      var host = function (u) { try { return new URL(u).hostname.split('.').slice(-2).join('.'); } catch (e) { return ''; } };
+      var asked = (Array.isArray(m.requests) ? m.requests : []).map(String).filter(function (u) { return /^https?:\/\//i.test(u) && host(u) === host(pv.url); });
+      asked.sort(function (a, b) { return (/chapter|episode|list|page|cursor|offset/i.test(b) ? 1 : 0) - (/chapter|episode|list|page|cursor|offset/i.test(a) ? 1 : 0); });
+      if (act && asked.length) { act.loads = asked.slice(0, 1); pv.info = t('wz.scrollFound', { url: asked[0], count: asked.length }); }
+      else pv.info = t(m.found === false ? 'wz.scrollNoBox' : 'wz.scrollNothing');
+      var form0 = $('#wz-form'); if (form0) { form0.innerHTML = wzStepBody(wz.step); if (window.renderIcons) window.renderIcons(form0); }
+      return wzStatus();
+    }
+    if (m.type === 'interacted' && pv.mode === 'interact' && typeof m.selector === 'string' && m.selector.length <= 300) { pv.interacted = m.selector; return wzStatus(); }
     if (m.type === 'clicking') { pv.ready = false; pv.clicking = Math.max(1, Math.min(5, Number(m.n) || 1)); return wzStatus(); }
     if (m.type === 'clicked' && Array.isArray(m.report)) {
       pv.report = m.report.slice(0, 15).map(function (x) { return { result: x === true ? 'clicked' : 'missing' }; }); pv.reportFor = wz.step;
@@ -2124,7 +2156,7 @@
       return;
     }
     if (m.type === 'ready') { pv.ready = true; pv.waitLeft = 0; pv.clicking = 0; wzStatus(); return wzSendConfig(); }
-    if (m.type === 'navigate') { var href = String(m.href || ''); if (/^https?:\/\//i.test(href) && pv.mode === 'navigate') wzLoadPreview(href); return; }
+    if (m.type === 'navigate') { var href = String(m.href || ''); if (/^https?:\/\//i.test(href) && (pv.mode === 'navigate' || pv.mode === 'interact')) wzLoadPreview(href); return; }
     if (m.type === 'error' && WZ_PICK_ERRORS[m.code]) {
       var rel = pv.target && WZ_SEL[pv.target] && WZ_SEL[pv.target].rel;
       pv.info = t(WZ_PICK_ERRORS[m.code], { field: rel ? t('cat.sel.' + rel) : '' });
@@ -2155,6 +2187,41 @@
    * crawler understands (tag, #id, .class, descendants). It waits for the page to load (+ cfg.wait seconds). */
   function wzPickerMain(cfg) {
     var ready = false, last = null;
+    // Requests the page makes (its own scripts): recorded, to tell what scrolling a list asks the site for
+    var requests = [];
+    var record = function (u) { try { if (u) requests.push(new URL(String(u), document.baseURI).href); } catch (e) { /* not an address */ } };
+    try {
+      if (window.fetch) { var realFetch = window.fetch; window.fetch = function (input) { record(typeof input === 'string' ? input : input && input.url); return realFetch.apply(this, arguments); }; }
+      var realOpen = XMLHttpRequest.prototype.open; XMLHttpRequest.prototype.open = function (m, u) { record(u); return realOpen.apply(this, arguments); };
+    } catch (e) { /* the page locked them */ }
+    // "Show hidden content": what the page hides (collapsed text, other tabs) shown, to pick it
+    var reveal = document.createElement('style');
+    reveal.textContent = '[hidden],[aria-hidden=true],.hidden,.d-none,.collapse:not(.show),.tab-pane,[style*="display:none"],[style*="display: none"]{display:block!important}' +
+      '[style*="visibility:hidden"],[style*="visibility: hidden"],.invisible{visibility:visible!important}.line-clamp,[class*="line-clamp"],[class*="truncate"],[style*="max-height"]{max-height:none!important;-webkit-line-clamp:unset!important;overflow:visible!important}';
+    var showHidden = function () {
+      if (cfg.reveal && !reveal.parentNode) { (document.head || document.documentElement).appendChild(reveal); Array.prototype.forEach.call(document.querySelectorAll('details'), function (d) { d.open = true; }); }
+      if (!cfg.reveal && reveal.parentNode) reveal.remove();
+    };
+    // Scrolling a list (or the page) to its end a few times, as a reader would: what it asked the site for
+    var scrollList = function (sel) {
+      var box = null; try { box = sel ? document.querySelector(sel) : null; } catch (e) { box = null; }
+      var el = box || document.scrollingElement || document.documentElement;
+      var from = requests.length, rounds = 0, still = 0, lastH = -1, links = document.querySelectorAll('a[href]').length;
+      var step = function () {
+        el.scrollTop = el.scrollHeight;
+        try { el.dispatchEvent(new Event('scroll')); window.dispatchEvent(new Event('scroll')); } catch (e) { /* old browser */ }
+        rounds++;
+        setTimeout(function () {
+          if (el.scrollHeight === lastH) still++; else still = 0;
+          lastH = el.scrollHeight;
+          if (rounds < 8 && still < 2) return step();
+          var asked = requests.slice(from).filter(function (u) { return /^https?:/i.test(u) && !/\.(png|jpe?g|gif|webp|avif|svg|css|js|mjs|woff2?|ttf|ico)(\?|$)/i.test(u); });
+          post({ type: 'scrolled', selector: sel || '', found: Boolean(box) || !sel, requests: asked.slice(0, 20), grew: document.querySelectorAll('a[href]').length - links });
+        }, 1200);
+      };
+      step();
+    };
+
     var post = function (m) { m.thoth = 'picker'; try { parent.postMessage(m, '*'); } catch (e) { /* the wizard closed */ } };
     var BLOCK = /^(li|div|article|section|tr|td|dl|dd|figure|header|ul|ol|table|tbody|main|aside|nav)$/;
     var goodClass = function (c) { return /^[a-zA-Z][\w-]{1,40}$/.test(c) && !/\d{4,}/.test(c) && !/^(active|current|selected|hover|focus|show|open|is-|has-|js-|thoth-)/.test(c); };
@@ -2187,6 +2254,15 @@
       var field = cfg.field, spec = cfg.spec, sel = cfg.selectors || {};
       if (!field || !spec) return post({ type: 'error', code: 'chooseField' });
       var attr = spec.attr ? '@' + spec.attr : '', r = null;
+      if (spec.kind === 'scrollbox') {
+        // The list that scrolls: the nearest box around what was clicked that can scroll (else the page)
+        var sb = el;
+        while (sb && sb !== document.body && !(/(auto|scroll)/.test(getComputedStyle(sb).overflowY) && sb.scrollHeight > sb.clientHeight + 10)) sb = sb.parentElement;
+        if (!sb || sb === document.body) return post({ type: 'picked', field: field, selector: '', count: 1, samples: ['(page)'] });
+        var sone = function (x) { try { return document.querySelector(x) === sb; } catch (e) { return false; } };
+        mark([sb]);
+        return post({ type: 'picked', field: field, selector: pathSelector(sb, null, sone), count: 1, samples: [sb.querySelectorAll('a').length + ' links'] });
+      }
       if (spec.kind === 'click') {
         // The element that takes the click: the link, button or tab around what was clicked
         var c = (el.closest && el.closest('a, button, summary, label, [role=tab], [role=button], [onclick], [data-url], [data-href], [data-load], [data-toggle], [data-bs-toggle], [data-target], [data-tab]')) || el;
@@ -2240,7 +2316,8 @@
     var cursor = function () { document.documentElement.style.cursor = ready && cfg.mode === 'pick' ? 'crosshair' : ''; };
     window.addEventListener('message', function (e) {
       if (e.source !== parent || !e.data || e.data.thoth !== 'config') return;
-      cfg = e.data.cfg || cfg; cursor();
+      if (e.data.scroll) return scrollList(e.data.scroll.selector);
+      cfg = e.data.cfg || cfg; cursor(); showHidden();
       if (cfg.mode !== 'pick' && last) { last.classList.remove('thoth-hl'); last = null; }
     });
     document.addEventListener('mouseover', function (e) {
@@ -2251,9 +2328,17 @@
     document.addEventListener('mouseout', function () { if (last) last.classList.remove('thoth-hl'); last = null; }, true);
     document.addEventListener('submit', function (e) { e.preventDefault(); }, true);
     document.addEventListener('click', function (e) {
+      var el = e.target;
+      // Interact: the page gets the click (tabs, "show more"…); a link to another page opens it in the preview
+      if (ready && cfg.mode === 'interact') {
+        var la = el.closest && el.closest('a[href]');
+        if (la && /^https?:/i.test(la.href) && la.getAttribute('href').charAt(0) !== '#') { e.preventDefault(); e.stopPropagation(); return post({ type: 'navigate', href: la.href, interact: true }); }
+        var tgt = (el.closest && el.closest('a, button, summary, label, [role=tab], [role=button], [onclick], [data-url], [data-href], [data-load], [data-toggle], [data-bs-toggle], [data-target], [data-tab]')) || el;
+        var only = function (x) { try { return document.querySelector(x) === tgt; } catch (er) { return false; } };
+        return post({ type: 'interacted', selector: pathSelector(tgt, null, only) });
+      }
       e.preventDefault(); e.stopPropagation();
       if (!ready) return;
-      var el = e.target;
       if (cfg.mode === 'navigate') { var a = el.closest && el.closest('a[href]'); if (a && /^https?:/i.test(a.href)) post({ type: 'navigate', href: a.href }); return; }
       if (last) last.classList.remove('thoth-hl');
       pick(el);
@@ -2262,7 +2347,7 @@
     var start = function () {
       var left = Math.max(0, Math.min(60, Number(cfg.wait) || 0));
       var tick = function () {
-        if (left <= 0) return clicks();
+        if (left <= 0) { showHidden(); return clicks(); }
         post({ type: 'waiting', left: left }); left--; setTimeout(tick, 1000);
       };
       // With the site's scripts: the clicks asked for, made for real, one every 1.5 s (time to show what they load)
@@ -2298,13 +2383,16 @@
       return wzRender();
     }
     if (e.type === 'change' && el.id === 'wz-pv-scripts') { pv.scripts = el.checked; return wzRender(); }
+    if (e.type === 'change' && el.id === 'wz-pv-reveal') { pv.reveal = el.checked; return wzSendConfig(); }
     if (e.type === 'change' && el.id === 'wz-pv-wait') { pv.wait = Math.max(0, Math.min(60, Math.round(Number(el.value) || 0))); return wzRender(); }
     if (!key) return;
     var v = el.type === 'checkbox' ? el.checked : el.value;
-    var ak = /^act(mode)?:(list|work|chapters):(\d)$/.exec(key);
+    var ak = /^act(mode|loads)?:(list|work|chapters):(\d)$/.exec(key);
     if (ak) {
       var a = wz.draft.actions[ak[2]][Number(ak[3])];
-      if (a) { if (ak[1]) a.mode = v === 'open' ? 'open' : 'add'; else a.selector = v; }
+      if (a && ak[1] === 'loads') { a.loads = v.trim() ? [v.trim()] : []; if (e.type !== 'change') return; }
+      else if (a && ak[1] === 'mode') { var was = a.kind; a.kind = v === 'scroll' ? 'scroll' : 'click'; if (a.kind === 'click') a.mode = v === 'open' ? 'open' : 'add'; if (was !== a.kind) { var f1 = $('#wz-form'); if (f1) { f1.innerHTML = wzStepBody(wz.step); if (window.renderIcons) window.renderIcons(f1); } } }
+      else if (a) a.selector = v;
       // (the page shown again with the clicks as they are now)
       if (e.type === 'change' && wz.pv.base) wzLoadPreview(wz.pv.base);
       return;
@@ -2337,7 +2425,7 @@
     if (Number(d.gapMs)) body.gapMs = Number(d.gapMs);
     Object.keys(d.selectors).forEach(function (k) { if (d.selectors[k]) body.selectors[k] = d.selectors[k]; });
     body.actions = {};
-    ['list', 'work', 'chapters'].forEach(function (g) { var l = d.actions[g].filter(function (a) { return a.selector.trim(); }); if (l.length) body.actions[g] = l; });
+    ['list', 'work', 'chapters'].forEach(function (g) { var l = d.actions[g].filter(function (a) { return a.selector.trim() || (a.kind === 'scroll' && a.loads.length); }); if (l.length) body.actions[g] = l; });
     return body;
   }
   function wzClick(e) {
@@ -2361,7 +2449,21 @@
       return wzRender();
     }
     if (act === 'load') { var u = $('#wz-pv-url').value.trim(); if (u) wzLoadPreview(u); return; }
-    if (act === 'act-add') { var g = b.dataset.group, l = wz.draft.actions[g]; if (l && l.length < 5) { l.push({ selector: '', mode: 'add' }); wz.pv.target = 'act:' + g + ':' + (l.length - 1); wz.pv.mode = 'pick'; } return wzRender(); }
+    if (act === 'act-scroll') {
+      var sk = 'act:' + b.dataset.group + ':' + b.dataset.i, sa2 = wz.draft.actions[b.dataset.group][Number(b.dataset.i)];
+      var fr = $('#wz-frame');
+      if (!sa2 || !fr || !wz.pv.ready) return;
+      wz.pv.scrolling = true; wz.pv.scrollFor = sk; wz.pv.info = null; wzStatus();
+      fr.contentWindow.postMessage({ thoth: 'config', scroll: { selector: sa2.selector } }, '*');
+      return;
+    }
+    if (act === 'keep-click') {
+      var kg = ({ list: 'list', work: 'work', chapters: 'chapters' })[wz.step];
+      if (kg && wz.pv.interacted && wz.draft.actions[kg].length < 5) { wz.draft.actions[kg].push({ kind: 'click', selector: wz.pv.interacted, mode: 'add', loads: [] }); wz.pv.interacted = null; wz.pv.info = t('wz.keptClick'); }
+      if (wz.pv.base && !wz.pv.scripts) return wzLoadPreview(wz.pv.base);
+      return wzRender();
+    }
+    if (act === 'act-add') { var g = b.dataset.group, l = wz.draft.actions[g]; if (l && l.length < 5) { l.push({ kind: 'click', selector: '', mode: 'add', loads: [] }); wz.pv.target = 'act:' + g + ':' + (l.length - 1); wz.pv.mode = 'pick'; } return wzRender(); }
     if (act === 'act-del') { var dl = wz.draft.actions[b.dataset.group]; if (dl) dl.splice(Number(b.dataset.i), 1); wz.pv.target = null; if (wz.pv.base) return wzLoadPreview(wz.pv.base); return wzRender(); }
     if (act === 'reload') { wz.pv.reloads = (wz.pv.reloads || 0) + 1; wz.pv.info = null; return wzRender(); }
     if (act === 'detect') {

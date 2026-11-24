@@ -1040,3 +1040,10 @@ body.is-reading { overflow: hidden; }
 .cat-ch-tabs button.tab { background: none; border: 0; border-radius: 0; font: inherit; color: var(--text-muted); cursor: pointer; }
 .cat-ch-tabs button.tab.is-active { color: var(--primary); }
 .cat-source > .cat-chapters { width: 100%; align-self: stretch; }
+
+/* Wizard: a scroll row (the request scrolling makes), keeping a click made in Interact */
+.wz-click__loads { grid-column: 2 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.wz-click__loads input { flex: 1; min-width: 180px; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; }
+.wz-click__loads .field__help { flex-basis: 100%; }
+.wz-preview__keep { padding: 0 12px 8px; }
+.wz-preview__keep:empty { display: none; }

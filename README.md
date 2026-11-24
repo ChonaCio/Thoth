@@ -581,6 +581,17 @@ sites added as **sources**, with its metadata and chapter list.
 - **Premium chapters** (behind coins, a pass, early access, or unavailable on MangaDex) are marked *Premium*: listed,
   but not readable for free right now; the chapters your library lacks say so too (a free copy on another source
   is preferred).
+- **Lists that load more as they're scrolled.** A *Before collecting* row can be **Scroll to load more** instead of a
+  click: pick the list that scrolls (or leave it empty for the page) and press **Scroll it** — with *Site scripts* on,
+  the preview scrolls it and notes what the page asks the site for (e.g. a chapters API with a page number or a
+  cursor). You can also type that address (your browser's developer tools, Network tab, show it). Crawls ask for it
+  from the first page on, follow the next page or cursor the answers give until nothing new comes (at most 200
+  requests, same site, robots.txt followed), and turn JSON answers into chapters (number, name, link — built like
+  the page's own chapter links when the answer has none —, date, locked/premium); HTML answers are added to the page.
+- **Interacting with the preview.** *Interact* mode passes your clicks to the page (open a tab, "Show more"…) so
+  hidden things can then be picked; a click made there can be kept as a click before collecting (*Do this click
+  before collecting*). *Show hidden content* shows what the page hides (collapsed text, other tabs, `hidden`
+  elements) so it can be picked — crawls read hidden content anyway.
 - **Titles without noise, and versions.** What sites add to a title is taken out: `(Official)`, ` - engsub`,
   `[Eng Sub]`, the source's own name (` - Site name`), "Read … Online". Version markers — `[AI ANIMATION]`, `[AI CC]`,
   `[MOTION]` (Animated); `Raw`; `Colored`, `Full Colored` (Colored); `Uncensored`, `Uncen` (Uncensored), several at once,

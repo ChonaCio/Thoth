@@ -392,11 +392,135 @@ function actionUrl(el, base) {
   }
   return null;
 }
+/* -------- scrolling to load more (a list that grows as it's scrolled) --------
+ * The page asks the site for more as its list is scrolled: act.loads is that request (seen in the wizard's preview
+ * while scrolling, or typed). The crawl asks for it from the first page on, following the next page/cursor the
+ * answers give, until nothing new comes (at most MAX_SCROLL_PAGES). Answers in JSON become chapters (numbers, names,
+ * links, dates, premium flags found by their usual field names); HTML answers are added to the page.
+ * Only the page's own site (its host, or another host of the same domain, e.g. api.example.com), robots.txt followed. */
+const MAX_SCROLL_PAGES = 200;
+const sameSite = (a, b) => { const d = h => h.split('.').slice(-2).join('.'); try { return d(new URL(a).hostname) === d(new URL(b).hostname); } catch { return false; } };
+const PAGE_PARAMS = ['cursor', 'after', 'next', 'nextCursor', 'next_cursor', 'page', 'p', 'offset', 'skip', 'start', 'from'];
+// The first request of the series: the captured one without its position (a cursor, page 3…)
+function firstRequest(u) {
+  const x = new URL(u);
+  for (const k of PAGE_PARAMS) if (x.searchParams.has(k)) {
+    if (/^(page|p)$/.test(k)) x.searchParams.set(k, '1');
+    else if (/^(offset|skip|start|from)$/.test(k)) x.searchParams.set(k, '0');
+    else x.searchParams.delete(k);
+  }
+  return x.href;
+}
+// The next request after an answer: its next cursor / next link / next page, or null at the end
+function nextRequest(u, json, got) {
+  const x = new URL(u);
+  const pick = (o, paths) => { for (const p of paths) { const v = p.split('.').reduce((a, k) => (a && typeof a === 'object' ? a[k] : undefined), o); if (v != null && v !== '' && v !== false) return v; } return null; };
+  if (json && typeof json === 'object' && !Array.isArray(json)) {
+    if (json.hasMore === false || json.has_more === false || (json.meta && json.meta.hasMore === false)) return null;
+    const link = pick(json, ['links.next', 'next_page_url', 'nextUrl', 'next_url', 'meta.next', 'pagination.next_url']);
+    if (typeof link === 'string' && /^(https?:)?\/|^\?/.test(link)) return abs(link, u);
+    const cursor = pick(json, ['nextCursor', 'next_cursor', 'cursor.next', 'meta.nextCursor', 'meta.next_cursor', 'pagination.nextCursor', 'pagination.next_cursor', 'next']);
+    if (cursor != null && typeof cursor !== 'object') {
+      const key = PAGE_PARAMS.find(k => /cursor|after|next/i.test(k) && new URL(u).searchParams.has(k)) || 'cursor';
+      x.searchParams.set(key, String(cursor));
+      return x.href;
+    }
+  }
+  if (!got) return null;
+  const pk = ['page', 'p'].find(k => x.searchParams.has(k));
+  if (pk) { x.searchParams.set(pk, String((Number(x.searchParams.get(pk)) || 1) + 1)); return x.href; }
+  const ok = ['offset', 'skip', 'start', 'from'].find(k => x.searchParams.has(k));
+  if (ok) { x.searchParams.set(ok, String((Number(x.searchParams.get(ok)) || 0) + got)); return x.href; }
+  return null;
+}
+// JSON → chapters: the biggest list of objects that look like chapters (a number, or a name with one)
+const N_KEYS = ['number', 'chapter', 'chapterNumber', 'chapter_number', 'chapterNum', 'chapter_no', 'num', 'no', 'episode', 'episodeNumber', 'episode_number', 'index', 'order'];
+const T_KEYS = ['title', 'name', 'chapterTitle', 'chapter_title', 'label', 'episodeTitle'];
+const U_KEYS = ['url', 'link', 'href', 'permalink', 'path', 'webUrl', 'web_url'];
+const D_KEYS = ['publishedAt', 'published_at', 'releasedAt', 'released_at', 'createdAt', 'created_at', 'date', 'releaseDate', 'release_date', 'updatedAt'];
+const P_KEYS = ['isLocked', 'locked', 'isPremium', 'premium', 'paid', 'isPaid', 'requiresPurchase', 'requires_purchase', 'is_locked', 'is_premium', 'earlyAccess', 'early_access'];
+const isNum = v => v != null && v !== '' && /^\d+(\.\d+)?$/.test(String(v));
+function chapterArray(j, depth = 0) {
+  if (depth > 4 || !j || typeof j !== 'object') return null;
+  if (Array.isArray(j)) {
+    const objs = j.filter(x => x && typeof x === 'object' && !Array.isArray(x));
+    const like = objs.filter(o => N_KEYS.some(k => isNum(o[k])) || T_KEYS.some(k => /chap|ep\b|episode|\d/i.test(String(o[k] || ''))));
+    return objs.length && like.length >= Math.ceil(objs.length / 2) ? objs : null;
+  }
+  let best = null;
+  for (const v of Object.values(j)) { const a = chapterArray(v, depth + 1); if (a && (!best || a.length > best.length)) best = a; }
+  return best;
+}
+// Links of chapters given only by number/slug: like the chapter links the page already has ("/series/x/chapter-164")
+function chapterFromJson(o, base, template) {
+  const nRaw = N_KEYS.map(k => o[k]).find(isNum);
+  const t = T_KEYS.map(k => o[k]).find(v => typeof v === 'string' && v.trim()) || (nRaw != null ? 'Chapter ' + nRaw : '');
+  const n = nRaw != null ? String(nRaw) : chapterNum(t);
+  let u = U_KEYS.map(k => o[k]).find(v => typeof v === 'string' && v.trim());
+  if (u) u = abs(u, base);
+  else if (template && n != null) u = abs(template.replace('{n}', n), base);
+  else if (template && (o.slug || o.id)) u = abs(template.replace(/[^/]*\{n\}[^/]*/, String(o.slug || o.id)), base);
+  if (!u) return null;
+  const d = D_KEYS.map(k => o[k]).find(Boolean);
+  const pr = P_KEYS.some(k => o[k] === true || o[k] === 1) || (Number(o.price || o.coins || o.coin || 0) > 0 && o.isFree !== true && o.free !== true) || o.isFree === false || o.free === false;
+  return { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: n || null, t, u, d: d ? String(d).slice(0, 10) : '', l: null, pr: pr || undefined };
+}
+// A chapter link template from the links the page has: "/series/x/chapter-164" (number 164) → "/series/x/chapter-{n}"
+function linkTemplate(html, base) {
+  for (const m of String(html).matchAll(/href\s*=\s*["']([^"']*(?:chapter|episode|ch|ep)[-_/]?(\d+(?:\.\d+)?)\/?)["']/gi)) {
+    const [, href, n] = m;
+    const at = href.lastIndexOf(n);
+    if (at > -1) { const u = abs(href.slice(0, at) + 'THOTHN' + href.slice(at + n.length), base); if (u) return u.replace('THOTHN', '{n}'); }
+  }
+  return null;
+}
+async function scrollLoads(ctx, act, text, url) {
+  const loads = (Array.isArray(act.loads) ? act.loads : act.loads ? [act.loads] : []).filter(Boolean);
+  if (!loads.length) return { result: 'noRequest' };
+  const out = { chapters: [], html: '', pages: 0 };
+  const template = linkTemplate(text, url);
+  for (const first of loads.slice(0, 2)) {
+    if (!sameSite(first, url)) return { result: 'otherSite', url: first };
+    let next = firstRequest(first);
+    const seen = new Set(out.chapters.map(c => c.id)), asked = new Set();
+    while (next && out.pages < MAX_SCROLL_PAGES && !asked.has(next)) {
+      asked.add(next);
+      const res = await ctx.get(next, { accept: 'application/json,text/html;q=0.8,*/*;q=0.5', headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      out.pages++;
+      let json = null; try { json = JSON.parse(res.text); } catch { /* HTML */ }
+      let got = 0;
+      if (json) {
+        for (const o of chapterArray(json) || []) { const c = chapterFromJson(o, url, template); if (c && !seen.has(c.id)) { seen.add(c.id); out.chapters.push(c); got++; } }
+      } else {
+        const body = (/<body[^>]*>([\s\S]*)<\/body>/i.exec(res.text) || [null, res.text])[1];
+        if (!body.trim() || out.html.includes(body)) break;
+        out.html += body; got = (body.match(/<a\b/gi) || []).length;
+      }
+      if (!got) break; // (nothing new: the end)
+      next = nextRequest(next, json, got);
+    }
+  }
+  return Object.assign(out, { result: 'scrolled' });
+}
+
 async function applyActions(ctx, page, actions) {
   let text = page.text, url = page.url;
-  const report = [];
+  const report = [], chapters = [];
   for (const act of (actions || []).slice(0, MAX_ACTIONS)) {
     const selector = String((act && act.selector) || '').trim();
+    if (act && act.kind === 'scroll') {
+      // Scrolling a list (or the page) to load more: what the page asks the site for, followed page after page
+      try {
+        const r = await scrollLoads(ctx, act, text, url);
+        if (r.chapters) chapters.push(...r.chapters);
+        if (r.html) text = /<\/body>/i.test(text) ? text.replace(/<\/body>(?![\s\S]*<\/body>)/i, '<div data-thoth-added="scroll">' + r.html + '</div></body>') : text + r.html;
+        report.push({ selector, kind: 'scroll', found: true, result: r.result, url: r.url || (act.loads && [].concat(act.loads)[0]) || null, pages: r.pages || 0, chapters: (r.chapters || []).length });
+      } catch (e) {
+        if (e.code === 'blocked' || e.code === 'stopped') throw e;
+        report.push({ selector, kind: 'scroll', found: true, result: 'failed', error: (e.code === 'robots' ? 'robots.txt: ' : '') + e.message });
+      }
+      continue;
+    }
     if (!selector) continue;
     const el = parse(text).first(selector);
     if (!el) { report.push({ selector, found: false, result: 'notFound' }); continue; }
@@ -423,7 +547,7 @@ async function applyActions(ctx, page, actions) {
       report.push({ selector, found: true, url: target, result: 'failed', error: (e.code === 'robots' ? 'robots.txt: ' : '') + e.message });
     }
   }
-  return { text, url, report };
+  return { text, url, report, chapters };
 }
 
 /* ---------------- Any other site: selectors given in the source settings ---------------- */
@@ -472,6 +596,13 @@ const custom = {
     if (!src.includeChapters) return work;
     // The chapters' own clicks (a "Chapters" tab, "Show all chapters"…), from the work page as it is now
     const chRes = acts.chapters && acts.chapters.length ? await applyActions(ctx, res, acts.chapters) : res;
+    const extra = (chRes.chapters || []).concat(res.chapters || []);
+    // (a chapter both in the page and in what scrolling loaded: the page's, with what the answer adds — locked, date)
+    const withExtra = list => {
+      const byId = new Map(list.map(c => [c.id, c]));
+      for (const c of extra) { const have = byId.get(c.id); if (have) { if (c.pr) have.pr = true; if (!have.d && c.d) have.d = c.d; } else { byId.set(c.id, c); list.push(c); } }
+      return list;
+    };
     const chDoc = chRes === res ? doc : parse(chRes.text);
     if (!s.chapter) {
       // No chapter selector: every link on the page whose address matches the chapters' pattern
@@ -486,6 +617,7 @@ const custom = {
         const t = a.text() || p.split('/').filter(Boolean).pop().replace(/[-_]+/g, ' ');
         return { id: p.replace(/\/+$/, ''), n: chapterNum(t) || chapterNum(p.split('/').filter(Boolean).pop()), t, u, d: '', l: langs(src)[0] || null, pr: isPremium(a, null) || undefined };
       }).filter(Boolean));
+      work.chapters = withExtra(work.chapters);
       return work;
     }
     work.chapters = await withHiddenChapters(ctx, chDoc, chRes.url, (d, base) => d.select(s.chapter).map(li => {
@@ -496,6 +628,7 @@ const custom = {
       const t = s.chapterTitle ? pick(li, s.chapterTitle, base) : (a ? a.text() : li.text());
       return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
     }).filter(Boolean));
+    work.chapters = withExtra(work.chapters);
     return work;
   }
 };

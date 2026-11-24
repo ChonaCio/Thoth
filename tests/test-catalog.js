@@ -88,6 +88,15 @@ const site = http.createServer((req, res) => {
   const VER = { a: 'Night Sky (Official) - engsub', b: 'Night Sky [AI ANIMATION]', c: 'Night Sky (Raw) Uncensored - Version Site' };
   if (u.pathname === '/ver/list') return send(200, Object.keys(VER).map(k => `<div class="v"><a href="/ver/w/${k}">${VER[k]}</a></div>`).join(''));
   if ((m0 = /^\/ver\/w\/(\w)$/.exec(u.pathname)) && VER[m0[1]]) return send(200, `<h1>${VER[m0[1]]}</h1><ul><li class="c"><a href="/ver/w/${m0[1]}/1">Chapter 1</a></li></ul>`);
+  // A chapter list that loads more as it's scrolled: 2 in the page, the rest from a JSON API with a cursor
+  if (u.pathname === '/scroll/list') return send(200, '<div class="w"><a href="/scroll/series/blade">Blade</a></div>');
+  if (u.pathname === '/scroll/series/blade') return send(200, '<h1>Blade</h1><div class="cl-scroll"><ul><li class="c"><a href="/scroll/series/blade/chapter-6">Chapter 6</a></li><li class="c"><a href="/scroll/series/blade/chapter-5">Chapter 5</a></li></ul></div>');
+  if (u.pathname === '/api/scroll/blade/chapters') {
+    const all = [6, 5, 4, 3, 2, 1], at = u.searchParams.get('cursor') ? all.indexOf(Number(Buffer.from(u.searchParams.get('cursor'), 'base64').toString())) : 0;
+    const part = all.slice(at, at + 2);
+    const next = all[at + 2] ? Buffer.from(String(all[at + 2])).toString('base64') : null;
+    return send(200, JSON.stringify({ data: part.map(n => ({ number: n, title: 'Chapter ' + n, isLocked: n === 6, createdAt: '2025-01-0' + n + 'T00:00:00Z' })), nextCursor: next }), 'application/json');
+  }
   // A site behind bot protection
   if (u.pathname.startsWith('/guarded')) return send(403, '<html><title>Just a moment...</title><div id="cf-chl-widget"></div></html>');
   send(404, 'not found');
@@ -234,6 +243,21 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   tc = await crawled(tsrc.id);
   ok(await chOf() === 2 && tc.lastStats.read === 1, `after adding the click, the next update reads the work again with it (${await chOf()} chapters; its sitemap hadn't changed)`);
   await call('DELETE', `/api/catalog/sources/${tsrc.id}`);
+  // ---- scrolling to load more: the requests the page makes, followed from the first page on ----
+  const scrolled = { name: 'Scroller', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/scroll/list', item: 'div.w', workTitle: 'h1', chapter: 'li.c' },
+    actions: { chapters: [{ kind: 'scroll', selector: 'div.cl-scroll', loads: [SITE + '/api/scroll/blade/chapters?limit=2&sort=desc&cursor=' + Buffer.from('4').toString('base64')] }] } };
+  const noScroll = (await call('POST', '/api/catalog/sources/test', Object.assign({}, scrolled, { actions: {} }))).data.test;
+  const withScroll = (await call('POST', '/api/catalog/sources/test', scrolled)).data.test;
+  ok(noScroll.work.chapterCount === 2 && withScroll.work.chapterCount === 6 && withScroll.work.firstChapters.some(c => String(c.n) === '4'),
+    `scrolling a list to load more: the page's requests are followed from the first page (${noScroll.work.chapterCount} → ${withScroll.work.chapterCount} chapters)`);
+  const ss = (await call('POST', '/api/catalog/sources', scrolled)).data.source;
+  ok(ss.actions.chapters[0].kind === 'scroll' && ss.actions.chapters[0].loads.length === 1, 'a source keeps its scrolls (and the request they make)');
+  await call('POST', `/api/catalog/sources/${ss.id}/crawl`, { mode: 'full' });
+  await crawled(ss.id);
+  const blade = (await call('GET', `/api/catalog/work?key=${encodeURIComponent((await call('GET', `/api/catalog?source=${ss.id}`)).data.items[0].key)}`)).data.work.sources[0].chapterList;
+  ok(blade.length === 6 && blade.find(c => c.n === '6').pr === true && blade.find(c => c.n === '1').u === SITE + '/scroll/series/blade/chapter-1',
+    'a crawl reads them too: chapters from the answers, linked like the page’s own links, locked ones marked');
+  await call('DELETE', `/api/catalog/sources/${ss.id}`);
   // ---- titles: noise taken out, versions recognized and grouped like a library's ----
   const vsrc = (await call('POST', '/api/catalog/sources', { name: 'Version Site', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/ver/list', item: 'div.v', workTitle: 'h1', chapter: 'li.c' } })).data.source;
   await call('POST', `/api/catalog/sources/${vsrc.id}/crawl`, { mode: 'full' });

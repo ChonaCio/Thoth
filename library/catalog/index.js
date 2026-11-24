@@ -32,7 +32,13 @@ const err = (status, code) => Object.assign(new Error(code), { status, code });
 function cleanActions(a) {
   const out = {};
   for (const k of ['list', 'work', 'chapters']) {
-    const list = (Array.isArray(a && a[k]) ? a[k] : []).map(x => ({ selector: String((x && x.selector) || '').trim().slice(0, 300), mode: x && x.mode === 'open' ? 'open' : 'add' })).filter(x => x.selector).slice(0, 5);
+    // kind 'click' (default) or 'scroll' (loads: the requests the page makes when that list is scrolled)
+    const list = (Array.isArray(a && a[k]) ? a[k] : []).map(x => {
+      const kind = x && x.kind === 'scroll' ? 'scroll' : 'click';
+      const out = { kind, selector: String((x && x.selector) || '').trim().slice(0, 300), mode: x && x.mode === 'open' ? 'open' : 'add' };
+      if (kind === 'scroll') out.loads = [].concat((x && x.loads) || []).map(u => String(u || '').trim().slice(0, 1000)).filter(u => publicUrl(u, ALLOW_LOCAL)).slice(0, 2);
+      return out;
+    }).filter(x => x.selector || (x.kind === 'scroll' && x.loads.length)).slice(0, 5);
     if (list.length) out[k] = list;
   }
   return out;
