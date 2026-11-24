@@ -57,23 +57,32 @@ async function detect(msg) {
     const icon = iconEl && iconEl.attr('href') ? new URL(iconEl.attr('href'), origin).href : origin + '/favicon.ico';
     out.found.icon = icon;
     // 3. The sitemaps: a sample of what they list, and the patterns of work and chapter pages
-    const urls = [], hints = new Map();
-    let files = 0;
+    // (the lists of works first; a few chapter sitemaps after them, enough to see the chapters' addresses — a site
+    // with monthly chapter sitemaps would otherwise use up the files before its list of works)
+    const urls = [], hints = new Map(), files = [];
     if (roots.length) {
-      for await (const { file, urls: list } of sm.walk(get, roots, { maxFiles: 30 })) {
-        files++;
-        for (const u of list.slice(0, 3000)) { urls.push(u.loc); hints.set(u.loc, file); }
-        if (urls.length > 20000) break;
+      for await (const { file, urls: list } of sm.walk(get, roots, { maxFiles: 40, maxChapterFiles: 3, onFile: r => files.push(r) })) {
+        for (const u of list.slice(0, 5000)) { urls.push(u.loc); hints.set(u.loc, file); }
+        if (urls.length > 40000) break;
       }
     }
-    const pat = sm.inferPatterns(urls.filter(u => { try { return new URL(u).origin === origin; } catch { return false; } }), hints);
+    const own = urls.filter(u => { try { return new URL(u).hostname.replace(/^www\./, '') === new URL(origin).hostname.replace(/^www\./, ''); } catch { return false; } });
+    // Folio's way first: every address shaped like a work (/manga/x, /series/x, /manhwa/x…), each work word its own
+    // pattern; the most common shapes otherwise
+    const folio = sm.defaultPatterns(own);
+    const guess = sm.inferPatterns(own, hints);
+    const pat = folio ? Object.assign({}, guess, { workPattern: folio.workPattern, works: folio.works, chapterPattern: folio.chapterPattern || guess.chapterPattern, by: 'shape' }) : Object.assign(guess, { by: guess.workPattern ? 'common' : null });
+    if (folio && folio.words.length > 1) notes.push('severalWorkWords');
+    out.found.sitemapLog = files.slice(0, 200);
+    out.found.chapterAddresses = folio ? folio.chapters : 0;
     out.found.patterns = pat.patterns;
     out.found.works = pat.works;
-    out.found.sitemapFiles = files;
+    out.found.sitemapFiles = files.filter(x => x.status === 'read').length;
+    out.found.patternBy = pat.by;
     if (!roots.length) notes.push('noSitemap');
     else if (!pat.workPattern) notes.push('noWorkPattern');
     // 4. One work page: the theme it uses, its title, its chapters
-    const workUrl = pat.workPattern ? urls.find(u => sm.patternRegex(pat.workPattern).test(sm.pathOf(u))) : null;
+    const workUrl = pat.workPattern ? own.find(u => sm.patternRegex(pat.workPattern).test(sm.pathOf(u))) : null;
     let theme = home && THEMES.find(t => t.test(home.text));
     let sample = null;
     if (workUrl) {
@@ -92,7 +101,7 @@ async function detect(msg) {
     out.found.sampleWork = sample;
     out.found.theme = theme ? theme.type : null;
     // 5. The settings: a theme reader when the site runs one, else the generic reader (sitemaps + patterns)
-    const listPath = pat.workPattern ? pat.workPattern.split('/').filter(Boolean)[0] : null;
+    const listPath = pat.workPattern ? pat.workPattern.split(/\s+/)[0].split('/').filter(Boolean)[0] : null;
     const type = theme ? theme.type : 'custom';
     out.settings = {
       type, name, baseUrl: origin, iconUrl: icon, includeChapters: true, languages: '',

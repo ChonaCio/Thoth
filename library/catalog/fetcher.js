@@ -94,6 +94,7 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
   const robots = new Map(); // origin → Promise<rules>
   const robotsText = new Map(); // origin → the file itself
   const robotsDown = new Map(); // origin → the server error its robots.txt answered
+  const robotsMeta = new Map(); // origin → what reading it gave
   // Per site: requests in progress, each lane's next allowed start, the last start, a pause the site asked for
   // (Retry-After), and the spacing between any two starts (staggerMs, or robots.txt Crawl-delay)
   const hosts = new Map();
@@ -175,17 +176,21 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
   async function rulesFor(origin) {
     if (!robots.has(origin)) {
       robots.set(origin, (async () => {
+        // (what was read, for the Site files tab: robotsInfo(origin))
+        const t0 = Date.now();
+        const meta = m => robotsMeta.set(origin, Object.assign({ origin, ms: Date.now() - t0, checkedAt: new Date().toISOString() }, m));
         try {
           const { res } = await raw(origin + '/robots.txt', { accept: 'text/plain' });
           // None (4xx): everything allowed. A server error: the whole site is off-limits until it answers (RFC 9309)
-          if (res.status >= 500) { done(res); try { await res.body.cancel(); } catch {} robotsDown.set(origin, res.status); return [{ allow: false, pattern: /^\//, length: 1 }]; }
-          if (res.status >= 400) { done(res); try { await res.body.cancel(); } catch {} return []; }
+          if (res.status >= 500) { done(res); try { await res.body.cancel(); } catch {} robotsDown.set(origin, res.status); meta({ http: res.status, status: 'error' }); return [{ allow: false, pattern: /^\//, length: 1 }]; }
+          if (res.status >= 400) { done(res); try { await res.body.cancel(); } catch {} meta({ http: res.status, status: 'none' }); return []; }
           const text = (await readBody(res)).toString('utf8');
           robotsText.set(origin, text);
           const rules = parseRobots(text);
           if (rules.crawlDelay != null) { const h = hostState(new URL(origin).host); h.crawlDelay = rules.crawlDelay; h.spacing = Math.max(h.spacing, rules.crawlDelay * 1000); }
+          meta({ http: res.status, status: 'found', rules: rules.length, crawlDelay: rules.crawlDelay != null ? rules.crawlDelay : null, sitemaps: sitemapsIn(text), body: text.slice(0, 65536), bytes: Buffer.byteLength(text) });
           return rules;
-        } catch (e) { if (e.code === 'stopped' || e.code === 'notPublic') throw e; return []; }
+        } catch (e) { if (e.code === 'stopped' || e.code === 'notPublic') throw e; meta({ http: null, status: 'unreachable', error: String(e.message || e).slice(0, 160) }); return []; }
       })());
     }
     return robots.get(origin);
@@ -311,7 +316,8 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
   // How it fetches from a site now: { parallel, crawlDelay } (crawlDelay: robots.txt asked for one at a time)
   const limits = host => { const h = host ? hosts.get(host) : [...hosts.values()][0]; return { parallel: h && h.crawlDelay != null ? 1 : parallel, crawlDelay: h ? h.crawlDelay : null }; };
   return { get, render, stats, limits, stop: () => { stopped = true; }, robotsAllowed: async url => robotsAllows(await rulesFor(new URL(url).origin), url),
-    robotsFile: async origin => { await rulesFor(origin); return robotsText.get(origin) || null; } };
+    robotsFile: async origin => { await rulesFor(origin); return robotsText.get(origin) || null; },
+    robotsInfo: origin => robotsMeta.get(origin) || null };
 }
 
 module.exports = { cookiePairs, headerLines, createFetcher, parseRobots, robotsAllows, sitemapsIn, publicUrl, UA };

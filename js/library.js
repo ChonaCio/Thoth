@@ -2785,6 +2785,7 @@
     if (f.sitemaps && f.sitemaps.length) lines.push(t('cat.det.sitemaps', { count: f.sitemaps.length, files: f.sitemapFiles || f.sitemaps.length }));
     if (n.indexOf('noSitemap') !== -1) lines.push(t('cat.det.noSitemap'));
     if (d.settings && d.settings.workPattern) lines.push(t('cat.det.works', { pattern: d.settings.workPattern, count: f.works }));
+    if (n.indexOf('severalWorkWords') !== -1 && d.settings && d.settings.workPattern) lines.push(t('cat.det.severalWords', { words: d.settings.workPattern }));
     if (d.settings && d.settings.chapterPattern) lines.push(t('cat.det.chapters', { pattern: d.settings.chapterPattern }));
     if (f.theme) lines.push(t('cat.det.theme', { theme: f.theme === 'madara' ? 'Madara' : 'MangaReader' }));
     else if (d.settings && d.settings.type === 'custom') lines.push(t('cat.det.generic'));
@@ -2796,7 +2797,7 @@
   // Site files tab (admins): each source's robots.txt and sitemaps — the ones it uses, the ones detection found and
   // the ones its last crawl read (content hash, date, works listed) — each read on demand: its text and what it lists
   function catFilesState() {
-    if (!cache.catFiles) cache.catFiles = { sources: null, source: '', data: null, error: null, view: null, file: null, q: '', raw: false };
+    if (!cache.catFiles) cache.catFiles = { sources: null, source: '', data: null, error: null, view: null, file: null, q: '', raw: false, dq: { q: '', kind: '', status: '' } };
     return cache.catFiles;
   }
   function loadCatFiles() {
@@ -2807,10 +2808,15 @@
       if (!st.source) return;
       return api('GET', '/api/catalog/sources/' + encodeURIComponent(st.source) + '/files').then(function (d) { st.data = d; st.error = null; });
     }).then(null, function (e) { st.error = e; }).then(function () {
-      if (isCatalogRoute() && A().parseRoute().param === 'files') A().renderPage();
-      if (st.data && !st.view) openSiteFile(st.data.robots);
+      if (isCatalogRoute() && A().parseRoute().param === 'files') {
+        A().renderPage();
+        // (while the source is being crawled, the tab follows it)
+        clearTimeout(catFilesTimer);
+        if (st.data && st.data.crawling) catFilesTimer = setTimeout(function () { if (isCatalogRoute() && A().parseRoute().param === 'files') loadCatFiles(); }, 3000);
+      }
     });
   }
+  var catFilesTimer = null;
   function openSiteFile(url) {
     var st = catFilesState();
     st.view = url; st.file = { loading: true }; st.q = '';
@@ -2848,7 +2854,56 @@
       (f.kind === 'robots' && (f.sitemaps || []).length ? '<h3 class="proc-sub">' + esc(t('cat.files.robotsSitemaps')) + '</h3><ul class="sitefile__list">' + f.sitemaps.map(function (s) { return '<li>' + siteFileLink(s.loc) + '</li>'; }).join('') + '</ul>' : '') +
       children + list + raw + '</section>';
   }
-  var FILE_FROM = { settings: 'cat.files.fromSettings', detected: 'cat.files.fromDetect', crawl: 'cat.files.fromCrawl' };
+  // What happened to a sitemap at the last crawl that read it (recorded by crawls: discovery.json)
+  var SM_STATUS = ['read', 'unchanged', 'skipped', 'failed', 'refused', 'not-sitemap', 'disallowed', 'known'];
+  var SM_BAD = { failed: 1, refused: 1, 'not-sitemap': 1, disallowed: 1 };
+  var fmtMs = function (ms) { return ms == null ? '' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'; };
+  function siteFilesMethod(d) {
+    var m = d.method || {};
+    var chip = '<span class="badge badge--primary">' + esc(t('cat.files.method.' + (m.kind || 'pages'))) + '</span> ';
+    var detail = m.kind === 'sitemap' ? t('cat.files.methodSitemap', { pattern: m.pattern || '—' }) + (m.chapterPattern ? ' · ' + t('cat.files.methodChapters', { pattern: m.chapterPattern }) : '')
+      : m.kind === 'api' ? t('cat.files.methodApi', { name: m.label || '' }) : t('cat.files.methodPages', { url: m.listUrl || '—' });
+    return chip + '<span class="muted small">' + esc(detail) + (d.autoDetect ? ' · ' + esc(t('cat.files.autoDetected')) : '') + '</span>';
+  }
+  function siteFilesRobots(d) {
+    return d.robotsFiles.map(function (r) {
+      var facts = [r.http != null ? 'HTTP ' + r.http : t('cat.files.noAnswer'), t('cat.files.robots.' + (r.status || 'unknown'))];
+      if (r.rules != null) facts.push(t('cat.files.rules', { count: r.rules }));
+      if (r.crawlDelay) facts.push(t('cat.files.crawlDelay', { s: r.crawlDelay }));
+      if (r.ms != null) facts.push(fmtMs(r.ms));
+      return '<div class="sf-robots"><p><strong>' + esc(r.origin + '/robots.txt') + '</strong> ' +
+        '<button type="button" class="btn btn--text btn--small" data-lib="cat-file-open" data-id="' + esc(r.origin + '/robots.txt') + '">' + icon('description') + esc(t('cat.files.view')) + '</button></p>' +
+        '<p class="small' + (r.status === 'error' || r.status === 'unreachable' ? ' text-danger' : '') + '">' + esc(facts.join(' · ')) + (r.checkedAt ? ' <span class="muted">· ' + esc(t('cat.files.checked', { time: A().fmtDate(r.checkedAt) })) + '</span>' : '') + '</p>' +
+        (r.status === 'unknown' ? '<p class="muted small">' + esc(t('cat.files.robotsNotYet')) + '</p>' : '') +
+        (r.sitemaps && r.sitemaps.length ? '<p class="small muted">' + esc(t('cat.files.declares')) + ' ' + r.sitemaps.map(esc).join(', ') + '</p>' : '') +
+        (r.body ? '<details class="small"><summary>' + esc(t('cat.files.showFile')) + '</summary><pre class="task-console__text sitefile__raw">' + esc(r.body) + '</pre></details>' : '') + '</div>';
+    }).join('');
+  }
+  function siteFilesTable(d, st) {
+    var q = st.dq.q.toLowerCase();
+    var list = d.sitemaps.filter(function (x) { return (!st.dq.status || x.status === st.dq.status) && (!st.dq.kind || x.kind === st.dq.kind) && (!q || x.url.toLowerCase().indexOf(q) !== -1); });
+    var short = function (u) { return String(u || '').indexOf(d.origin) === 0 ? String(u).slice(d.origin.length) || '/' : String(u || ''); };
+    var parentLabel = function (p) { return p === 'robots.txt' ? 'robots.txt' : p === 'settings' ? t('cat.files.fromSettings') : short(p); };
+    if (!list.length) return '<p class="muted small">' + esc(t(d.sitemaps.length ? 'cat.files.noMatch' : d.method && d.method.kind === 'api' ? 'cat.files.noneApi' : 'cat.files.noneYet')) + '</p>';
+    var th = function (k, help) { return '<th' + (help ? ' title="' + esc(t(help)) + '"' : '') + '>' + esc(t(k)) + '</th>'; };
+    return '<div class="table-wrap sf-table-wrap"><table class="table sf-table"><thead><tr>' + th('cat.files.col.sitemap') + th('cat.files.col.kind') + th('cat.files.col.status') + th('cat.files.col.http') +
+        th('cat.files.col.entries', 'cat.files.col.entriesHelp') + th('cat.files.col.found', 'cat.files.col.foundHelp') + th('cat.files.col.hash', 'cat.files.col.hashHelp') + th('cat.files.col.lastmod') +
+        th('cat.files.col.size') + th('cat.files.col.time') + th('cat.files.col.checked') + th('cat.files.col.changed', 'cat.files.col.changedHelp') + '<th></th></tr></thead><tbody>' +
+      list.slice(0, 1000).map(function (x) {
+        var note = x.status === 'skipped' ? t('cat.files.note.lastmod', { lastmod: x.lastmod || '' }) : x.status === 'unchanged' ? t('cat.files.note.unchanged')
+          : x.status === 'refused' && x.note === 'bot' ? t('cat.files.note.bot') : x.status === 'failed' && x.note && x.note !== 'http' ? x.note : x.status === 'known' ? t('cat.files.note.known') : '';
+        return '<tr' + (x.url === st.view ? ' class="is-current"' : '') + '><td class="sf-url"><a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(x.url) + '">' + esc(short(x.url)) + '</a>' +
+            (x.parent ? '<div class="small muted">' + esc(t('cat.files.from', { parent: parentLabel(x.parent) })) + '</div>' : (x.from && x.from.length ? '<div class="small muted">' + esc(x.from.map(function (k) { return t(k === 'settings' ? 'cat.files.fromSettings' : 'cat.files.fromDetect'); }).join(', ')) + '</div>' : '')) +
+            (note ? '<div class="small muted">' + esc(note) + '</div>' : '') + '</td>' +
+          '<td class="small">' + esc(x.kind ? t('cat.files.kind.' + x.kind) : '—') + '</td>' +
+          '<td><span class="badge sf-status sf-' + esc(x.status) + (SM_BAD[x.status] ? ' badge--danger' : x.status === 'read' ? ' badge--success' : '') + '" title="' + esc(t('cat.files.statusHelp.' + x.status)) + '">' + esc(t('cat.files.status.' + x.status)) + '</span></td>' +
+          '<td class="small">' + esc(x.http != null ? x.http : '') + '</td><td class="small">' + esc(x.items != null ? x.items : '') + '</td><td class="small">' + esc(x.found != null ? x.found : '') + '</td>' +
+          '<td class="small mono" title="' + esc(x.hash || '') + '">' + esc(x.hash ? x.hash.slice(0, 10) + '…' : '') + '</td><td class="small">' + esc(x.lastmod || '') + '</td>' +
+          '<td class="small">' + esc(x.bytes != null ? fmtSize(x.bytes) : '') + '</td><td class="small">' + esc(fmtMs(x.ms)) + '</td>' +
+          '<td class="small">' + esc(x.checkedAt ? A().fmtDate(x.checkedAt) : '') + '</td><td class="small">' + esc(x.changedAt ? A().fmtDate(x.changedAt) : '') + '</td>' +
+          '<td><button type="button" class="icon-btn" data-lib="cat-file-open" data-id="' + esc(x.url) + '" title="' + esc(t('cat.files.viewHelp')) + '" aria-label="' + esc(t('cat.files.view')) + '">' + icon('description') + '</button></td></tr>';
+      }).join('') + '</tbody></table></div>' + (list.length > 1000 ? '<p class="muted small">' + esc(t('cat.files.firstOnly', { count: 1000 })) + '</p>' : '');
+  }
   function catalogFiles() {
     var st = catFilesState();
     var head = catalogTabs('files') + '<p class="page-lead">' + esc(t('cat.files.intro')) + '</p>';
@@ -2856,23 +2911,35 @@
     if (!st.sources) return head + spinner;
     if (!st.sources.length) return head + emptyState('dataset', t('cat.noSourcesTitle'), t('cat.files.noSources'));
     var d = st.data;
+    var opt = function (v, label, cur) { return '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(label) + '</option>'; };
     var picker = '<div class="toolbar"><div class="toolbar__group"><select class="select select--compact" id="cat-files-source" aria-label="' + esc(t('cat.filterSource')) + '">' +
-      st.sources.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === st.source ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') + '</select></div></div>';
+      st.sources.map(function (x) { return opt(x.id, x.name, st.source); }).join('') + '</select></div>' +
+      (d ? '<div class="toolbar__group">' +
+        '<button type="button" class="btn btn--primary btn--small" data-lib="cat-files-crawl" data-mode="update"' + (d.crawling ? ' disabled' : '') + ' title="' + esc(t('cat.files.crawlHelp')) + '">' + icon('sync') + esc(t('cat.update')) + '</button>' +
+        '<button type="button" class="btn btn--outline btn--small" data-lib="cat-files-crawl" data-mode="full"' + (d.crawling ? ' disabled' : '') + ' title="' + esc(t('cat.files.fullHelp')) + '">' + esc(t('cat.fullCrawl')) + '</button></div>' : '') + '</div>';
     if (!d) return head + picker + spinner;
-    var files = '<section class="card card--wide"><h2 class="card__title">' + esc(t('cat.files.title', { name: d.name })) + '</h2>' +
-      '<ul class="sitefile__list"><li>' + siteFileLink(d.robots, 'robots.txt') + '</li>' +
-      d.sitemaps.map(function (s) {
-        return '<li>' + siteFileLink(s.loc) + ' <span class="muted small">' + esc(s.from.map(function (x) { return t(FILE_FROM[x]); }).join(', ') +
-          (s.works != null ? ' · ' + t('cat.files.worksListed', { count: s.works }) : '') + (s.hash ? ' · ' + t('cat.files.hash', { hash: s.hash.slice(0, 12) }) : '') + (s.lastmod ? ' · ' + s.lastmod : '')) + '</span></li>';
-      }).join('') + '</ul>' +
-      (d.sitemaps.length ? '' : '<p class="muted small">' + esc(t('cat.files.noSitemaps')) + '</p>') +
-      (d.crawledAt ? '<p class="muted small">' + esc(t('cat.files.crawledAt', { time: A().fmtDate(d.crawledAt) })) + '</p>' : '') + '</section>';
-    return head + picker + '<div class="cards cards--stack">' + files + siteFileView(st) + '</div>';
+    var sm = d.summary;
+    var summary = '<section class="card card--wide sf-summary">' + '<p>' + siteFilesMethod(d) + '</p>' +
+      '<p class="small muted">' + esc([d.crawling ? t('cat.files.crawlingNow') : d.lastCrawlAt ? t('cat.files.lastCrawl', { time: A().fmtDate(d.lastCrawlAt) }) : t('cat.srcNever'),
+        d.lastCompleteAt ? t('cat.files.lastComplete', { time: A().fmtDate(d.lastCompleteAt) }) : '',
+        t('cat.files.counts', { count: sm.sitemaps, read: sm.read, unchanged: sm.unchanged, skipped: sm.skipped }), sm.known ? t('cat.files.countKnown', { count: sm.known }) : '',
+        sm.works || sm.chapters ? t('cat.files.countFound', { works: sm.works, chapters: sm.chapters }) : '', t('cat.files.kept', { count: d.keptHashes })].filter(Boolean).join(' · ')) +
+        (sm.problems ? ' · <strong class="text-danger">' + esc(t('cat.files.problems', { count: sm.problems })) + '</strong>' : '') + '</p></section>';
+    var robots = '<section class="card card--wide"><h2 class="card__title">robots.txt</h2>' + siteFilesRobots(d) + '</section>';
+    var filters = '<div class="toolbar sf-filters"><label class="search-field">' + icon('search') + '<input type="search" id="sf-q" placeholder="' + esc(t('cat.files.filterAddresses')) + '" value="' + esc(st.dq.q) + '" /></label>' +
+      '<select class="select select--compact" id="sf-kind" aria-label="' + esc(t('cat.files.col.kind')) + '">' + opt('', t('cat.files.anyKind'), st.dq.kind) + ['index', 'works', 'chapters'].map(function (k) { return opt(k, t('cat.files.kind.' + k), st.dq.kind); }).join('') + '</select>' +
+      '<select class="select select--compact" id="sf-status" aria-label="' + esc(t('cat.files.col.status')) + '">' + opt('', t('cat.files.anyStatus'), st.dq.status) + SM_STATUS.map(function (k) { return opt(k, t('cat.files.status.' + k), st.dq.status); }).join('') + '</select></div>';
+    var sitemaps = '<section class="card card--wide"><h2 class="card__title">' + esc(t('cat.files.sitemapsTitle', { count: d.sitemaps.length })) + '</h2>' + filters + '<div id="sf-table">' + siteFilesTable(d, st) + '</div></section>';
+    return head + picker + '<div class="cards cards--stack">' + summary + robots + sitemaps + siteFileView(st) + '</div>';
   }
   function catalogFilesMount(el) {
     var st = catFilesState();
     var sel = $('#cat-files-source', el);
     if (sel) sel.addEventListener('change', function () { st.source = sel.value; st.data = null; st.view = null; st.file = null; loadCatFiles(); });
+    // (the table alone is drawn again while typing, so the field keeps its focus)
+    var redrawTable = function () { var box = $('#sf-table', el); if (box && st.data) { box.innerHTML = siteFilesTable(st.data, st); renderIcons(box); } };
+    var sq = $('#sf-q', el); if (sq) sq.addEventListener('input', function () { st.dq.q = sq.value.trim(); redrawTable(); });
+    [['#sf-kind', 'kind'], ['#sf-status', 'status']].forEach(function (x) { var e2 = $(x[0], el); if (e2) e2.addEventListener('change', function () { st.dq[x[1]] = e2.value; redrawTable(); }); });
     var q = $('#sitefile-q', el);
     if (q) q.addEventListener('input', function () {
       st.q = q.value;
@@ -4211,6 +4278,12 @@
         if (!confirm(t('logs.deleteConfirm'))) return;
         return api('DELETE', '/api/logs/' + encodeURIComponent(id)).then(function () { logsPage.enter(A().parseRoute()); }, fail);
       case 'cat-ch-tab': { var cw = catWorkState(btn.dataset.work); if (cw) { cw.tab = id; A().renderPage(); } return; }
+      case 'cat-files-crawl': {
+        var fsx = catFilesState();
+        btn.disabled = true;
+        return api('POST', '/api/catalog/sources/' + encodeURIComponent(fsx.source) + '/crawl', { mode: btn.dataset.mode === 'full' ? 'full' : 'update' })
+          .then(function () { A().toast(t(btn.dataset.mode === 'full' ? 'cat.files.fullStarted' : 'cat.files.crawlStarted')); catSourcesState().data = null; return loadCatFiles(); }, fail);
+      }
       case 'cat-file-open': catFilesState().raw = false; return openSiteFile(id);
       case 'cat-file-raw': catFilesState().raw = true; return A().renderPage();
       case 'cat-cleanup-save': {

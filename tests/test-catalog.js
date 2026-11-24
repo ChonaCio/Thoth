@@ -246,7 +246,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   await call('POST', `/api/catalog/sources/${tsrc.id}/crawl`, { mode: 'full' });
   let tc = await crawled(tsrc.id);
   const chOf = async () => (await call('GET', `/api/catalog/work?key=${encodeURIComponent((await call('GET', `/api/catalog?source=${tsrc.id}`)).data.items[0].key)}`)).data.work.sources[0].chapterList.length;
-  ok(tc.works === 1 && await chOf() === 0, 'without the click, a crawl finds no chapters on that site');
+  const ch0 = await chOf();
+  ok(tc.works === 1 && ch0 === 0, `without the click, a crawl finds no chapters on that site (${tc.works} work(s), ${ch0} chapter(s))`);
   await call('PATCH', `/api/catalog/sources/${tsrc.id}`, { actions: { chapters: [{ selector: 'button.ch-tab', mode: 'add' }] } });
   await call('POST', `/api/catalog/sources/${tsrc.id}/crawl`, { mode: 'update' });
   tc = await crawled(tsrc.id);
@@ -356,6 +357,14 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const autoDone = await crawled(autoSrc.id);
   const autoNow = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === autoSrc.id);
   ok(autoDone.works === 4 && autoNow.sitemaps.includes(SITE + '/wp-sitemap.xml'), `the crawl looked for every sitemap again: the new one was found and read (${autoDone.works} works; sitemaps: ${autoNow.sitemaps.map(s => s.replace(SITE, '')).join(', ')})`);
+  // What the crawl read, for the Site files tab: the robots.txt and every sitemap with what happened to it
+  const rec = (await call('GET', `/api/catalog/sources/${autoSrc.id}/files`)).data;
+  const rRobots = rec.robotsFiles.find(r => r.origin === SITE);
+  const rIndex = rec.sitemaps.find(x => x.url === SITE + '/sitemap_index.xml'), rWorks = rec.sitemaps.find(x => x.kind === 'works' && x.found > 0);
+  ok(rRobots && rRobots.status === 'found' && rRobots.http === 200 && rRobots.rules > 0 && /Disallow/.test(rRobots.body) && rRobots.sitemaps.includes(SITE + '/sitemap_index.xml'),
+    'site files: the robots.txt the crawl read (HTTP, rules, the sitemaps it names, its text)');
+  ok(rIndex && rIndex.kind === 'index' && rIndex.status === 'read' && rIndex.items === 2 && rIndex.hash && rIndex.readAt && rWorks && rWorks.parent && rWorks.http === 200 && rWorks.bytes > 0 && rec.summary.read >= 3 && rec.method.kind === 'sitemap',
+    `site files: every sitemap with its kind, status, HTTP, entries, works found, parent, hash (${rec.summary.read} read, ${rec.summary.works} works)`);
   // Updates read only what changed in the sitemaps (their content hashes are kept)
   await call('POST', `/api/catalog/sources/${autoSrc.id}/crawl`, { mode: 'update' });
   const same = await crawled(autoSrc.id);

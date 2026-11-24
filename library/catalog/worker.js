@@ -125,7 +125,32 @@ async function crawl(msg, send) {
   if (settingsChanged) say('the reading settings changed since the last crawl: every work is read again');
   say(`listing the works (${src.listing === 'sitemap' ? 'from ' + ((src.sitemaps || []).length || 1) + ' sitemap(s)' : 'from the list pages'}${incremental ? ', recent changes only' : ''})`);
   let lastFlush = Date.now();
-  const flush = () => { store.writeWorks(dir, { sourceId: src.id, works }); chapters.flush(); lastFlush = Date.now(); send({ type: 'flushed', reqId: msg.reqId }); };
+  const flush = () => { store.writeWorks(dir, { sourceId: src.id, works }); chapters.flush(); saveDiscovery(); lastFlush = Date.now(); send({ type: 'flushed', reqId: msg.reqId }); };
+  // What this crawl read (the Site files tab): every sitemap with what happened to it, and the robots.txt —
+  // merged into discovery.json (when each was last checked, read, and seen changed)
+  const saveDiscovery = () => {
+    try {
+      const file = require('path').join(dir, 'discovery.json');
+      let prev = {}; try { prev = JSON.parse(require('fs').readFileSync(file, 'utf8')); } catch { /* first crawl */ }
+      const now = new Date().toISOString();
+      const sitemaps = Object.assign({}, prev.sitemaps || {});
+      for (const [url, r] of Object.entries(ctx.discovery || {})) {
+        const old = sitemaps[url] || {};
+        const rec = Object.assign({}, old, r, { checkedAt: r.at || now });
+        delete rec.at; delete rec.read; delete rec.changed; delete rec.firstRead;
+        if (r.read) rec.readAt = rec.checkedAt;
+        if (r.hash && (!old.hash || old.hash !== r.hash)) rec.changedAt = rec.checkedAt;
+        sitemaps[url] = rec;
+      }
+      let origin = null; try { origin = new URL(src.siteUrl || src.baseUrl).origin; } catch { /* no address */ }
+      const robots = Object.assign({}, prev.robots || {});
+      for (const o of new Set([origin, (() => { try { return new URL(src.baseUrl).origin; } catch { return null; } })()].filter(Boolean))) { const info = fetcher.robotsInfo(o); if (info) robots[o] = info; }
+      // (a sitemap no index listed: named by robots.txt, or by the source's settings / detection)
+      const declared = new Set(Object.values(robots).flatMap(r => r.sitemaps || []));
+      for (const r of Object.values(sitemaps)) if (!r.parent) r.parent = declared.has(r.url) ? 'robots.txt' : 'settings';
+      require('fs').writeFileSync(file, JSON.stringify({ at: now, mode, sitemaps, robots }));
+    } catch (e) { say('could not save what the crawl read: ' + e.message); }
+  };
   const ctx = { src, get: (u, o) => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.get(u, o); }, incremental,
     // (list and work pages, built in a browser when the source asks: sites that build their pages with scripts)
     page: src.render ? u => { if (run.stop) throw Object.assign(new Error('Stopped'), { code: 'stopped' }); return fetcher.render(u, { waitMs: src.renderWaitMs }); } : null,

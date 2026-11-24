@@ -14,37 +14,118 @@ function parseSitemap(text) {
   return out;
 }
 const hashOf = text => crypto.createHash('sha1').update(String(text)).digest('hex');
+// Content fingerprint: the XML without comments (generators stamp the time they ran in one) and with whitespace
+// collapsed — the same hash means the same addresses and dates as last time
+const contentHash = text => hashOf(String(text).replace(/<!--[\s\S]*?-->/g, '').replace(/\s+/g, ' ').trim());
 async function readSitemap(get, url) {
+  const t0 = Date.now();
   const res = await get(url, { accept: 'application/xml,text/xml;q=0.9,*/*;q=0.5' });
   let text = res.text;
   if (res.buf && res.buf[0] === 0x1f && res.buf[1] === 0x8b) text = zlib.gunzipSync(res.buf).toString('utf8'); // .xml.gz
-  return Object.assign(parseSitemap(text), { hash: hashOf(text) });
+  const isSitemap = /<(?:\w+:)?(urlset|sitemapindex)[\s>]/i.test(text);
+  return Object.assign(parseSitemap(text), { hash: contentHash(text), http: res.status || 200, ms: Date.now() - t0, bytes: Buffer.byteLength(text), isSitemap });
 }
+// A sitemap file's kind: an index (of other sitemaps), a chapter sitemap, or a list of works (or other pages)
+const CHAPTER_FILE = /chapter|episode|capitulo/i;
+const kindOf = (url, sm) => (sm && sm.sitemaps.length && !sm.urls.length ? 'index' : CHAPTER_FILE.test(String(url).replace(/^https?:\/\/[^/]+/, '')) ? 'chapters' : 'works');
 // Every URL listed, following sitemap indexes (at most maxFiles files): { file, urls, hash (of its content),
-// lastmod (its date in the index that named it) }. skip(url, lastmod): true = don't read that file at all.
-async function* walk(get, roots, { maxFiles = 2000, filter, skip } = {}) {
-  const todo = roots.map(loc => ({ loc, lastmod: null })), seen = new Set();
-  let files = 0;
-  while (todo.length && files < maxFiles) {
-    const { loc: url, lastmod } = todo.shift();
+// lastmod (its date in the index that named it), parent }. skip(url, lastmod): true = don't read that file at all.
+// onFile(record): what happened to each sitemap (for the Site files tab): { url, parent, kind, status ('read',
+// 'skipped', 'failed', 'refused', 'not-sitemap', 'disallowed'), note, http, items, hash, lastmod, bytes, ms }
+// (a file that was read is reported again by the caller with 'found' and 'unchanged' when it knows them).
+// Chapter sitemaps come after the others (order), so a limit on files keeps the lists of works.
+async function* walk(get, roots, { maxFiles = 2000, filter, skip, onFile, maxChapterFiles = Infinity } = {}) {
+  const todo = roots.map(loc => ({ loc, lastmod: null, parent: null })), later = [], seen = new Set();
+  let files = 0, chapterFiles = 0;
+  const parents = new Map(); // a sitemap → the index that lists it (also when it was given as a starting point too)
+  const rec = r => { if (!r.parent && parents.has(r.url)) r.parent = parents.get(r.url); if (onFile) try { onFile(r); } catch { /* informative only */ } };
+  while ((todo.length || later.length) && files < maxFiles) {
+    const next = todo.length ? todo.shift() : later.shift();
+    const { loc: url, lastmod, parent } = next;
     if (seen.has(url)) continue;
     seen.add(url);
-    if (skip && skip(url, lastmod)) continue;
-    files++;
+    const isChapterFile = CHAPTER_FILE.test(String(url).replace(/^https?:\/\/[^/]+/, ''));
+    if (isChapterFile && chapterFiles >= maxChapterFiles) continue;
+    if (skip && skip(url, lastmod)) { rec({ url, parent, kind: isChapterFile ? 'chapters' : 'works', status: 'skipped', lastmod, note: 'lastmod' }); continue; }
+    files++; if (isChapterFile) chapterFiles++;
     let sm;
-    try { sm = await readSitemap(get, url); } catch (e) { if (e.code === 'blocked' || e.code === 'stopped') throw e; continue; }
-    for (const s of sm.sitemaps) if (!filter || filter(s.loc)) todo.push(s);
-    if (sm.urls.length) yield { file: url, urls: sm.urls, hash: sm.hash, lastmod };
+    try { sm = await readSitemap(get, url); } catch (e) {
+      if (e.code === 'blocked') { rec({ url, parent, status: 'refused', note: 'bot', lastmod }); throw e; }
+      if (e.code === 'stopped') throw e;
+      rec({ url, parent, lastmod, http: e.status || null, status: e.code === 'robots' ? 'disallowed' : e.code === 'http' && [401, 403, 429].includes(e.status) ? 'refused' : 'failed', note: e.code === 'http' ? 'http' : String(e.message || e).slice(0, 160) });
+      continue;
+    }
+    const kind = kindOf(url, sm);
+    if (!sm.isSitemap) { rec({ url, parent, lastmod, http: sm.http, ms: sm.ms, bytes: sm.bytes, status: 'not-sitemap' }); continue; }
+    rec({ url, parent, kind, lastmod, http: sm.http, ms: sm.ms, bytes: sm.bytes, hash: sm.hash, items: kind === 'index' ? sm.sitemaps.length : sm.urls.length, status: 'read', read: true });
+    for (const s of sm.sitemaps) {
+      if (!parents.has(s.loc)) parents.set(s.loc, url);
+      if (filter && !filter(s.loc)) continue;
+      const child = Object.assign({}, s, { parent: url });
+      (CHAPTER_FILE.test(String(s.loc).replace(/^https?:\/\/[^/]+/, '')) ? later : todo).push(child);
+    }
+    if (sm.urls.length) yield { file: url, urls: sm.urls, hash: sm.hash, lastmod, parent, kind };
   }
 }
 
 /* ---------------- address patterns ---------------- */
-// "/manga/*/" → a RegExp for paths: * = one path segment, ** = anything
+// "/manga/*/" → a RegExp for paths: * = one path segment, ** = anything. Several patterns separated by spaces or
+// commas ("/manga/*/ /manhwa/*/") match any of them.
 function patternRegex(pattern) {
   if (!pattern) return null;
-  const p = String(pattern).trim().replace(/\/+$/, '');
-  const re = p.split('/').map(seg => (seg === '**' ? '.*' : seg.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]+'))).join('/');
-  return new RegExp('^' + re + '/?$', 'i');
+  const one = p => p.trim().replace(/\/+$/, '').split('/').map(seg => (seg === '**' ? '.*' : seg.split('*').map(x => x.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('[^/]+'))).join('/');
+  const parts = String(pattern).split(/[\s,]+/).filter(Boolean);
+  if (!parts.length) return null;
+  return new RegExp('^(?:' + parts.map(one).join('|') + ')/?$', 'i');
+}
+// Folio's shape of a work's address: a work word, then the work's own segment (/manga/one-piece/, /series/x).
+// Not a chapter, and not a generic word that every work shares (/series/view.php)
+const DEFAULT_WORK_RE = /^\/(manga|series|serie|comic|comics|manhwa|manhua|webtoon|webtoons|title|titles|novel|novels|read|work|works|obra|obras|mangas)\/([^/]+)\/?$/i;
+const GENERIC_SLUG = /^(?:series|manga|manhwa|manhua|comics?|webtoons?|titles?|works?|books?|view|details?|info|read|gallery|g|story|novel|item|post|index|list|page|all|latest|popular|genres?|tags?)$/i;
+// Pages that list works rather than being one, whatever the pattern
+const LISTING_SLUG = /^(?:page|pages|list|lists|all|latest|popular|new|newest|genres?|tags?|categor(?:y|ies)|search|index|feed|rss|sitemap|az|a-z|browse|directory|random|trending|ranking)$/i;
+// "chapter-12", "chapter-12.5", "chapter-12-5" (= 12.5), "ep-3", "12" — the last segment of a chapter's address
+const CHAPTER_SEGMENT = /^(?:(?:chapter|chap|ch|episode|ep|capitulo|cap)[-_.]?\d+(?:[.-]\d+)?(?:[-_.].*)?|\d+(?:\.\d+)?)$/i;
+const isChapterSegment = seg => CHAPTER_SEGMENT.test(seg) || /chapter|episode|capitulo/i.test(seg);
+// Is this path a work's page? The source's own patterns, plus Folio's default shape for sources set up
+// automatically (or with no pattern at all)
+function workMatcher(src) {
+  const own = patternRegex(src.workPattern);
+  const useDefault = !own || src.autoDetect === true;
+  return p => {
+    const last = p.split('/').filter(Boolean).pop() || '';
+    if (LISTING_SLUG.test(last)) return false; // (/manga/page, /series/list: a list, not a work)
+    if (own && own.test(p)) return true;
+    if (!useDefault) return false;
+    const m = DEFAULT_WORK_RE.exec(p);
+    return Boolean(m && !GENERIC_SLUG.test(m[2]) && !isChapterSegment(m[2]));
+  };
+}
+// From a site's sitemap addresses, Folio's way: the work words its works' addresses start with (/manga/, /series/…,
+// each counted), as patterns ("/manga/*/ /manhwa/*/"); the chapters one level under them. null when no address
+// has that shape (inferPatterns then guesses from the most common shapes)
+function defaultPatterns(urls) {
+  const byWord = new Map(), works = new Set();
+  for (const u of urls) {
+    const p = pathOf(u); const m = DEFAULT_WORK_RE.exec(p);
+    if (m && !GENERIC_SLUG.test(m[2]) && !isChapterSegment(m[2])) { const w = m[1].toLowerCase(); byWord.set(w, (byWord.get(w) || 0) + 1); works.add(p.replace(/\/+$/, '')); }
+  }
+  const words = [...byWord].filter(([, n]) => n >= 2).sort((a, b) => b[1] - a[1]);
+  if (!words.length) return null;
+  const slash = urls.some(u => { const p = pathOf(u); return DEFAULT_WORK_RE.test(p) && p.endsWith('/'); }) ? '/' : '';
+  const workPattern = words.map(([w]) => `/${w}/*${slash}`).join(' ');
+  // Chapters: addresses under a work whose last segment is a chapter's
+  let chapters = 0; const chapterShapes = new Map();
+  for (const u of urls) {
+    const segs = pathOf(u).split('/').filter(Boolean);
+    if (segs.length < 3 || !isChapterSegment(segs[segs.length - 1])) continue;
+    if (!works.has('/' + segs.slice(0, 2).join('/')) && !byWord.has(segs[0].toLowerCase())) continue;
+    chapters++;
+    const shape = `/${segs[0].toLowerCase()}/${segs.slice(1).map(() => '*').join('/')}/`;
+    chapterShapes.set(shape, (chapterShapes.get(shape) || 0) + 1);
+  }
+  const chapterPattern = [...chapterShapes].sort((a, b) => b[1] - a[1]).filter(([, n]) => n >= 2).map(([t]) => t).join(' ');
+  return { workPattern, works: works.size, chapterPattern: chapterPattern || null, chapters, words: words.map(([w, n]) => ({ word: w, count: n })) };
 }
 const pathOf = url => { try { return decodeURI(new URL(url).pathname); } catch { return ''; } };
 const WORK_WORDS = /^(manga|manhwa|manhua|comic|comics|series|serie|title|titles|webtoon|webtoons|novel|novels|read|book|books|obra|obras|manga-list|mangas)$/i;
@@ -108,8 +189,9 @@ const titleFromSlug = url => { const seg = pathOf(url).split('/').filter(Boolean
 // A work listed only through its chapters is read when it's known already (ctx.knownSids) or was listed before.
 async function* sitemapWorks(ctx) {
   const { src, get } = ctx;
-  const re = patternRegex(src.workPattern);
-  if (!re) throw Object.assign(new Error('No address pattern for the works'), { code: 'config' });
+  const isWork = workMatcher(src);
+  const re = { test: isWork };
+  if (!src.workPattern && src.autoDetect !== true && !ctx.defaultWorks) throw Object.assign(new Error('No address pattern for the works'), { code: 'config' });
   const chRe = patternRegex(src.chapterPattern);
   const since = ctx.incremental && src.lastCrawlAt ? Date.parse(src.lastCrawlAt) - 86400000 : 0;
   const roots = (src.sitemaps && src.sitemaps.length ? src.sitemaps : [new URL('/sitemap.xml', src.baseUrl).href]);
@@ -122,7 +204,7 @@ async function* sitemapWorks(ctx) {
   const chapters = ctx.sitemapChapters = new Map();
   const known = ctx.knownSids || new Set();
   // A chapter's address: by the chapter pattern when there is one, else anything under a work that looks like a chapter
-  const isChapter = p => (chRe ? chRe.test(p) : /chap|episode|(^|[_-])(ch|ep)[-_.]?\d|^\d+(\.\d+)?$/i.test(p.split('/').filter(Boolean).pop() || ''));
+  const isChapter = p => (chRe && chRe.test(p)) || isChapterSegment(p.split('/').filter(Boolean).pop() || '');
   const prev = ctx.sitemapState && ctx.sitemapState.files ? ctx.sitemapState : null;
   const delta = Boolean(ctx.incremental && prev);
   const next = ctx.sitemapNext = { at: new Date().toISOString(), files: {} };
@@ -134,9 +216,12 @@ async function* sitemapWorks(ctx) {
   } : null;
   // The work a chapter address belongs to: the longest start of its path that is a work's address
   const workOf = p => { const segs = p.split('/').filter(Boolean); for (let k = segs.length - 1; k > 0; k--) { const c = '/' + segs.slice(0, k).join('/'); if (re.test(c)) return c; } return null; };
-  const slash = /\/$/.test(src.workPattern) ? '/' : '';
+  const slash = /\/(\s|$)/.test(src.workPattern || '') ? '/' : '';
   const seen = new Set();
-  for await (const { file, urls, hash, lastmod } of walk(get, roots, { filter, skip })) {
+  // What happened to each sitemap (the Site files tab): ctx.discovery = { url: record }
+  const log = ctx.discovery = ctx.discovery || {};
+  const onFile = r => { log[r.url] = Object.assign(log[r.url] || {}, r, { at: new Date().toISOString() }); };
+  for await (const { file, urls, hash, lastmod } of walk(get, roots, { filter, skip, onFile })) {
     counts.files++;
     const entries = new Map(); // sid → { url, lastmod, parts }
     const entry = sid => { if (!entries.has(sid)) entries.set(sid, { url: null, lastmod: null, parts: [] }); return entries.get(sid); };
@@ -155,7 +240,10 @@ async function* sitemapWorks(ctx) {
     for (const [sid, e] of entries) works[sid] = hashOf(e.parts.sort().join('\n')).slice(0, 16);
     next.files[file] = { hash, lastmod: lastmod || null, works };
     const old = prev && prev.files[file];
-    if (delta && old && old.hash === hash) { counts.unchanged++; continue; }
+    const nWorks = [...entries.values()].filter(e => e.url).length;
+    const kind = /chapter|episode|capitulo/i.test(file.replace(/^https?:\/\/[^/]+/, '')) || (!nWorks && entries.size) ? 'chapters' : 'works';
+    Object.assign(log[file] || (log[file] = {}), { kind, found: kind === 'chapters' ? urls.length - nWorks : nWorks, changed: !(old && old.hash === hash), firstRead: !old });
+    if (delta && old && old.hash === hash) { counts.unchanged++; log[file].status = 'unchanged'; continue; }
     const page = [];
     for (const [sid, e] of entries) {
       // (a work seen only through its chapters is read only when it was listed before)
@@ -170,4 +258,4 @@ async function* sitemapWorks(ctx) {
   }
 }
 
-module.exports = { parseSitemap, readSitemap, walk, patternRegex, inferPatterns, templateOf, titleFromSlug, sitemapWorks, pathOf };
+module.exports = { parseSitemap, readSitemap, walk, patternRegex, inferPatterns, defaultPatterns, workMatcher, isChapterSegment, DEFAULT_WORK_RE, templateOf, titleFromSlug, sitemapWorks, pathOf, contentHash };

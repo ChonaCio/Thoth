@@ -130,7 +130,7 @@ function parseSource(body, current) {
   // Found by "Detect" (or set by hand): list the works from the sitemaps, by the address pattern of work pages
   if ('listing' in b) s.listing = b.listing === 'sitemap' ? 'sitemap' : 'pages';
   if ('sitemaps' in b) s.sitemaps = (Array.isArray(b.sitemaps) ? b.sitemaps : String(b.sitemaps || '').split(/\s+/)).map(x => String(x).trim()).filter(u => publicUrl(u, ALLOW_LOCAL)).slice(0, 20);
-  if ('workPattern' in b) s.workPattern = String(b.workPattern || '').trim().slice(0, 200);
+  if ('workPattern' in b) s.workPattern = String(b.workPattern || '').trim().replace(/\s*,\s*|\s+/g, ' ').slice(0, 400);
   if ('chapterPattern' in b) s.chapterPattern = String(b.chapterPattern || '').trim().slice(0, 200);
   if ('iconUrl' in b) s.iconUrl = publicUrl(String(b.iconUrl || ''), ALLOW_LOCAL) ? String(b.iconUrl) : null;
   if (s.listing === 'sitemap' && !s.workPattern) throw err(400, 'workPatternRequired');
@@ -420,21 +420,40 @@ function siteFiles(id) {
   if (!s) throw err(404, 'notFound');
   const origin = new URL(s.siteUrl || s.baseUrl).origin;
   const state = cstore.readSitemapState(sourceDir(id)) || { files: {} };
+  const st = cstore.readState(sourceDir(id));
+  let disc = {}; try { disc = JSON.parse(fs.readFileSync(path.join(sourceDir(id), 'discovery.json'), 'utf8')); } catch { /* not crawled since */ }
   const found = (s.detected && s.detected.found && s.detected.found.sitemaps) || [];
-  const all = new Map();
-  const add = (loc, from) => { if (!loc) return; const e = all.get(loc) || { loc, from: [] }; if (!e.from.includes(from)) e.from.push(from); all.set(loc, e); };
+  // Every sitemap: what the crawls recorded about it, and the ones the settings or detection name that no crawl
+  // read yet (status 'known')
+  const all = new Map(Object.entries(disc.sitemaps || {}).map(([url, r]) => [url, Object.assign({ url }, r)]));
+  const from = new Map();
+  const add = (loc, why) => { if (!loc) return; if (!from.has(loc)) from.set(loc, []); if (!from.get(loc).includes(why)) from.get(loc).push(why); if (!all.has(loc)) all.set(loc, { url: loc, status: 'known' }); };
   (s.sitemaps || []).forEach(u => add(u, 'settings'));
   found.forEach(u => add(typeof u === 'string' ? u : u.loc || u.url, 'detected'));
-  Object.keys(state.files || {}).forEach(u => add(u, 'crawl'));
-  const sitemaps = [...all.values()].map(e => { const f = (state.files || {})[e.loc]; return Object.assign(e, f ? { hash: f.hash || null, lastmod: f.lastmod || null, works: Object.keys(f.works || {}).length } : {}); });
-  return { id, name: s.name, origin, robots: origin + '/robots.txt', sitemaps, crawledAt: state.at || null };
+  const KIND = { index: 0, works: 1, chapters: 2 };
+  const sitemaps = [...all.values()].map(r => Object.assign(r, { from: from.get(r.url) || [], kept: Boolean(state.files && state.files[r.url]) }))
+    .sort((a, b) => (KIND[a.kind] != null ? KIND[a.kind] : 3) - (KIND[b.kind] != null ? KIND[b.kind] : 3) || a.url.localeCompare(b.url));
+  const count = x => sitemaps.filter(r => r.status === x).length;
+  const robots = Object.values(disc.robots || {});
+  if (!robots.some(r => r.origin === origin)) robots.unshift({ origin, status: 'unknown' });
+  // How the source finds its works
+  const method = s.type === 'mangadex' || s.type === 'webtoons' ? { kind: 'api', label: s.type === 'mangadex' ? 'MangaDex' : 'WEBTOON' }
+    : s.listing === 'sitemap' ? { kind: 'sitemap', pattern: s.workPattern || '', chapterPattern: s.chapterPattern || '' }
+    : { kind: 'pages', listUrl: (s.selectors && s.selectors.listUrl) || (s.listPath ? '/' + s.listPath + '/' : '') };
+  return { id, name: s.name, origin, robots: origin + '/robots.txt', robotsFiles: robots, sitemaps, method, autoDetect: s.autoDetect === true,
+    lastCrawlAt: st.lastCrawlAt || null, lastCompleteAt: st.lastCompleteAt || null, recordedAt: disc.at || null, recordedMode: disc.mode || null,
+    crawling: Boolean(liveCrawl(id)), keptHashes: Object.keys(state.files || {}).length,
+    summary: { sitemaps: sitemaps.length, read: count('read'), unchanged: count('unchanged'), skipped: count('skipped'), known: count('known'),
+      problems: sitemaps.filter(r => ['failed', 'refused', 'not-sitemap', 'disallowed'].includes(r.status)).length,
+      works: sitemaps.reduce((n, r) => n + (r.kind === 'works' && r.found ? r.found : 0), 0), chapters: sitemaps.reduce((n, r) => n + (r.kind === 'chapters' && r.found ? r.found : 0), 0) },
+    crawledAt: state.at || null };
 }
 // Reads one of them now (only addresses of the source's own site, or sitemaps it knows)
 function readSiteFile(id, url) {
   const files = siteFiles(id);
   let u; try { u = new URL(String(url || '')); } catch { throw err(400, 'invalidUrl'); }
   const hosts = new Set([new URL(files.origin).host, new URL(db.catalogSources[id].baseUrl).host]);
-  if (!publicUrl(u.href, ALLOW_LOCAL) || (!hosts.has(u.host) && !files.sitemaps.some(x => x.loc === u.href))) throw err(400, 'invalidUrl');
+  if (!publicUrl(u.href, ALLOW_LOCAL) || (!hosts.has(u.host) && !files.sitemaps.some(x => x.url === u.href))) throw err(400, 'invalidUrl');
   return ask({ type: 'siteFile', url: u.href, allowLocal: ALLOW_LOCAL });
 }
 // A page of a site, made inert, for the source wizard's element picker (any public page: administrators only)

@@ -1104,3 +1104,19 @@ body.is-reading { overflow: hidden; }
 .cat-correction { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .wz-templates .wz-actions { flex-wrap: wrap; }
 .wz-templates select { max-width: 100%; min-width: 0; flex: 1 1 100%; }
+/* Site files tab */
+.sf-table td, .sf-table th { vertical-align: top; white-space: nowrap; }
+.sf-table .sf-url { white-space: normal; max-width: 340px; word-break: break-all; }
+.sf-table tr.is-current { background: var(--surface-2); }
+.sf-robots + .sf-robots { border-top: 1px solid var(--border); margin-top: 8px; padding-top: 8px; }
+.sf-robots p { margin: 2px 0; }
+.sf-filters { margin: 0 0 8px; }
+.text-danger { color: var(--danger, #d93025); }
+.mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.sf-table-wrap { overflow-x: auto; max-width: 100%; }
+.sf-table .sf-url { min-width: 240px; }
+.sf-filters { flex-wrap: wrap; gap: 8px; }
+.cards--stack > .card { min-width: 0; max-width: 100%; }
+.cards--stack { min-width: 0; max-width: 100%; }
+.sf-table-wrap { display: block; width: 100%; }
+#sf-table { min-width: 0; max-width: 100%; }

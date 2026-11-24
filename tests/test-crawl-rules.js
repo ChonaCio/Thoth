@@ -47,6 +47,12 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/needs-cookie') { const ck = req.headers.cookie || ''; if (/cf_clearance/.test(ck)) { res.writeHead(500); return res.end('bot cookie sent'); } res.writeHead(/visitor=1/.test(ck) ? 200 : 403); return res.end(/visitor=1/.test(ck) ? 'welcome' : 'forbidden'); }
   if (u.pathname === '/needs-referer') { res.writeHead(req.headers.referer === BASE + '/' ? 200 : 403); return res.end('ref'); }
   if (u.pathname === '/needs-key') { res.writeHead(req.headers['x-api-key'] === 'k1' && /mine=2/.test(req.headers.cookie || '') ? 200 : 403); return res.end('key'); }
+  // A site whose sitemap index lists 6 monthly chapter sitemaps before its list of works (/manga/… and /manhwa/…)
+  const xml = (tag, locs) => `<?xml version="1.0"?><${tag === 'sitemap' ? 'sitemapindex' : 'urlset'} xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">${locs.map(l => `<${tag}><loc>${BASE}${l}</loc></${tag}>`).join('')}</${tag === 'sitemap' ? 'sitemapindex' : 'urlset'}>`;
+  if (u.pathname === '/sm/index.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(xml('sitemap', ['/sm/chapters-2026-01.xml', '/sm/chapters-2026-02.xml', '/sm/chapters-2026-03.xml', '/sm/chapters-2026-04.xml', '/sm/chapters-2026-05.xml', '/sm/chapters-2026-06.xml', '/sm/series.xml'])); }
+  if (u.pathname === '/sm/series.xml') { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(xml('url', ['/manga/alpha', '/manga/beta', '/manhwa/gamma', '/manhwa/delta', '/genre/action', '/manga/page'])); }
+  const cm = /^\/sm\/chapters-2026-0(\d)\.xml$/.exec(u.pathname);
+  if (cm) { res.writeHead(200, { 'Content-Type': 'application/xml' }); return res.end(xml('url', ['alpha', 'beta', 'gamma'].map((w, i) => `/${i === 2 ? 'manhwa' : 'manga'}/${w}/chapter-${cm[1]}`))); }
   if (u.pathname === '/busy') { if (tooMany++ < 1) { res.writeHead(429, { 'Retry-After': '0' }); return res.end('slow down'); } res.writeHead(200); return res.end('ok'); }
   res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>hi</p>');
 });
@@ -155,6 +161,23 @@ const site = http.createServer((req, res) => {
   check(e3 && e3.status === 403, 'your cookies and headers are never sent to another site');
   let e4 = null; try { await createFetcher({ gapMs: 20, allowLocal: true, access: { mode: 'plain' } }).get(BASE + '/needs-cookie'); } catch (e) { e4 = e; }
   check(e4 && e4.status === 403 && /Automatic/.test(e4.message), 'plain requests only: the 403 is reported as is', e4 && e4.message);
+
+  console.log('Sitemaps (Folio\'s way)');
+  const smod = require(path.join(APP, 'library/catalog/sitemap'));
+  const fs2 = createFetcher({ gapMs: 10, allowLocal: true });
+  const urls2 = [], log2 = [];
+  for await (const x of smod.walk(fs2.get, [BASE + '/sm/index.xml'], { maxFiles: 4, maxChapterFiles: 2, onFile: r => log2.push(r) })) urls2.push(...x.urls.map(u => u.loc));
+  check(log2.some(r => r.url.endsWith('/sm/series.xml') && r.status === 'read' && r.parent === BASE + '/sm/index.xml') && log2.filter(r => /chapters-/.test(r.url)).length === 2,
+    'the list of works is read before the chapter sitemaps (6 monthly ones listed first); a limit keeps it', log2.map(r => r.url.replace(BASE, '') + ':' + r.status).join(' '));
+  const dp = smod.defaultPatterns(urls2);
+  check(dp && dp.workPattern === '/manga/* /manhwa/*' && dp.works === 4 && dp.chapterPattern, 'works at /manga/… and /manhwa/… both found (a pattern per work word; /genre/… and /manga/page left out)', dp && dp.workPattern + ' ' + dp.works);
+  const src2 = { autoDetect: true, workPattern: dp.workPattern, chapterPattern: dp.chapterPattern, sitemaps: [BASE + '/sm/index.xml'], baseUrl: BASE, includeChapters: true };
+  const ctx2 = { src: src2, get: fs2.get };
+  const listed2 = []; for await (const pg of smod.sitemapWorks(ctx2)) listed2.push(...pg.map(w => w.sid));
+  check(listed2.sort().join() === '/manga/alpha,/manga/beta,/manhwa/delta,/manhwa/gamma' && ctx2.sitemapChapters.get('/manga/alpha').length === 6 && ctx2.sitemapChapters.get('/manhwa/gamma').length === 6,
+    'a crawl lists every work and gets each one\'s chapters from the chapter sitemaps', listed2.join());
+  check(Object.values(ctx2.discovery).find(r => r.url.endsWith('/sm/series.xml')).found === 4 && Object.values(ctx2.discovery).find(r => /chapters-2026-01/.test(r.url)).kind === 'chapters',
+    'each sitemap is recorded: kind, what it gave');
 
   site.close();
   console.log(failed ? `\n${failed} CRAWL RULE CHECK(S) FAILED` : `\nALL ${passed} CRAWL RULE CHECKS PASSED`);

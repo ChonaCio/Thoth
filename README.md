@@ -615,9 +615,28 @@ sites added as **sources**, with its metadata and chapter list.
   **what's found automatically on a work of the site** (each field found, with its value, or missing — missing
   fields are marked). When the sitemaps already list the works, the *Works list* step isn't asked (the *Kind of
   site* step says how many were found, with a link to change it anyway).
-- **Site files tab:** each source's **robots.txt** and **sitemaps** — the ones in its settings, the ones detection
-  found and the ones its last crawl read (with their content hash, date and how many works each listed). Open one
-  to read it now: its text, the sitemaps it lists (click to open) and its addresses (searchable).
+- **Site files tab** (per source, with *Update* and *Full crawl* buttons; it follows a crawl while it runs):
+  - **How the source finds its works** (sitemaps with the works' and chapters' address patterns, list pages, or an
+    API), its last crawl and last complete crawl, and what the sitemaps gave: how many were read, unchanged or
+    skipped, how many have a problem, the works and chapter addresses found in them, and the content hashes kept
+    for the next update.
+  - **robots.txt** as the last crawl read it: HTTP status, rules, crawl-delay, the sitemaps it names, its time,
+    and the file itself (a server error is shown as such: the site is off-limits until it answers).
+  - **Every sitemap** the crawls met, filterable by address, kind and status: its kind (index, works, chapters),
+    where it was listed (robots.txt, an index, or the settings), its status at the last crawl that met it
+    (*Read*; *Unchanged* — same content hash, an update skipped what it holds; *Skipped* — its date in the index
+    didn't change, not even downloaded; *Failed*, *Refused*, *Not a sitemap*, *Disallowed*; *Not read yet*), HTTP,
+    entries, what it gave, hash, `<lastmod>`, size, time, when it was checked and when its content last changed.
+    The document icon reads a file now: its text, the sitemaps it lists and its addresses (searchable).
+- **How sitemaps are understood** (as in Folio): the sitemaps robots.txt names, else the usual places; an index's
+  lists of works are read before its chapter sitemaps (a site with one chapter sitemap per month doesn't use up a
+  limit before its works). Any address shaped like a work — a work word and the work's own segment
+  (`/manga/one-piece`, `/series/x`, `/manhwa/y`, `/comics/…`, `/webtoon/…`, `/title/…`…) — is a work, so a site
+  with works under several words gets them all (detection sets one pattern per word: `/manga/* /manhwa/*`; a
+  source's work pattern can hold several, separated by spaces). Pages that list works (`/manga/page`,
+  `/series/list`, `/genres`…) aren't. A chapter is an address under a work whose last segment is a chapter's
+  (`chapter-12`, `ch-12.5`, `episode-3`, `12`). Detection falls back to guessing the most common address shapes
+  when no address has a work word.
 - **Sources tab:** add a site, *Test* its settings (what the first list page and first work give),
   *Crawl* it (full), *Update* it (the recently updated works and their new chapters), *Stop*, edit or remove it.
   Each source can update every day or week by itself. While it runs, a crawl shows how it's fetching: works at
