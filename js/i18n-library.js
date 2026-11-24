@@ -4171,4 +4171,84 @@
     "cat.cleanupAffected": "Muda {count} títulos agora.",
     "cat.cleanupSaved": "Salvo: {count} títulos mudados, {merged} unidas."
   });
+  add('en', {
+    "wz.worksFromSitemaps": "Works come from the site’s sitemaps ({count} found, addresses like {pattern}): nothing to set for the works list.",
+    "wz.changeListing": "Change how works are listed",
+    "wz.workIntroAuto": "Detection finds the works and their addresses; here, pick what it couldn’t find on a work’s page (it’s kept with the automatic settings).",
+    "wz.foundTitle": "Found automatically on a work",
+    "wz.foundCheck": "Check again",
+    "wz.foundYes": "yes",
+    "wz.foundOn": "On “{title}”:",
+    "wz.foundMissing": "not found — pick it below",
+    "wz.foundMissingShort": "not found",
+    "wz.foundNone": "No work to check yet (detect the site, or set how works are listed).",
+    "wz.foundNoWork": "The settings didn’t find a work to check.",
+    "wz.clicksIn.list": "Clicks on the list",
+    "wz.clicksIn.work": "Clicks on the work page",
+    "wz.clicksIn.chapters": "Clicks for the chapters"
+  });
+  add('es', {
+    "wz.worksFromSitemaps": "Las obras salen de los sitemaps del sitio ({count} encontradas, direcciones como {pattern}): nada que configurar para la lista de obras.",
+    "wz.changeListing": "Cambiar cómo se listan las obras",
+    "wz.workIntroAuto": "La detección encuentra las obras y sus direcciones; aquí, elige lo que no pudo encontrar en la página de una obra (se guarda con la configuración automática).",
+    "wz.foundTitle": "Encontrado automáticamente en una obra",
+    "wz.foundCheck": "Comprobar de nuevo",
+    "wz.foundYes": "sí",
+    "wz.foundOn": "En «{title}»:",
+    "wz.foundMissing": "no encontrado — elígelo abajo",
+    "wz.foundMissingShort": "no encontrado",
+    "wz.foundNone": "Aún no hay obra que comprobar (detecta el sitio o configura cómo se listan las obras).",
+    "wz.foundNoWork": "La configuración no encontró ninguna obra que comprobar.",
+    "wz.clicksIn.list": "Clics en la lista",
+    "wz.clicksIn.work": "Clics en la página de obra",
+    "wz.clicksIn.chapters": "Clics para los capítulos"
+  });
+  add('fr', {
+    "wz.worksFromSitemaps": "Les œuvres viennent des sitemaps du site ({count} trouvées, adresses comme {pattern}) : rien à régler pour la liste des œuvres.",
+    "wz.changeListing": "Changer la façon de lister les œuvres",
+    "wz.workIntroAuto": "La détection trouve les œuvres et leurs adresses ; ici, choisissez ce qu’elle n’a pas trouvé sur la page d’une œuvre (gardé avec les réglages automatiques).",
+    "wz.foundTitle": "Trouvé automatiquement sur une œuvre",
+    "wz.foundCheck": "Vérifier à nouveau",
+    "wz.foundYes": "oui",
+    "wz.foundOn": "Sur « {title} » :",
+    "wz.foundMissing": "non trouvé — choisissez-le ci-dessous",
+    "wz.foundMissingShort": "non trouvé",
+    "wz.foundNone": "Pas encore d’œuvre à vérifier (détectez le site ou réglez la liste des œuvres).",
+    "wz.foundNoWork": "Les réglages n’ont trouvé aucune œuvre à vérifier.",
+    "wz.clicksIn.list": "Clics sur la liste",
+    "wz.clicksIn.work": "Clics sur la page d’œuvre",
+    "wz.clicksIn.chapters": "Clics pour les chapitres"
+  });
+  add('de', {
+    "wz.worksFromSitemaps": "Die Werke kommen aus den Sitemaps der Seite ({count} gefunden, Adressen wie {pattern}): für die Werkliste ist nichts einzustellen.",
+    "wz.changeListing": "Ändern, wie Werke aufgelistet werden",
+    "wz.workIntroAuto": "Die Erkennung findet die Werke und ihre Adressen; hier wählst du, was sie auf einer Werkseite nicht finden konnte (wird mit den automatischen Einstellungen gespeichert).",
+    "wz.foundTitle": "Automatisch auf einem Werk gefunden",
+    "wz.foundCheck": "Erneut prüfen",
+    "wz.foundYes": "ja",
+    "wz.foundOn": "Auf „{title}“:",
+    "wz.foundMissing": "nicht gefunden — unten auswählen",
+    "wz.foundMissingShort": "nicht gefunden",
+    "wz.foundNone": "Noch kein Werk zum Prüfen (Seite erkennen oder Werkliste einstellen).",
+    "wz.foundNoWork": "Die Einstellungen haben kein Werk zum Prüfen gefunden.",
+    "wz.clicksIn.list": "Klicks auf der Liste",
+    "wz.clicksIn.work": "Klicks auf der Werkseite",
+    "wz.clicksIn.chapters": "Klicks für die Kapitel"
+  });
+  add('pt', {
+    "wz.worksFromSitemaps": "As obras vêm dos sitemaps do site ({count} encontradas, endereços como {pattern}): nada a configurar para a lista de obras.",
+    "wz.changeListing": "Mudar como as obras são listadas",
+    "wz.workIntroAuto": "A detecção encontra as obras e seus endereços; aqui, escolha o que ela não achou na página de uma obra (fica junto com a configuração automática).",
+    "wz.foundTitle": "Encontrado automaticamente em uma obra",
+    "wz.foundCheck": "Verificar de novo",
+    "wz.foundYes": "sim",
+    "wz.foundOn": "Em “{title}”:",
+    "wz.foundMissing": "não encontrado — escolha abaixo",
+    "wz.foundMissingShort": "não encontrado",
+    "wz.foundNone": "Ainda não há obra para verificar (detecte o site ou configure a lista de obras).",
+    "wz.foundNoWork": "A configuração não encontrou obra para verificar.",
+    "wz.clicksIn.list": "Cliques na lista",
+    "wz.clicksIn.work": "Cliques na página da obra",
+    "wz.clicksIn.chapters": "Cliques para os capítulos"
+  });
 })();

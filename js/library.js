@@ -1821,13 +1821,20 @@
     return d;
   }
   // The steps that apply to this draft
+  // The steps that apply. Sites read with the generic reader get the Work page and Chapters steps also with
+  // automatic settings (detection finds the works, sitemaps and patterns; picks add what it can't: summary, genres,
+  // chapter rows, clicks…). The Works list step is left out when the sitemaps already list the works.
+  function wzSitemapWorks() {
+    var d = wz.draft;
+    return d.listing === 'sitemap' && Boolean(d.workPattern) && Boolean((wz.detected && wz.detected.found && wz.detected.found.works > 0) || wz.editing);
+  }
   function wzSteps() {
     var d = wz.draft, theme = d.type === 'madara' || d.type === 'mangareader';
-    if (d.autoDetect) return ['site', 'crawl', 'review'];
+    var pages = d.type === 'custom' ? ['work'].concat(d.includeChapters !== false ? ['chapters'] : []) : [];
+    if (d.autoDetect) return ['site'].concat(pages, ['crawl', 'review']);
     var list = ['site', 'kind'];
-    if (d.type === 'custom' || theme) list.push('list');
-    if (d.type === 'custom') { list.push('work'); if (d.includeChapters) list.push('chapters'); }
-    return list.concat(['crawl', 'review']);
+    if ((d.type === 'custom' || theme) && (!wzSitemapWorks() || wz.showList)) list.push('list');
+    return list.concat(pages, ['crawl', 'review']);
   }
   function openSourceWizard(src) {
     var st = catSourcesState();
@@ -1860,7 +1867,8 @@
     else input = '<input type="text" id="' + id + '" data-wz="' + key + '" value="' + esc(v) + '" placeholder="' + esc(opts.placeholder || '') + '" autocomplete="off" />';
     // A selector that can be picked in the preview
     var pick = sel && WZ_SEL[k] ? '<button type="button" class="btn btn--outline btn--small wz-pick' + (wz.pv.target === k ? ' is-active' : '') + '" data-wz-pick="' + k + '" title="' + esc(t('wz.pickHelp')) + '" aria-pressed="' + (wz.pv.target === k ? 'true' : 'false') + '">' + icon('ads_click') + esc(t('wz.pick')) + '</button>' : '';
-    return '<div class="field wz-field"><label for="' + id + '">' + esc(label) + '</label><div class="wz-field__row">' + input + pick + '</div>' + (opts.help ? '<small class="field__help">' + esc(opts.help) + '</small>' : '') + '</div>';
+    var missing = sel && !v && wzFound(k) === false;
+    return '<div class="field wz-field' + (missing ? ' is-missing' : '') + '"><label for="' + id + '">' + esc(label) + (missing ? ' <span class="badge badge--danger">' + esc(t('wz.foundMissingShort')) + '</span>' : '') + '</label><div class="wz-field__row">' + input + pick + '</div>' + (opts.help ? '<small class="field__help">' + esc(opts.help) + '</small>' : '') + '</div>';
   }
   var WZ_TITLES = { site: 'wz.step.site', kind: 'wz.step.kind', list: 'wz.step.list', work: 'wz.step.work', chapters: 'wz.step.chapters', crawl: 'wz.step.crawl', review: 'wz.step.review' };
   function wzStepBody(step) {
@@ -1879,7 +1887,9 @@
         wzField('baseUrl', t('cat.srcUrl'), { placeholder: 'https://example.com', help: t('cat.srcUrlHelp') }) +
         wzField('languages', t('cat.srcLanguages'), { placeholder: 'en, es', help: t('cat.srcLanguagesHelp') }) +
         (d.type === 'mangadex' ? wzField('contentRating', t('cat.srcRating'), { help: t('cat.srcRatingHelp') }) : '') +
-        wzField('includeChapters', t('cat.srcChapters'), { type: 'checkbox', help: t('cat.srcChaptersHelp') });
+        wzField('includeChapters', t('cat.srcChapters'), { type: 'checkbox', help: t('cat.srcChaptersHelp') }) +
+        (wzSitemapWorks() && !wz.showList ? '<p class="notice notice--info small wz-from-sitemaps">' + icon('check') + '<span>' + esc(t('wz.worksFromSitemaps', { count: (wz.detected && wz.detected.found && wz.detected.found.works) || '…', pattern: d.workPattern })) + ' ' +
+          '<button type="button" class="link-button" data-wz-act="show-list">' + esc(t('wz.changeListing')) + '</button></span></p>' : '');
     }
     if (step === 'list') {
       var out = wzField('listing', t('cat.srcListing'), { type: 'select', help: t('cat.srcListingHelp'), options: [{ value: 'sitemap', label: t('cat.listing.sitemap') }, { value: 'pages', label: t('cat.listing.pages') }] });
@@ -1898,11 +1908,11 @@
       return out;
     }
     if (step === 'work') {
-      return '<p class="muted small">' + esc(t('wz.workIntro')) + '</p>' + wzActionsBox('work') +
+      return '<p class="muted small">' + esc(t(d.autoDetect ? 'wz.workIntroAuto' : 'wz.workIntro')) + '</p>' + wzFoundBox('work') + wzActionsBox('work') +
         sel('workTitle', 'h1') + sel('workCover', '.cover img@src') + sel('summary', '.description') + sel('genres', '.genres a') + sel('authors', '.author a') + sel('altTitles', '.alt-names') + sel('status', '.status');
     }
     if (step === 'chapters') {
-      return '<p class="muted small">' + esc(t('wz.chaptersIntro')) + '</p>' + wzActionsBox('chapters') +
+      return '<p class="muted small">' + esc(t('wz.chaptersIntro')) + '</p>' + wzFoundBox('chapters') + wzActionsBox('chapters') +
         sel('chapter', '.chapter-list li') + sel('chapterLink', 'a@href') + sel('chapterTitle', 'a') + sel('chapterDate', '.date') +
         wzField('chapterPattern', t('cat.srcChapterPattern'), { placeholder: '/manga/*/*/', help: t('cat.srcChapterPatternHelp') });
     }
@@ -1912,14 +1922,57 @@
         (d.autoDetect ? '' : wzField('gapMs', t('cat.srcGap'), { placeholder: '1500', help: t('cat.srcGapHelp') }) + wzField('maxWorks', t('cat.srcMax'), { placeholder: '0', help: t('cat.srcMaxHelp') }));
     }
     // review: what will be saved, and a Test with these settings
-    var rows = d.autoDetect ? [[t('cat.srcSiteUrl'), d.siteUrl], [t('cat.srcAuto'), t('common.yes')]] :
-      [[t('cat.srcType'), (wz.types.filter(function (x) { return x.type === d.type; })[0] || {}).label || d.type], [t('cat.srcUrl'), d.baseUrl], [t('cat.srcListing'), t('cat.listing.' + d.listing)]]
+    var rows = (d.autoDetect ? [[t('cat.srcSiteUrl'), d.siteUrl], [t('cat.srcAuto'), t('common.yes')]] :
+      [[t('cat.srcType'), (wz.types.filter(function (x) { return x.type === d.type; })[0] || {}).label || d.type], [t('cat.srcUrl'), d.baseUrl], [t('cat.srcListing'), t('cat.listing.' + d.listing)]])
+        .concat(['list', 'work', 'chapters'].filter(function (g) { return d.actions[g].length; }).map(function (g) { return [t('wz.clicksIn.' + g), d.actions[g].map(function (a) { return a.kind === 'scroll' ? '↕ ' + (a.selector || a.loads[0] || '') : a.selector; }).join(' · ')]; }))
         .concat(Object.keys(d.selectors).filter(function (k) { return d.selectors[k]; }).map(function (k) { return [t('cat.sel.' + k) !== 'cat.sel.' + k ? t('cat.sel.' + k) : k, d.selectors[k]]; }));
     rows.push([t('cat.srcSchedule'), t('cat.schedule.' + d.schedule)]);
     return '<dl class="pref-list wz-review">' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd><code>' + esc(r[1] || '—') + '</code></dd>'; }).join('') + '</dl>' +
-      (d.autoDetect ? '<p class="muted small">' + esc(t('cat.detectNote')) + '</p>' :
-        '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="test"' + (wz.test && wz.test.loading ? ' disabled' : '') + '>' + icon('play') + esc(t('cat.test')) + '</button></div>' + testReport(wz.test));
+      (d.autoDetect ? '<p class="muted small">' + esc(t('cat.detectNote')) + '</p>' : '') +
+        '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="test"' + (wz.test && wz.test.loading ? ' disabled' : '') + '>' + icon('play') + esc(t('cat.test')) + '</button></div>' + testReport(wz.test);
   }
+  // What the settings as they are find on a work of the site (a Test): each field found (with its value) or missing,
+  // so it's clear what's left to pick
+  var WZ_FOUND = {
+    work: [['workTitle', 'title'], ['workCover', 'cover'], ['summary', 'summary'], ['genres', 'genres'], ['authors', 'authors'], ['altTitles', 'altTitles'], ['status', 'status']],
+    chapters: [['chapter', 'chapterCount']]
+  };
+  function wzFoundValue(w, k) {
+    var v = w && w[k];
+    if (k === 'status') return v && v !== 'unknown' ? t('series.status.' + v) : '';
+    if (k === 'chapterCount') return v ? t('cat.chapters', { count: v }) + ((w.firstChapters || []).length ? ' — ' + w.firstChapters.slice(0, 3).map(function (c) { return c.t || c.n; }).join(' · ') : '') : '';
+    if (k === 'cover') return v ? t('wz.foundYes') : '';
+    if (Array.isArray(v)) return v.join(', ');
+    return v ? String(v).slice(0, 90) : '';
+  }
+  function wzFound(selKey) {
+    var f = wz.found && wz.found.test && wz.found.test.work;
+    if (!f) return null;
+    var pair = WZ_FOUND.work.concat(WZ_FOUND.chapters).filter(function (p) { return p[0] === selKey; })[0];
+    return pair ? Boolean(wzFoundValue(f, pair[1])) : null;
+  }
+  function wzFoundBox(step) {
+    var f = wz.found || {};
+    var head = '<div class="wz-found"><div class="wz-found__head"><h3 class="wz-clicks__title">' + esc(t('wz.foundTitle')) + '</h3>' +
+      '<button type="button" class="btn btn--text btn--small" data-wz-act="found"' + (f.loading ? ' disabled' : '') + '>' + icon('sync') + esc(t('wz.foundCheck')) + '</button></div>';
+    if (f.loading) return head + '<p class="muted small"><span class="spinner spinner--sm"></span> ' + esc(t('cat.testing')) + '</p></div>';
+    if (f.error) return head + '<p class="notice notice--error small">' + esc(A().errMsg(f.error)) + '</p></div>';
+    var w = f.test && f.test.work;
+    if (!w) return head + '<p class="muted small">' + esc(t((f.test && f.test.errors && f.test.errors.length) ? 'wz.foundNoWork' : 'wz.foundNone')) + '</p></div>';
+    return head + '<p class="muted small">' + esc(t('wz.foundOn', { title: w.title || w.url || '' })) + '</p><ul class="wz-found__list">' +
+      WZ_FOUND[step].map(function (p) {
+        var v = wzFoundValue(w, p[1]);
+        return '<li class="' + (v ? 'is-found' : 'is-missing') + '">' + icon(v ? 'check' : 'close') + '<span><strong>' + esc(t('cat.sel.' + p[0])) + '</strong> ' +
+          '<span class="muted">' + esc(v || t('wz.foundMissing')) + '</span></span></li>';
+      }).join('') + '</ul></div>';
+  }
+  function wzCheckFound() {
+    if (!wz) return;
+    var mine = wz.found = { loading: true };
+    api('POST', '/api/catalog/sources/test', wzFullBody()).then(function (r) { mine.test = r.test; if (r.test && r.test.works && r.test.works[0] && !wz.sampleWork) wz.sampleWork = r.test.works[0].url; },
+      function (e) { mine.error = e; }).then(function () { mine.loading = false; if (wz && wz.found === mine) { var form = $('#wz-form'); if (form) { form.innerHTML = wzStepBody(wz.step); if (window.renderIcons) window.renderIcons(form); } } });
+  }
+
   // "Before collecting, click": the buttons or tabs to press first on this page (a tab with the chapters, "Show
   // all"…), each picked in the preview; what each did in the preview is shown under it
   var WZ_ACT_RESULTS = { scrolled: 'wz.act.scrolled', noRequest: 'wz.act.noRequest', opened: 'wz.act.opened', added: 'wz.act.added', inPage: 'wz.act.inPage', notFound: 'wz.act.notFound', failed: 'wz.act.failed', otherSite: 'wz.act.otherSite', clicked: 'wz.act.clicked', missing: 'wz.act.notFound' };
@@ -1956,7 +2009,7 @@
    * and fonts itself; the site's own scripts run only when asked ("Site scripts"), and the picker can wait a few
    * seconds for the page to finish loading. With "Images and styles" off, a copy that loads nothing from the site
    * is shown instead. The picker runs inside the frame (wzPickerMain) and talks to the wizard with messages. */
-  var wzHasPreview = function (step) { return !wz.draft.autoDetect && ((step === 'list' && wz.draft.type === 'custom' && wz.draft.listing !== 'sitemap') || step === 'work' || step === 'chapters'); };
+  var wzHasPreview = function (step) { return (step === 'list' && !wz.draft.autoDetect && wz.draft.type === 'custom' && wz.draft.listing !== 'sitemap') || step === 'work' || step === 'chapters'; };
   function wzPreviewBar() {
     var pv = wz.pv;
     return '<input type="url" id="wz-pv-url" value="' + esc(pv.typed != null ? pv.typed : pv.url) + '" placeholder="https://…" aria-label="' + esc(t('wz.pageAddress')) + '" />' +
@@ -2021,6 +2074,7 @@
       wzStatus();
     }
     if (window.renderIcons) window.renderIcons(dlg);
+    if ((wz.step === 'work' || wz.step === 'chapters') && !wz.found) wzCheckFound();
     if (preview) wzShowPreview();
   }
   // The frame showing the page; built again only when the page or how it's shown changes
@@ -2427,7 +2481,16 @@
   // The settings as the server takes them
   function wzBody() {
     var d = wz.draft;
-    if (d.autoDetect) return { name: d.name.trim(), siteUrl: d.siteUrl.trim(), schedule: d.schedule, concurrency: Number(d.concurrency) || 0, autoDetect: true };
+    if (d.autoDetect) {
+      // Detection keeps finding the rest at every crawl; the picks (selectors, clicks) are kept with it
+      var full = wzFullBody();
+      return { name: full.name, siteUrl: full.siteUrl, schedule: full.schedule, concurrency: full.concurrency, autoDetect: true, includeChapters: full.includeChapters, selectors: full.selectors, actions: full.actions };
+    }
+    return wzFullBody();
+  }
+  // Every setting as it is now (a Test reads the site with exactly these)
+  function wzFullBody() {
+    var d = wz.draft;
     var body = { name: d.name.trim(), type: d.type, baseUrl: (d.baseUrl || d.siteUrl).trim(), siteUrl: d.siteUrl.trim(), autoDetect: false, listPath: d.listPath, languages: d.languages, contentRating: d.contentRating,
       includeChapters: Boolean(d.includeChapters), listing: d.listing, sitemaps: String(d.sitemaps || '').split(/\s+/).filter(Boolean), workPattern: d.workPattern, chapterPattern: d.chapterPattern,
       iconUrl: d.iconUrl || undefined, maxWorks: Number(d.maxWorks) || 0, schedule: d.schedule, concurrency: Number(d.concurrency) || 0, selectors: {} };
@@ -2458,6 +2521,8 @@
       return wzRender();
     }
     if (act === 'load') { var u = $('#wz-pv-url').value.trim(); if (u) wzLoadPreview(u); return; }
+    if (act === 'found') { wzCheckFound(); var ff = $('#wz-form'); if (ff) { ff.innerHTML = wzStepBody(wz.step); if (window.renderIcons) window.renderIcons(ff); } return; }
+    if (act === 'show-list') { wz.showList = true; wz.step = 'list'; wzResetPreview(); return wzRender(); }
     if (act === 'act-scroll') {
       var sk = 'act:' + b.dataset.group + ':' + b.dataset.i, sa2 = wz.draft.actions[b.dataset.group][Number(b.dataset.i)];
       var fr = $('#wz-frame');
@@ -2489,17 +2554,18 @@
         if (s.sitemaps) d.sitemaps = s.sitemaps.join('\n');
         if (s.selectors) d.selectors = Object.assign({}, s.selectors, d.selectors);
         if (det.found && det.found.sampleWork && det.found.sampleWork.url) wz.sampleWork = det.found.sampleWork.url;
+        wz.found = null;
       }, function (err) { wz.error = err; }).then(function () { wz.detecting = false; wzRender(); });
     }
     if (act === 'test') {
       wz.test = { loading: true }; wzRender();
-      return api('POST', '/api/catalog/sources/test', wzBody()).then(function (r) { wz.test = { test: r.test }; }, function (err) { wz.test = { error: err }; }).then(function () { if (wz) wzRender(); });
+      return api('POST', '/api/catalog/sources/test', wzFullBody()).then(function (r) { wz.test = { test: r.test }; }, function (err) { wz.test = { error: err }; }).then(function () { if (wz) wzRender(); });
     }
     if (act === 'save') {
       wz.saving = true; wz.error = null; wzRender();
       var body = wzBody(), id = wz.editing;
       var req = id ? api('PATCH', '/api/catalog/sources/' + id, body)
-        : body.autoDetect ? api('POST', '/api/catalog/sources', { name: body.name, baseUrl: body.siteUrl }).then(function (r) { return api('PATCH', '/api/catalog/sources/' + r.source.id, { schedule: body.schedule, concurrency: body.concurrency }); })
+        : body.autoDetect ? api('POST', '/api/catalog/sources', { name: body.name, baseUrl: body.siteUrl }).then(function (r) { return api('PATCH', '/api/catalog/sources/' + r.source.id, { schedule: body.schedule, concurrency: body.concurrency, includeChapters: body.includeChapters, selectors: body.selectors, actions: body.actions }); })
         : api('POST', '/api/catalog/sources', body);
       return req.then(function () {
         $('#src-wizard').close();

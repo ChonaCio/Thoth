@@ -1053,3 +1053,15 @@ body.is-reading { overflow: hidden; }
 .cat-cleanup summary { display: flex; align-items: center; gap: 8px; cursor: pointer; }
 .cat-cleanup textarea { width: 100%; box-sizing: border-box; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
 .cat-cleanup .lib-card__actions { align-items: center; }
+
+/* Wizard: what's found automatically on a work of the site */
+.wz-found { border: 1px solid var(--border); border-radius: 8px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; }
+.wz-found__head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.wz-found .muted.small { margin: 0; }
+.wz-found__list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.wz-found__list li { display: flex; gap: 6px; align-items: flex-start; overflow-wrap: anywhere; }
+.wz-found__list li svg { width: 16px; height: 16px; flex: none; margin-top: 1px; }
+.wz-found__list li.is-found svg { fill: #188038; }
+.wz-found__list li.is-missing svg { fill: var(--danger); }
+.wz-field.is-missing input { border-color: var(--danger); }
+.wz-from-sitemaps { display: flex; gap: 6px; align-items: flex-start; }

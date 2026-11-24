@@ -363,6 +363,13 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const changed = await crawled(autoSrc.id);
   ok(changed.lastStats.read === 1 && hits.includes('GET /madara/manga/blue-moon/') && !hits.includes('GET /madara/manga/red-sun/'), `a changed sitemap: only the work whose entries changed is read (${changed.lastStats.read} read)`);
   sitemapChange = false;
+  // Picks added to an automatic source (what detection can't find) are kept, also through the next crawl's detection
+  await call('PATCH', `/api/catalog/sources/${autoSrc.id}`, { selectors: { summary: '.summary__content p' }, actions: { work: [{ selector: 'button.more', mode: 'add' }] } });
+  await call('POST', `/api/catalog/sources/${autoSrc.id}/crawl`, { mode: 'update' });
+  await crawled(autoSrc.id);
+  const kept = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === autoSrc.id);
+  ok(kept.autoDetect === true && kept.selectors.summary === '.summary__content p' && kept.actions.work[0].selector === 'button.more' && kept.workPattern === '/madara/*/*/',
+    'an automatic source keeps the settings picked by hand (work page fields, clicks) next to what detection finds');
   ok((await call('PATCH', `/api/catalog/sources/${autoSrc.id}`, { autoDetect: false })).data.source.autoDetect === false, 'automatic settings can be turned off (then set by hand)');
   extraSitemap = false;
   await call('DELETE', `/api/catalog/sources/${autoSrc.id}`);

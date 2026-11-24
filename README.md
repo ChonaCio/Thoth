@@ -543,6 +543,13 @@ sites added as **sources**, with its metadata and chapter list.
   preview makes the clicks the same way and says under each what it did (*Added what … loads*, *Opened …*, *Leads
   nowhere: what it shows is in the page already*, *Not found on this page*). With *Site scripts* on, the preview
   clicks for real instead (one every 1.5 s).
+- **Automatic settings plus your picks.** With *Detect the settings automatically* on, detection still finds the
+  works, sitemaps and address patterns at every crawl, and for sites read with the generic reader the wizard also
+  offers the *Work page* and *Chapters* steps: pick what detection can't find (summary, genres, authors, chapter
+  rows, clicks before collecting); those picks are kept with the automatic settings. On those steps a box shows
+  **what's found automatically on a work of the site** (each field found, with its value, or missing — missing
+  fields are marked). When the sitemaps already list the works, the *Works list* step isn't asked (the *Kind of
+  site* step says how many were found, with a link to change it anyway).
 - **Site files tab:** each source's **robots.txt** and **sitemaps** — the ones in its settings, the ones detection
   found and the ones its last crawl read (with their content hash, date and how many works each listed). Open one
   to read it now: its text, the sitemaps it lists (click to open) and its addresses (searchable).
