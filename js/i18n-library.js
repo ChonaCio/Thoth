@@ -4136,4 +4136,39 @@
     "wz.scrollNoBox": "Essa lista não está na página.",
     "wz.scrollNothing": "Rolar não fez a página pedir nada ao site (a lista pode estar completa, ou os scripts não rodam aqui)."
   });
+  add('en', {
+    "cat.cleanupTitle": "Text that isn’t part of titles ({count})",
+    "cat.cleanupHelp": "One per line: removed from every title in the catalog, in any case and wherever it is (a site’s tag like “[Asura Exclusive]”, “Season 3”…). The same work on different sites then gets the same title and can be merged; saving merges the ones that are now certain.",
+    "cat.cleanupPlaceholder": "[Asura Exclusive]\n(Webtoon Official)",
+    "cat.cleanupAffected": "Changes {count} titles now.",
+    "cat.cleanupSaved": "Saved: {count} titles changed, {merged} merged."
+  });
+  add('es', {
+    "cat.cleanupTitle": "Texto que no forma parte de los títulos ({count})",
+    "cat.cleanupHelp": "Uno por línea: se quita de todos los títulos del catálogo, en mayúsculas o minúsculas y esté donde esté (una etiqueta de un sitio como «[Asura Exclusive]», «Season 3»…). Así la misma obra en sitios distintos tiene el mismo título y se puede unir; al guardar se unen las que ahora son seguras.",
+    "cat.cleanupPlaceholder": "[Asura Exclusive]\n(Webtoon Official)",
+    "cat.cleanupAffected": "Cambia {count} títulos ahora.",
+    "cat.cleanupSaved": "Guardado: {count} títulos cambiados, {merged} unidas."
+  });
+  add('fr', {
+    "cat.cleanupTitle": "Texte qui ne fait pas partie des titres ({count})",
+    "cat.cleanupHelp": "Un par ligne : retiré de tous les titres du catalogue, en majuscules ou minuscules et où qu’il soit (une étiquette d’un site comme « [Asura Exclusive] », « Season 3 »…). La même œuvre sur des sites différents a alors le même titre et peut être fusionnée ; enregistrer fusionne celles qui sont maintenant certaines.",
+    "cat.cleanupPlaceholder": "[Asura Exclusive]\n(Webtoon Official)",
+    "cat.cleanupAffected": "Change {count} titres maintenant.",
+    "cat.cleanupSaved": "Enregistré : {count} titres changés, {merged} fusionnées."
+  });
+  add('de', {
+    "cat.cleanupTitle": "Text, der nicht zum Titel gehört ({count})",
+    "cat.cleanupHelp": "Einer pro Zeile: wird aus jedem Titel im Katalog entfernt, unabhängig von Groß-/Kleinschreibung und Position (ein Seiten-Tag wie „[Asura Exclusive]“, „Season 3“…). Dasselbe Werk auf verschiedenen Seiten bekommt so denselben Titel und kann zusammengeführt werden; beim Speichern werden die jetzt sicheren zusammengeführt.",
+    "cat.cleanupPlaceholder": "[Asura Exclusive]\n(Webtoon Official)",
+    "cat.cleanupAffected": "Ändert jetzt {count} Titel.",
+    "cat.cleanupSaved": "Gespeichert: {count} Titel geändert, {merged} zusammengeführt."
+  });
+  add('pt', {
+    "cat.cleanupTitle": "Texto que não faz parte dos títulos ({count})",
+    "cat.cleanupHelp": "Um por linha: removido de todos os títulos do catálogo, em maiúsculas ou minúsculas e onde estiver (uma etiqueta de um site como “[Asura Exclusive]”, “Season 3”…). Assim a mesma obra em sites diferentes fica com o mesmo título e pode ser unida; salvar une as que agora são certas.",
+    "cat.cleanupPlaceholder": "[Asura Exclusive]\n(Webtoon Official)",
+    "cat.cleanupAffected": "Muda {count} títulos agora.",
+    "cat.cleanupSaved": "Salvo: {count} títulos mudados, {merged} unidas."
+  });
 })();

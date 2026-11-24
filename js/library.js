@@ -1629,8 +1629,9 @@
     st.loading = true; st.error = null;
     if (isCatalogRoute()) A().renderPage();
     var qs = st.source ? '?source=' + encodeURIComponent(st.source) : '';
-    return Promise.all([api('GET', '/api/catalog/merge-suggestions' + qs), api('GET', '/api/catalog/merged' + qs), st.sources ? Promise.resolve(null) : api('GET', '/api/catalog/facets')]).then(function (r) {
-      st.data = r[0]; st.merged = r[1]; if (r[2]) st.sources = r[2].sources; st.choice = {};
+    return Promise.all([api('GET', '/api/catalog/merge-suggestions' + qs), api('GET', '/api/catalog/merged' + qs), st.sources ? Promise.resolve(null) : api('GET', '/api/catalog/facets'),
+      api('GET', '/api/catalog/title-cleanup').then(null, function () { return null; })]).then(function (r) {
+      st.data = r[0]; st.merged = r[1]; if (r[2]) st.sources = r[2].sources; if (r[3]) st.cleanup = r[3]; st.choice = {};
       r[0].groups.forEach(function (g) { var inc = {}; g.works.forEach(function (w) { inc[w.key] = true; }); st.choice[g.key] = { primary: g.primary, include: inc }; });
     }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isCatalogRoute()) A().renderPage(); });
   }
@@ -1662,6 +1663,14 @@
         '<button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button>' +
         '<button class="btn btn--outline btn--pill" data-lib="cat-merge-auto"' + (st.loading ? ' disabled' : '') + ' title="' + esc(t('cat.autoMergeHelp')) + '">' + icon('collections') + esc(t('cat.autoMerge')) + '</button>' +
       '</div></div>';
+    // Text that's never part of a title (a site's tag, "Exclusive"…): removed from every catalog title, so the same
+    // work on different sites gets the same title and can be merged
+    var cl = st.cleanup;
+    if (cl) head += '<details class="card card--wide cat-cleanup"' + (cl.remove.length ? '' : ' open') + '><summary class="card__title">' + icon('edit') + esc(t('cat.cleanupTitle', { count: cl.remove.length })) + '</summary>' +
+      '<p class="muted small">' + esc(t('cat.cleanupHelp')) + '</p>' +
+      '<textarea id="cat-cleanup" rows="5" spellcheck="false" placeholder="' + esc(t('cat.cleanupPlaceholder')) + '">' + esc(cl.remove.join('\n')) + '</textarea>' +
+      '<div class="lib-card__actions"><button class="btn btn--primary btn--small" data-lib="cat-cleanup-save">' + esc(t('common.save')) + '</button>' +
+        '<span class="muted small">' + esc(t('cat.cleanupAffected', { count: cl.affected })) + '</span></div></details>';
     if (st.error) return head + errorBanner(st.error);
     if (st.loading || !st.data) return head + spinner;
     var suggestions = st.data.groups.length ? '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
@@ -3917,6 +3926,14 @@
       case 'cat-ch-tab': { var cw = catWorkState(btn.dataset.work); if (cw) { cw.tab = id; A().renderPage(); } return; }
       case 'cat-file-open': catFilesState().raw = false; return openSiteFile(id);
       case 'cat-file-raw': catFilesState().raw = true; return A().renderPage();
+      case 'cat-cleanup-save': {
+        var ct = $('#cat-cleanup');
+        btn.disabled = true;
+        return api('PUT', '/api/catalog/title-cleanup', { remove: ct ? ct.value.split(/\r?\n/) : [] }).then(function (r) {
+          A().toast(t('cat.cleanupSaved', { count: r.affected, merged: r.merged }));
+          catMergeState().cleanup = r; cache.catalog = null; loadCatMerge();
+        }, function (e) { btn.disabled = false; fail(e); });
+      }
       case 'cat-merge-check': return loadCatMerge();
       case 'cat-merge-auto':
         btn.disabled = true;

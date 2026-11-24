@@ -597,6 +597,10 @@ sites added as **sources**, with its metadata and chapter list.
   hidden things can then be picked; a click made there can be kept as a click before collecting (*Do this click
   before collecting*). *Show hidden content* shows what the page hides (collapsed text, other tabs, `hidden`
   elements) so it can be picked — crawls read hidden content anyway.
+- **Text that isn't part of titles.** The Merge tab has a list (one per line) of text removed from every catalog
+  title, in any case and wherever it is — a site's own tag like `[Asura Exclusive]`, `(Webtoon Official)`,
+  `Season 3`… — so the same work on different sites gets the same title. It says how many titles it changes;
+  saving it merges the works that are now certainly the same.
 - **Titles without noise, and versions.** What sites add to a title is taken out: `(Official)`, ` - engsub`,
   `[Eng Sub]`, the source's own name (` - Site name`), "Read … Online". Version markers — `[AI ANIMATION]`, `[AI CC]`,
   `[MOTION]` (Animated); `Raw`; `Colored`, `Full Colored` (Colored); `Uncensored`, `Uncen` (Uncensored), several at once,

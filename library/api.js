@@ -790,6 +790,9 @@ async function handle(ctx) {
       try { actions = q.get('actions') ? JSON.parse(q.get('actions')) : null; } catch { throw httpError(400, 'invalid'); }
       return send(200, { page: await catalog.previewPage(q.get('url'), { inert: q.get('inert') === '1', actions }) });
     }
+    // Text never part of a title (removed from every catalog title, for merging): one per line
+    if (p === '/api/catalog/title-cleanup' && method === 'GET') return send(200, catalog.titleCleanup());
+    if (p === '/api/catalog/title-cleanup' && method === 'PUT') return send(200, catalog.setTitleCleanup(body.remove));
     if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions({ source: q.get('source') || null }));
     if (p === '/api/catalog/merged' && method === 'GET') return send(200, catalog.mergedGroups({ source: q.get('source') || null }));
     if (p === '/api/catalog/merge/auto' && method === 'POST') return send(200, { merged: catalog.autoMerge() });

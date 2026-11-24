@@ -101,6 +101,9 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/scroll-sitemap.xml') return send(200, `<?xml version="1.0"?><sitemapindex><sitemap><loc>${SITE}/scroll-works-sitemap.xml</loc></sitemap><sitemap><loc>${SITE}/scroll-chapter-sitemap.xml</loc></sitemap></sitemapindex>`, 'application/xml');
   if (u.pathname === '/scroll-works-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset><url><loc>${SITE}/scroll/series/blade</loc></url></urlset>`, 'application/xml');
   if (u.pathname === '/scroll-chapter-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset>${[1, 2, 3, 4, 5, 6].map(n => `<url><loc>${SITE}/scroll/series/blade/chapter-${n}</loc><lastmod>2025-02-0${n}</lastmod></url>`).join('')}</urlset>`, 'application/xml');
+  // A site that tags its titles ("[Moon Exclusive]"): the same Blue Moon as on the Madara site, same author
+  if (u.pathname === '/tag/list') return send(200, '<div class="w"><a href="/tag/blue">Blue Moon [Moon Exclusive]</a></div>');
+  if (u.pathname === '/tag/blue') return send(200, '<h1>Blue Moon [Moon Exclusive]</h1><div class="author"><a>Ana Author</a></div><ul><li class="c"><a href="/tag/blue/7">Chapter 7</a></li></ul>');
   // A site behind bot protection
   if (u.pathname.startsWith('/guarded')) return send(403, '<html><title>Just a moment...</title><div id="cf-chl-widget"></div></html>');
   send(404, 'not found');
@@ -270,6 +273,20 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(smCh.length === 6 && smCh.find(c => c.n === '1').t === 'Chapter 1' && smCh.find(c => c.n === '1').d === '2025-02-01' && smDone.lastStats.sitemaps.chapters === 6,
     `the chapters sitemap gives every chapter, also those the work's page doesn't show (page 2 → ${smCh.length}; ${smDone.lastStats.sitemaps.chapters} chapter addresses)`);
   await call('DELETE', `/api/catalog/sources/${smsrc.id}`);
+  // ---- text an administrator says isn't part of titles ----
+  const tagged = (await call('POST', '/api/catalog/sources', { name: 'Tagged', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/tag/list', item: 'div.w', workTitle: 'h1', authors: '.author a', chapter: 'li.c' } })).data.source;
+  await call('POST', `/api/catalog/sources/${tagged.id}/crawl`, { mode: 'full' });
+  await crawled(tagged.id);
+  await new Promise(r => setTimeout(r, 2500)); // (the server notices the end and merges what's certain)
+  const taggedKey = (await call('GET', `/api/catalog?source=${tagged.id}`)).data.items[0];
+  ok(/Moon Exclusive/.test(taggedKey.title) && taggedKey.sources.length === 1 && (await call('GET', '/api/catalog/title-cleanup')).data.remove.length === 0, 'a site\'s tag in a title keeps the work apart from the same work elsewhere');
+  ok((await call('PUT', '/api/catalog/title-cleanup', { remove: ['x'] }, bob)).status === 403, 'only administrators set it');
+  const cleaned = (await call('PUT', '/api/catalog/title-cleanup', { remove: ['[moon exclusive]', '', ' '] })).data;
+  const blueNow = (await call('GET', `/api/catalog?source=${tagged.id}`)).data.items[0];
+  ok(cleaned.remove.length === 1 && cleaned.affected === 1 && cleaned.merged >= 1 && blueNow.title === 'Blue Moon' && blueNow.sources.some(x => x.sourceId === madara.id),
+    `text listed as not part of titles is removed (any case), and the work is merged with the same one elsewhere (${cleaned.affected} title changed, ${cleaned.merged} merged)`);
+  await call('PUT', '/api/catalog/title-cleanup', { remove: [] });
+  await call('DELETE', `/api/catalog/sources/${tagged.id}`);
   // ---- titles: noise taken out, versions recognized and grouped like a library's ----
   const vsrc = (await call('POST', '/api/catalog/sources', { name: 'Version Site', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/ver/list', item: 'div.v', workTitle: 'h1', chapter: 'li.c' } })).data.source;
   await call('POST', `/api/catalog/sources/${vsrc.id}/crawl`, { mode: 'full' });

@@ -1047,3 +1047,9 @@ body.is-reading { overflow: hidden; }
 .wz-click__loads .field__help { flex-basis: 100%; }
 .wz-preview__keep { padding: 0 12px 8px; }
 .wz-preview__keep:empty { display: none; }
+
+/* Catalog: text removed from titles */
+.cat-cleanup { margin-bottom: 16px; }
+.cat-cleanup summary { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.cat-cleanup textarea { width: 100%; box-sizing: border-box; font: 13px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); }
+.cat-cleanup .lib-card__actions { align-items: center; }

@@ -19,6 +19,8 @@ const terms = require('../metadata/terms');
 const { db } = store;
 if (!db.catalogSources) db.catalogSources = {};
 if (!db.catalogMerges) db.catalogMerges = { groups: {}, dismissed: [] };
+// Catalog-wide settings: titleRemove = text that's never part of a title (removed from every title, for merging)
+if (!db.catalogSettings) db.catalogSettings = { titleRemove: [] };
 const DIR = path.join(store.DATA_DIR, 'catalog');
 const COVER_DIR = path.join(store.DATA_DIR, 'cache', 'catalog-covers');
 const ALLOW_LOCAL = process.env.THOTH_CATALOG_ALLOW_LOCAL === '1'; // tests only
@@ -405,13 +407,31 @@ function sourceWorks(id) {
   const src = db.catalogSources[id] || {};
   const names = [src.name, src.detected && src.detected.found && src.detected.found.name].filter(Boolean);
   const list = Object.values(data.works).map(w => {
-    const p = parseTitle(w.rawTitle || w.title, { sourceNames: names });
-    const alt = [...new Set((w.rawAltTitles || w.altTitles || []).map(a => parseTitle(a, { sourceNames: names }).title).filter(a => a && a !== p.title))];
+    const remove = db.catalogSettings.titleRemove || [];
+    const p = parseTitle(w.rawTitle || w.title, { sourceNames: names, remove });
+    const alt = [...new Set((w.rawAltTitles || w.altTitles || []).map(a => parseTitle(a, { sourceNames: names, remove }).title).filter(a => a && a !== p.title))];
     return Object.assign(w, { key: id + ':' + w.sid, sourceId: id, rawTitle: w.rawTitle || w.title, title: p.title, editions: p.editions, rawAltTitles: w.rawAltTitles || w.altTitles || [], altTitles: alt });
   });
   loaded.set(id, { mtime, list });
   catalogVersion++;
   return list;
+}
+// The text removed from titles: { remove, affected (titles it changes) }; saving it reads every source's titles again
+// and merges what's now certainly the same work
+function titleCleanup() {
+  const remove = db.catalogSettings.titleRemove || [];
+  const res = remove.map(r => new RegExp(String(r).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'));
+  const affected = allWorks().filter(w => res.some(re => re.test(w.rawTitle || w.title))).length;
+  return { remove, affected };
+}
+function setTitleCleanup(list) {
+  const remove = [...new Set((Array.isArray(list) ? list : String(list || '').split(/\r?\n/)).map(x => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 100)).filter(x => x.length >= 2))].slice(0, 200);
+  db.catalogSettings.titleRemove = remove;
+  store.saveLibrary();
+  loaded.clear(); catalogVersion++; // (titles worked out again)
+  let merged = 0;
+  try { merged = autoMerge(); } catch (e) { console.error('[catalog] automatic merge:', e.message); }
+  return Object.assign(titleCleanup(), { merged });
 }
 function allWorks() { return Object.keys(db.catalogSources).flatMap(id => sourceWorks(id)); }
 const workByKey = key => { const i = key.indexOf(':'); return i > 0 ? sourceWorks(key.slice(0, i)).find(w => w.key === key) || null : null; };
@@ -830,5 +850,5 @@ function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, d
 // More crawls allowed at once: start the waiting ones now
 require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
 
-module.exports = { siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
+module.exports = { titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
   list, facets, detail, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

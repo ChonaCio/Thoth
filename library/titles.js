@@ -63,9 +63,12 @@ const escapeRe = s => String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // → { title, editions: ['raw', 'uncensored'], edition: the main one (animated > colored > uncensored > raw) or null }
 // opts.sourceNames: names to drop as a tail (" - Fake Scans"); opts.bare: also bare version words at the end
 // opts.noise: false keeps noise words (only versions are taken out; the library's folder names)
-function parseTitle(raw, { sourceNames = [], bare = true, noise = true } = {}) {
+// opts.remove: text an administrator listed as never part of a title (removed wherever it is, any case)
+function parseTitle(raw, { sourceNames = [], bare = true, noise = true, remove = [] } = {}) {
   const isNoise = p => noise && NOISE.test(String(p).trim());
   let t = String(raw || '').replace(/\s+/g, ' ').trim();
+  for (const r of remove) { const x = String(r || '').trim(); if (x) t = t.replace(new RegExp(escapeRe(x), 'gi'), ' '); }
+  if (remove.length) t = t.replace(/[\[(]\s*[\])]/g, ' ').replace(/\s+/g, ' ').trim(); // (brackets left empty)
   const editions = new Set();
   // "Read Solo Leveling Manga Online - Site" → Solo Leveling
   const read = noise && /^read\s+(.+?)\s+(?:manga|manhwa|manhua|webtoon|comics?|novel)?\s*(?:online|for free)\b/i.exec(t);
