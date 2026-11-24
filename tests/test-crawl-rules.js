@@ -1,0 +1,162 @@
+// External catalog rules (in process, a local fake site on port 3995):
+//   - title keys: numbers either way, a leading article, bracketed extras; near-identical names
+//   - text: pages decoded in their charset; garbled UTF-8 repaired
+//   - robots.txt answering a server error: the site is off-limits (RFC 9309)
+//   - 429: the site is asked half as many requests at once for a while
+//   - a series page's links to metadata sites (AniList, MyAnimeList…) kept as the work's entries there
+// node tests/test-crawl-rules.js
+const http = require('http');
+const path = require('path');
+const APP = path.resolve(__dirname, '..');
+const names = require(path.join(APP, 'library/catalog/names'));
+const text = require(path.join(APP, 'library/catalog/text'));
+const { createFetcher } = require(path.join(APP, 'library/catalog/fetcher'));
+const { parse } = require(path.join(APP, 'library/catalog/html'));
+
+let failed = 0, passed = 0;
+const check = (ok, name, extra) => { if (ok) { passed++; console.log('  ✓ ' + name); } else { failed++; console.log('  ✗ ' + name + (extra ? ' — ' + extra : '')); } };
+const same = (a, b) => names.matchKeys(a).some(k => names.matchKeys(b).includes(k));
+const PORT = 3995, BASE = `http://127.0.0.1:${PORT}`;
+
+let tooMany = 0;
+const site = http.createServer((req, res) => {
+  const u = new URL(req.url, BASE);
+  if (u.pathname === '/robots.txt') {
+    if (req.headers.host.startsWith('localhost')) { res.writeHead(503); return res.end('down'); }
+    res.writeHead(404); return res.end();
+  }
+  if (u.pathname === '/latin1') { res.writeHead(200, { 'Content-Type': 'text/html; charset=iso-8859-1' }); return res.end(Buffer.from([0x3c, 0x70, 0x3e, 0x43, 0x61, 0x66, 0xe9, 0x3c, 0x2f, 0x70, 0x3e])); }
+  // Work pages that show only the newest chapters; the rest where the page's script would get it
+  const recent = n => Array.from({ length: 3 }, (_, i) => `<li><a href="/series/${n}/chapter-${30 - i}">Chapter ${30 - i}</a></li>`).join('');
+  if (u.pathname === '/series/tpl') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Tpl</h1><div id="chapters" data-api-url="/api/manga/__SLUG__/chapters?skip=0&take=10" data-comic-slug="tpl-slug"><ul class="ch">${recent('tpl')}</ul></div>`); }
+  if (u.pathname === '/api/manga/tpl-slug/chapters') {
+    const skip = Number(u.searchParams.get('skip')) || 0, take = 10;
+    const items = Array.from({ length: 30 }, (_, i) => ({ number: 30 - i, slug: `chapter-${30 - i}`, title: `Chapter ${30 - i}`, created_at: '2026-01-' + String(1 + (i % 28)).padStart(2, '0'), isLocked: i === 0 })).slice(skip, skip + take);
+    res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: items, skip, take, total: 30 }));
+  }
+  if (u.pathname === '/series/next') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Next</h1><ul class="ch">${recent('next')}</ul><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { series: { chapters: Array.from({ length: 30 }, (_, i) => ({ id: i + 1, chapter_number: i + 1, chapter_slug: 'chapter-' + (i + 1), chapter_name: '' })) } } } })}</script>`); }
+  if (u.pathname === '/series/own') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Own</h1><ul class="ch">${recent('own')}</ul>`); }
+  if (u.pathname === '/full/own') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(Array.from({ length: 30 }, (_, i) => `<a href="/series/own/chapter-${i + 1}">Chapter ${i + 1}</a>`).join('')); }
+  if (u.pathname === '/series/fields') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Fields</h1><p class="alt">Uno • Dos • Tres</p><p class="st">Status: Ongoing</p><p class="ty">Type: Manhwa</p><p class="yr">Released 2019</p>' +
+    '<ul class="g"><li><a>Adventure <span>999</span></a></li><li><a>Action (12)</a></li></ul><ul class="t"><li>Regression</li><li>System · 1.2k</li></ul>'); }
+  // A listing per letter; links to works and other links mixed (a link pattern picks the works)
+  const az = /^\/az\/([a-z]|0-9)$/.exec(u.pathname);
+  if (az) { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(az[1] === 'b' || az[1] === 'q' ? `<a href="/manga/${az[1]}-one">One</a><a href="/manga/${az[1]}-one/chapter-1">Ch</a><a href="/genre/action">Action</a>` : '<p>none</p>'); }
+  // Access: the home page sets a visitor cookie (and a bot-check cookie that must never be sent back)
+  if (u.pathname === '/') { res.writeHead(200, { 'Set-Cookie': ['visitor=1; Path=/', 'cf_clearance=x; Path=/'] }); return res.end('home'); }
+  if (u.pathname === '/needs-cookie') { const ck = req.headers.cookie || ''; if (/cf_clearance/.test(ck)) { res.writeHead(500); return res.end('bot cookie sent'); } res.writeHead(/visitor=1/.test(ck) ? 200 : 403); return res.end(/visitor=1/.test(ck) ? 'welcome' : 'forbidden'); }
+  if (u.pathname === '/needs-referer') { res.writeHead(req.headers.referer === BASE + '/' ? 200 : 403); return res.end('ref'); }
+  if (u.pathname === '/needs-key') { res.writeHead(req.headers['x-api-key'] === 'k1' && /mine=2/.test(req.headers.cookie || '') ? 200 : 403); return res.end('key'); }
+  if (u.pathname === '/busy') { if (tooMany++ < 1) { res.writeHead(429, { 'Retry-After': '0' }); return res.end('slow down'); } res.writeHead(200); return res.end('ok'); }
+  res.writeHead(200, { 'Content-Type': 'text/html' }); res.end('<p>hi</p>');
+});
+
+(async () => {
+  console.log('Title keys');
+  check(same('Three Title', '3-title'), '"3-title" = "Three Title"');
+  check(same('Twenty-One Days', '21 Days'), '"Twenty-One Days" = "21 Days"');
+  check(same('The First Prince', 'The 1st Prince'), '"The First Prince" = "The 1st Prince"');
+  check(same('Room 007', 'Room 7'), '"Room 007" = "Room 7"');
+  check(same('The Beginning After the End', 'Beginning After the End'), 'a leading "The" doesn\'t matter (long names)');
+  check(!same('The One', 'One'), '…but short names keep it ("The One" ≠ "One")');
+  check(same('Solo Leveling (Official)', 'Solo Leveling') && same('Tower [Manhwa]', 'Tower') && same('Hero (2019)', 'Hero'), 'bracketed extras: (Official), [Manhwa], (2019)');
+  check(!same('Ten Count', 'One Count'), 'different numbers stay different works');
+  check(!same('someone special', '1 special'), 'words that only contain a number are left alone');
+  check(names.nearNames(names.nameKey("The Swordmaster's Revenge"), names.nameKey('The Swordmasters Revange')), 'near-identical names: a letter apart');
+  check(!names.nearNames(names.nameKey('Return of the Hero 2'), names.nameKey('Return of the Hero 3')), '…never when the numbers differ');
+  check(!names.nearNames(names.nameKey('Short Nam'), names.nameKey('Short Nem')), '…nor for short names');
+
+  console.log('Chapters');
+  const ch = require(path.join(APP, 'library/catalog/chapters'));
+  const now = new Date('2026-11-24T12:00:00Z');
+  const dates = { 'Jan 4, 2025': '2025-01-04', '4 January 2025': '2025-01-04', 'May 9': '2026-05-09', 'Dec 30': '2025-12-30', '5d ago': '2026-11-19', 'about 1 month ago': '2026-10-25', 'yesterday': '2026-11-23', 'hace 3 días': '2026-11-21', 'Chapter 5': '' };
+  const wrongDates = Object.entries(dates).filter(([t, d]) => ch.chapterDate(t, now) !== d).map(([t]) => t + '→' + ch.chapterDate(t, now));
+  check(!wrongDates.length, 'release dates from what sites show ("5d ago", "May 9", "hace 3 días"…)', wrongDates.join(', '));
+  const run = []; for (let i = 70; i >= 1; i--) run.push({ n: String(i), t: 'Chapter ' + i });
+  run.splice(10, 0, { n: '605', t: 'Chapter 605' });
+  const fixed = ch.fixMisreadNumbers(run);
+  check(fixed.length === 1 && fixed[0].to === 60.5 && run[10].n === '60.5' && run[10].t === 'Chapter 60.5', 'a lone 605 in a list running 1…70 (between 61 and 60) is chapter 60.5');
+  const cut = []; for (let i = 50; i >= 1; i--) cut.push({ n: String(i) });
+  cut.unshift({ n: '505' });
+  check(!ch.fixMisreadNumbers(cut).length && cut[0].n === '505', 'a real chapter 505 above a list cut short at 50 is left alone');
+  const bulk = Array.from({ length: 30 }, (_, i) => ({ d: i < 15 ? '2026-02-22' : `2026-01-${String(i).padStart(2, '0')}` }));
+  check(ch.bulkDates(bulk).has('2026-02-22') && ch.bulkDates(bulk).size === 1, 'a day half the chapters carry is a bulk update (its dates are ignored)');
+
+  console.log('Text');
+  check(text.fixMojibake('CafÃ© Itâ€™s') === 'Café It’s', 'garbled UTF-8 repaired ("CafÃ©" → "Café")');
+  check(text.fixMojibake('Normal — text, café') === 'Normal — text, café', 'proper text left alone');
+
+  await new Promise(r => site.listen(PORT, '127.0.0.1', r));
+  const f = createFetcher({ gapMs: 50, allowLocal: true, parallel: 4 });
+  const latin = await f.get(BASE + '/latin1');
+  check(latin.text.includes('Café'), 'a page is read in the charset it declares (ISO-8859-1)');
+
+  console.log('robots.txt and slowing down');
+  let e1 = null; try { await f.get(`http://localhost:${PORT}/page`); } catch (e) { e1 = e; }
+  check(e1 && e1.code === 'robots' && /RFC 9309/.test(e1.message), 'robots.txt answering 503: the whole site is off-limits', e1 && e1.message);
+  const ok = await f.get(BASE + '/busy');
+  check(ok.text === 'ok' && f.stats.slowedDown === 1 && f.stats.retries === 1, 'a 429 is retried after Retry-After, and the site is slowed down');
+
+  console.log('Metadata-site links on a series page');
+  const adapters = require(path.join(APP, 'library/catalog/adapters'));
+  const doc = parse(`<html><body><h1>Title</h1><a href="https://anilist.co/manga/12345/x">AniList</a><a href="https://myanimelist.net/manga/678/x">MAL</a>
+    <div class="recs"><a href="https://www.mangaupdates.com/series.html?id=1">a</a><a href="https://www.mangaupdates.com/series.html?id=2">b</a></div>
+    <a href="https://www.anime-planet.com/manga/the-title">AP</a></body></html>`);
+  const w = { title: 'Title' };
+  adapters.enrich(doc, w, BASE);
+  check(w.links && w.links.anilist === '12345' && w.links.myanimelist === '678' && w.links.animeplanet === 'the-title', 'AniList, MyAnimeList and Anime-Planet entries kept', JSON.stringify(w.links));
+  check(!w.links.mangaupdates, 'a site linked to twice (a recommendations list) says nothing');
+
+  console.log('Complete chapter lists');
+  const fw = createFetcher({ gapMs: 20, allowLocal: true });
+  const readWork = async (slug, extra) => adapters.ADAPTERS.custom.fetchWork({ src: Object.assign({ type: 'custom', baseUrl: BASE, includeChapters: true, selectors: { chapter: 'ul.ch li' } }, extra || {}), get: fw.get },
+    { sid: '/series/' + slug, url: `${BASE}/series/${slug}`, title: slug });
+  const tpl = await readWork('tpl');
+  check(tpl.chapters.length === 30 && tpl.chaptersVia === 'script address' && tpl.chapters.find(c => c.n === '30').pr, 'an address template in the page (data-api-url + data-comic-slug), paged with skip/take, premium flags kept', tpl.chapters.length + ' ' + tpl.chaptersVia);
+  const nx = await readWork('next');
+  check(nx.chapters.length === 30 && nx.chaptersVia === 'page data' && nx.chapters.some(c => c.u === BASE + '/series/next/chapter-1'), 'chapters in the page\'s Next.js data (addresses learned from the links shown)', nx.chapters.length + ' ' + nx.chaptersVia);
+  const own = await readWork('own', { chaptersUrl: BASE + '/full/{slug}' });
+  check(own.chapters.length === 30 && own.chaptersVia === 'setting', 'the source\'s "Full chapter list URL" ({slug})');
+  const off = await readWork('tpl', { fullChapters: false });
+  check(off.chapters.length === 3, 'turned off: only what the page shows');
+
+  console.log('More fields and clean-up rules');
+  const fields = await adapters.ADAPTERS.custom.fetchWork({ src: { type: 'custom', baseUrl: BASE, includeChapters: false,
+    selectors: { altTitles: '.alt', altSeparator: '•', status: '.st', type: '.ty', year: '.yr', genres: '.g a', tags: '.t li' },
+    clean: { genres: { own: true, counts: true }, tags: { counts: true }, type: { label: true }, status: { label: true } } }, get: fw.get }, { sid: '/series/fields', url: BASE + '/series/fields', title: 'x' });
+  check(fields.altTitles.join('|') === 'Uno|Dos|Tres', 'alternative titles split by the source\'s separator', fields.altTitles.join('|'));
+  check(fields.genres.join('|') === 'Adventure|Action' && fields.tags.join('|') === 'Regression|System', 'counts removed; only the element\'s own text', fields.genres.join('|') + ' / ' + fields.tags.join('|'));
+  check(fields.type === 'Manhwa' && fields.status === 'ongoing' && fields.year === 2019, 'type, status and year (labels removed)', [fields.type, fields.status, fields.year].join(' '));
+
+  console.log('Listings and templates');
+  check(adapters.expandListing('/az/{letter}?page={page}').length === 27 && adapters.expandListing('/list/{manhwa|manhua}').join() === '/list/manhwa,/list/manhua', 'listing addresses per letter ({letter}: 0-9, a … z) and per named value ({a|b})');
+  const listed = [];
+  for await (const pg of adapters.ADAPTERS.custom.listWorks({ src: { type: 'custom', baseUrl: BASE, selectors: { listUrl: '/az/{letter}', linkPattern: '^/manga/[^/]+$' } }, get: fw.get })) listed.push(...pg.map(x => x.sid));
+  check(listed.join() === '/manga/b-one,/manga/q-one', 'every letter read; only links matching the work pattern are works', listed.join());
+  const tpls = require(path.join(APP, 'library/catalog/templates'));
+  const ranked = tpls.rankTemplates('<div class="c-page__content"><script>var manga_get_chapters</script>');
+  check(ranked[0].id === 'madara' && ranked[0].likely && tpls.TEMPLATES.length >= 20 && tpls.TEMPLATES.every(t => t.selectors.listUrl || t.sitemaps), 'templates: the ones whose markers are on the home page come first (' + tpls.TEMPLATES.length + ' templates)');
+
+  console.log('Access (403)');
+  const fa = createFetcher({ gapMs: 20, allowLocal: true, access: { mode: 'auto', home: BASE } });
+  const c1 = await fa.get(BASE + '/needs-cookie');
+  check(c1.text === 'welcome' && c1.access === 'cookies', 'a 403 retried with the cookies the site sets for every visitor (bot-check cookies never sent back)', c1.access);
+  const c2 = await fa.get(BASE + '/needs-cookie');
+  check(c2.text === 'welcome' && !c2.access, 'what worked is remembered for the host and used from the start');
+  const r1 = await createFetcher({ gapMs: 20, allowLocal: true, access: { mode: 'auto', home: BASE } }).get(BASE + '/needs-referer');
+  check(r1.access === 'referer-site', 'Referer variants (here the site\'s address)', r1.access);
+  const fk = createFetcher({ gapMs: 20, allowLocal: true, access: { mode: 'auto', home: BASE, cookies: 'mine=2; cf_clearance=bad', headers: 'X-Api-Key: k1\nUser-Agent: Fake\nX-Forwarded-For: 1.2.3.4' } });
+  const k1 = await fk.get(BASE + '/needs-key');
+  const fetcherMod = require(path.join(APP, 'library/catalog/fetcher'));
+  check(k1.access === 'user' && Object.keys(fetcherMod.headerLines('X-Api-Key: k1\nUser-Agent: Fake\nX-Forwarded-For: 1.2.3.4')).join() === 'X-Api-Key' && fetcherMod.cookiePairs('mine=2; cf_clearance=bad').join() === 'mine=2',
+    'your cookies and headers (identity headers and bot-check cookies refused)');
+  const fo = createFetcher({ gapMs: 20, allowLocal: true, access: { mode: 'auto', home: 'https://another.example', cookies: 'mine=2', headers: 'X-Api-Key: k1' } });
+  let e3 = null; try { await fo.get(BASE + '/needs-key'); } catch (e) { e3 = e; }
+  check(e3 && e3.status === 403, 'your cookies and headers are never sent to another site');
+  let e4 = null; try { await createFetcher({ gapMs: 20, allowLocal: true, access: { mode: 'plain' } }).get(BASE + '/needs-cookie'); } catch (e) { e4 = e; }
+  check(e4 && e4.status === 403 && /Automatic/.test(e4.message), 'plain requests only: the 403 is reported as is', e4 && e4.message);
+
+  site.close();
+  console.log(failed ? `\n${failed} CRAWL RULE CHECK(S) FAILED` : `\nALL ${passed} CRAWL RULE CHECKS PASSED`);
+  process.exit(failed ? 1 : 0);
+})().catch(e => { console.error(e); process.exit(1); });

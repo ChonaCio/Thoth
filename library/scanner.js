@@ -138,7 +138,7 @@ function killWorkers(reason) {
 function scheduleIdle() {
   clearTimeout(service.idleTimer);
   if (!service.workers.length) return;
-  service.idleTimer = setTimeout(() => { if (!currentJob && !queue.length) killWorkers('idle'); }, IDLE_MS);
+  service.idleTimer = setTimeout(() => { if (!running.size && !queue.length) killWorkers('idle'); }, IDLE_MS);
   service.idleTimer.unref();
 }
 
@@ -159,7 +159,7 @@ function restartService() {
 config.onChange(changed => {
   if (changed.includes('scanWorkers') && service.state === 'running' && service.mode === 'process' && service.workers.length) {
     killWorkers('settings changed');
-    if (currentJob || queue.length) ensureWorkers(); else return;
+    if (running.size || queue.length) ensureWorkers(); else return;
     pump();
   }
 });
@@ -201,7 +201,7 @@ function onWorkerExit(w, code) {
   }
   setTimeout(() => {
     // Replaced only while there is work for it (otherwise the next scan starts a full set anyway)
-    if (service.state !== 'running' || !service.workers.length || (!currentJob && !queue.length)) return;
+    if (service.state !== 'running' || !service.workers.length || (!running.size && !queue.length)) return;
     try { service.workers.push(spawnWorker()); service.restarts++; pump(); } catch (e) { service.lastError = e.message; }
   }, 1000).unref();
 }
@@ -209,7 +209,8 @@ function onWorkerExit(w, code) {
 /* ---------------- running one scan ---------------- */
 async function listFiles(lib, status, prev, quick) {
   if (service.mode === 'inline') { status.mode = 'server'; return core.listFiles(lib.root, n => { status.filesSeen = n; }, { prev, quick }); }
-  const w = service.workers[0];
+  // (the least busy process: libraries scanned at the same time list their folders on different ones)
+  const w = service.workers.slice().sort((a, b) => a.pending.size - b.pending.size)[0];
   if (!w || service.state !== 'running') throw cancelled();
   status.mode = 'worker';
   status.worker = w.pid;
@@ -432,9 +433,12 @@ async function runScan(job) {
   }
 }
 
-/* ---------------- the queue: one library at a time ---------------- */
+/* ---------------- the queue: several libraries at a time ----------------
+ * As many libraries are scanned at once as there are scan processes (one inside the server); each lists its
+ * folders on the least busy process and spreads the files it reads over all of them. */
 const queue = [];
-let currentJob = null;
+const running = new Map(); // libraryId → job
+const maxRunning = () => service.mode === 'inline' ? 1 : Math.max(1, Number(config.get().scanWorkers) || 1);
 
 // mode: 'quick' | 'changes' | 'full' (see MODES); { full: true } is the same as mode 'full'.
 // reason: 'startup' | 'schedule' | 'trigger' | 'manual' | 'settings' (shown in the scan report and log)
@@ -458,18 +462,24 @@ function scanLibrary(libraryId, { full = false, mode, reason = 'manual' } = {}) 
   });
 }
 
-async function pump() {
-  if (currentJob || service.state !== 'running') return;
-  if (!queue.length) { scheduleIdle(); return; }
+function pump() {
+  if (service.state !== 'running') return;
+  if (!queue.length) { if (!running.size) scheduleIdle(); return; }
   ensureWorkers();
-  const job = currentJob = queue.shift();
+  while (queue.length && running.size < maxRunning()) {
+    const job = queue.shift();
+    running.set(job.libraryId, job);
+    runJob(job);
+  }
+}
+async function runJob(job) {
   Object.assign(job.status, { queued: false, startedAt: new Date().toISOString(), filesSeen: 0, toAnalyze: 0, analyzed: 0 });
   // A task for the Processes page's Tasks tab, with its own log file
   const libName = (store.db.libraries[job.libraryId] || {}).name || job.libraryId;
   job.task = tasks.start({ kind: 'scan', title: `Scan of "${libName}" (${job.mode}, ${job.reason || 'manual'})`, progress: () => progressOf(job.status) });
   let result, error;
   try { result = await runScan(job); } catch (e) { error = e; }
-  currentJob = null;
+  running.delete(job.libraryId);
   if (error) job.task.end(error.code === 'cancelled' ? 'stopped' : 'failed', error.code === 'cancelled' ? 'the scan service was stopped; the scan runs again when it starts' : error.message);
   else job.task.end('done', `${result.series} works, ${result.books} books (+${result.added} new, ${result.updated} changed, ${result.removed} removed; ${result.read} files read) in ${Math.round(result.durationMs / 100) / 10} s`);
   if (error && error.code === 'cancelled') {
@@ -503,14 +513,17 @@ function progressOf(st) {
 function serviceInfo() {
   const name = id => (store.db.libraries[id] || {}).name || '';
   const cfg = config.get();
+  const view = j => ({ libraryId: j.libraryId, name: name(j.libraryId), full: j.mode === 'full', scanMode: j.mode, reason: j.reason,
+    startedAt: j.status.startedAt, filesSeen: j.status.filesSeen, toAnalyze: j.status.toAnalyze, analyzed: j.status.analyzed, progress: progressOf(j.status) });
+  const now = [...running.values()];
   return {
     mode: service.mode, state: service.state, enabled: serviceEnabled(),
     idle: service.state === 'running' && service.mode === 'process' && !service.workers.length, idleCloseMs: IDLE_MS,
     startedAt: service.startedAt, restarts: service.restarts, lastError: service.lastError,
     processes: cfg.scanWorkers, concurrency: cfg.scanConcurrency,
     workers: service.workers.map(w => ({ pid: w.pid, startedAt: w.startedAt, stats: w.stats, busy: w.pending.size > 0 })),
-    current: currentJob ? { libraryId: currentJob.libraryId, name: name(currentJob.libraryId), full: currentJob.mode === 'full', scanMode: currentJob.mode, reason: currentJob.reason,
-      startedAt: currentJob.status.startedAt, filesSeen: currentJob.status.filesSeen, toAnalyze: currentJob.status.toAnalyze, analyzed: currentJob.status.analyzed, progress: progressOf(currentJob.status) } : null,
+    // (current: the first of them, for older views)
+    running: now.map(view), current: now.length ? view(now[0]) : null,
     queue: queue.map(j => ({ libraryId: j.libraryId, name: name(j.libraryId), full: j.mode === 'full', scanMode: j.mode, reason: j.reason }))
   };
 }

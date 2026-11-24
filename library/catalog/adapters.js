@@ -5,6 +5,7 @@
 //                            d date, l language, v volume)
 // ctx: { src (the source's settings), get (the polite fetcher), known (chapter ids already stored), incremental }
 const { parse } = require('./html');
+const { fromUrl } = require('../metadata/providers');
 
 const abs = (u, base) => { try { return u ? new URL(u, base).href : null; } catch { return null; } };
 const num = s => { const m = /(\d+(?:\.\d+)?)/.exec(String(s || '')); return m ? m[1].replace(/^0+(?=\d)/, '') : null; };
@@ -13,15 +14,28 @@ const list = v => [...new Set((v || []).map(x => String(x).trim()).filter(Boolea
 const splitAlt = s => list(String(s || '').split(/\s*(?:[,;\/|]|\n)\s*/));
 const STATUS = s => { s = String(s || '').toLowerCase(); return /complete|finished|ended|end\b/.test(s) ? 'ended' : /hiatus|on hold/.test(s) ? 'hiatus' : /cancel|dropped|abandon/.test(s) ? 'abandoned' : /ongoing|publishing|releasing|updat|every/.test(s) ? 'ongoing' : 'unknown'; };
 const imgOf = el => el && (el.attr('data-src') || el.attr('data-lazy-src') || el.attr('data-original') || (el.attr('srcset') || '').split(/\s+/)[0] || el.attr('src'));
-// "selector" → text, "selector@attr" → that attribute; several selectors tried in order (||)
-function pick(doc, spec, base, all = false) {
+// Clean-up rules for a field's values (set in the source wizard): counts ("Adventure 999", "Adventure (999)",
+// "Action · 1.2k"), a label before the value ("Status: Ongoing"), only the element's own text (not a count in a
+// <span> inside it), and a regular expression to remove
+function cleanValue(v, rules) {
+  if (!rules || v == null) return v;
+  let s = String(v);
+  if (rules.label) s = s.replace(/^[^:：\n]{1,30}[:：]\s*/, '');
+  if (rules.remove) { try { s = s.replace(new RegExp(rules.remove, 'giu'), ''); } catch { /* not a valid expression */ } }
+  if (rules.counts) s = s.replace(/\s*(?:[([]\s*[\d.,]+\s*[kKmM]?\+?\s*[)\]]|[·•|–-]?\s*\d[\d.,]*\s*[kKmM]?\+?)\s*$/, '');
+  return s.replace(/\s+/g, ' ').trim();
+}
+const ownText = e => (e.el.children || []).filter(c => c.tag === '#text').map(c => c.text).join(' ').replace(/\s+/g, ' ').trim();
+// "selector" → text, "selector@attr" → that attribute; several selectors tried in order (||); clean: cleanValue rules
+function pick(doc, spec, base, all = false, clean = null) {
   if (!spec) return all ? [] : null;
   for (const one of String(spec).split('||').map(s => s.trim()).filter(Boolean)) {
     const at = one.lastIndexOf('@');
     const sel = at > 0 && !/[\]\)]$/.test(one.slice(at)) ? one.slice(0, at) : one;
     const attr = at > 0 && sel !== one ? one.slice(at + 1) : null;
     const els = doc.select(sel);
-    const vals = els.map(e => (attr ? (attr === 'src' ? imgOf(e) : e.attr(attr)) : e.text())).filter(v => v != null && String(v).trim() !== '').map(v => (attr === 'href' || attr === 'src' ? abs(v, base) : String(v).trim()));
+    const vals = els.map(e => (attr ? (attr === 'src' ? imgOf(e) : e.attr(attr)) : clean && clean.own ? ownText(e) : e.text())).filter(v => v != null && String(v).trim() !== '')
+      .map(v => (attr === 'href' || attr === 'src' ? abs(v, base) : cleanValue(String(v).trim(), clean))).filter(v => v !== '');
     if (vals.length) return all ? list(vals) : vals[0];
   }
   return all ? [] : null;
@@ -50,6 +64,19 @@ function enrich(doc, work, base) {
     }
     work.altTitles = list(alt).filter(t => t !== work.title).slice(0, 30);
   }
+  // The work's entries on metadata sites (AniList, MyAnimeList, MangaUpdates, MangaDex, Kitsu, Anime-Planet) that its
+  // page links to: the same entry on two sites is the same work. A page linking to several entries of one site (a
+  // recommendations list) says nothing, so that site is skipped.
+  const found = new Map();
+  for (const a of doc.select('a[href]')) {
+    const href = abs(a.attr('href'), base) || '';
+    const ap = /^https?:\/\/(?:www\.)?anime-planet\.com\/manga\/([\w-]+)\/?(?:[?#]|$)/i.exec(href);
+    const x = ap ? { provider: 'animeplanet', id: ap[1].toLowerCase() } : fromUrl(href);
+    if (!x || ['openlibrary', 'googlebooks', 'comicvine'].includes(x.provider)) continue;
+    if (!found.has(x.provider)) found.set(x.provider, new Set());
+    found.get(x.provider).add(String(x.id));
+  }
+  for (const [p, ids] of found) if (ids.size === 1 && !(work.links && work.links[p])) work.links = Object.assign({}, work.links, { [p]: [...ids][0] });
   return work;
 }
 
@@ -550,32 +577,53 @@ async function applyActions(ctx, page, actions) {
   return { text, url, report, chapters };
 }
 
+// One listing address per value: {letter} → 0-9, a … z; {LETTER} → 0-9, A … Z; {a|b|c} → a, b, c; {weekday} → monday … sunday
+function expandListing(url) {
+  const m = /\{(letter|LETTER|weekdays?|[^{}|]+(?:\|[^{}|]+)+)\}/.exec(url);
+  if (!m) return [url];
+  const vals = m[1] === 'letter' ? ['0-9'].concat('abcdefghijklmnopqrstuvwxyz'.split('')) : m[1] === 'LETTER' ? ['0-9'].concat('ABCDEFGHIJKLMNOPQRSTUVWXYZ'.split(''))
+    : /^weekdays?$/.test(m[1]) ? ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday'] : m[1].split('|');
+  return vals.flatMap(v => expandListing(url.slice(0, m.index) + v + url.slice(m.index + m[0].length)));
+}
 /* ---------------- Any other site: selectors given in the source settings ---------------- */
 // src.selectors: { listUrl ("…{page}…"), firstPage, item, link, title, cover, workTitle, workCover, summary, genres,
 //   authors, altTitles, status, chapter, chapterLink, chapterTitle, chapterDate }  ("sel@attr", "a || b")
 const custom = {
   type: 'custom', label: 'Other site (selectors)', defaults: { gapMs: 2000 },
+  // Listing pages: listUrl (+ extraListUrls, one per line), each read page after page ({page}) until one adds
+  // nothing new or maxPages; {letter} / {LETTER} (0-9, a … z) and {a|b|c} make one listing per value. Works are
+  // the item elements' links (or the links matching linkPattern, a regular expression on the address's path)
   async *listWorks(ctx) {
     const { src, get } = ctx;
     const s = src.selectors || {};
-    if (!s.listUrl || !s.item) throw Object.assign(new Error('The list address and the work selector are needed'), { code: 'config' });
+    if (!s.listUrl || (!s.item && !s.linkPattern)) throw Object.assign(new Error('The list address and the work selector are needed'), { code: 'config' });
     const seen = new Set();
     const start = Number(s.firstPage) || 1;
-    for (let page = start; page < start + 5000; page++) {
-      const url = abs(s.listUrl.replace('{page}', page), src.baseUrl);
-      let res;
-      try { res = await (ctx.page || get)(url); } catch (e) { if (e.code === 'http' && e.status === 404 && page > start) return; throw e; }
-      res = await applyActions(ctx, { text: res.text, url: res.url }, (src.actions || {}).list);
-      const doc = parse(res.text);
-      const items = doc.select(s.item).map(it => {
-        const a = s.link ? it.first(s.link.split('@')[0]) : (it.el.tag === 'a' ? it : it.first('a[href]'));
-        const href = a && abs(a.attr(s.link && s.link.includes('@') ? s.link.split('@')[1] : 'href'), res.url);
-        return href ? { sid: href.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), url: href, title: s.title ? pick(it, s.title, res.url) : (a.attr('title') || a.text()), cover: s.cover ? pick(it, s.cover, res.url) : abs(imgOf(it.first('img')), res.url) } : null;
-      }).filter(Boolean);
-      const fresh = freshOnly(seen, items);
-      if (!fresh.length) return;
-      yield fresh;
-      if (!s.listUrl.includes('{page}')) return;
+    const maxPages = Math.max(1, Math.min(5000, Number(s.maxPages) || 5000));
+    let linkRe = null; try { linkRe = s.linkPattern ? new RegExp(s.linkPattern, 'i') : null; } catch { /* not a valid expression */ }
+    const listings = [s.listUrl].concat(String(s.extraListUrls || '').split(/\n+/).map(x => x.trim()).filter(Boolean)).flatMap(expandListing);
+    for (const listUrl of listings) {
+      for (let page = start; page < start + maxPages; page++) {
+        const url = abs(listUrl.replace('{page}', page), src.baseUrl);
+        let res;
+        try { res = await (ctx.page || get)(url); } catch (e) { if (e.code === 'http' && e.status === 404 && page > start) break; if (listings.length > 1 && e.code === 'http') break; throw e; }
+        res = await applyActions(ctx, { text: res.text, url: res.url }, (src.actions || {}).list);
+        const doc = parse(res.text);
+        const pathOf = u => { try { return decodeURI(new URL(u).pathname); } catch { return ''; } };
+        const host = (() => { try { return new URL(res.url).host; } catch { return ''; } })();
+        const nodes = s.item ? doc.select(s.item) : doc.select('a[href]');
+        const items = nodes.map(it => {
+          const a = s.link ? it.first(s.link.split('@')[0]) : (it.el.tag === 'a' ? it : it.first('a[href]'));
+          const href = a && abs(a.attr(s.link && s.link.includes('@') ? s.link.split('@')[1] : 'href'), res.url);
+          if (!href) return null;
+          if (linkRe) { let h; try { h = new URL(href).host; } catch { return null; } if (h !== host || !linkRe.test(pathOf(href))) return null; }
+          return { sid: href.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), url: href, title: s.title ? pick(it, s.title, res.url) : (a.attr('title') || a.text()), cover: s.cover ? pick(it, s.cover, res.url) : abs(imgOf(it.first('img')), res.url) };
+        }).filter(Boolean);
+        const fresh = freshOnly(seen, items);
+        if (!fresh.length) break;
+        yield fresh;
+        if (!listUrl.includes('{page}')) break;
+      }
     }
   },
   async fetchWork(ctx, stub) {
@@ -585,13 +633,21 @@ const custom = {
     const res = await applyActions(ctx, await (ctx.page || get)(stub.url).then(r => ({ text: r.text, url: r.url })), acts.work);
     const doc = parse(res.text);
     const meta = p => (doc.first(`meta[property="${p}"]`) || { attr: () => null }).attr('content');
+    const cl = src.clean || {};
+    const altRaw = s.altTitles ? pick(doc, s.altTitles, res.url, true, cl.altTitles) : [];
+    const altSplit = v => (s.altSeparator ? list(String(v).split(s.altSeparator)) : splitAlt(v));
+    const yearText = pick(doc, s.year, res.url, false, cl.year);
     const work = Object.assign({}, stub, {
-      title: pick(doc, s.workTitle, res.url) || meta('og:title') || pick(doc, 'h1', res.url) || stub.title,
+      title: pick(doc, s.workTitle, res.url, false, cl.workTitle) || meta('og:title') || pick(doc, 'h1', res.url) || stub.title,
       cover: pick(doc, s.workCover, res.url) || abs(meta('og:image'), res.url) || stub.cover,
-      summary: s.summary ? (doc.first(s.summary) || { textBlock: () => '' }).textBlock() : (meta('og:description') || ''),
-      genres: pick(doc, s.genres, res.url, true), authors: pick(doc, s.authors, res.url, true),
-      altTitles: s.altTitles ? splitAlt(pick(doc, s.altTitles, res.url)) : [], status: STATUS(pick(doc, s.status, res.url))
+      summary: s.summary ? cleanValue((doc.first(s.summary) || { textBlock: () => '' }).textBlock(), cl.summary && Object.assign({}, cl.summary, { counts: false })) : (meta('og:description') || ''),
+      genres: pick(doc, s.genres, res.url, true, cl.genres), authors: pick(doc, s.authors, res.url, true, cl.authors),
+      tags: pick(doc, s.tags, res.url, true, cl.tags),
+      altTitles: list(altRaw.flatMap(altSplit)), status: STATUS(pick(doc, s.status, res.url, false, cl.status)),
+      type: pick(doc, s.type, res.url, false, cl.type) || null,
+      year: (/\b(19|20)\d{2}\b/.exec(yearText || '') || [])[0] ? Number(/\b(19|20)\d{2}\b/.exec(yearText)[0]) : null
     });
+    if (work.type) work.type = String(work.type).replace(/\s+/g, ' ').trim().slice(0, 30);
     enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
     // The chapters' own clicks (a "Chapters" tab, "Show all chapters"…), from the work page as it is now
@@ -618,7 +674,7 @@ const custom = {
         return { id: p.replace(/\/+$/, ''), n: chapterNum(t) || chapterNum(p.split('/').filter(Boolean).pop()), t, u, d: '', l: langs(src)[0] || null, pr: isPremium(a, null) || undefined };
       }).filter(Boolean));
       work.chapters = withExtra(work.chapters);
-      return work;
+      return withComplete(ctx, work, chDoc, chRes);
     }
     work.chapters = await withHiddenChapters(ctx, chDoc, chRes.url, (d, base) => d.select(s.chapter).map(li => {
       const link = s.chapterLink || 'a@href';
@@ -629,10 +685,23 @@ const custom = {
       return u ? { id: u.replace(/^https?:\/\/[^/]+/, '').replace(/\/+$/, ''), n: chapterNum(t), t, u, d: s.chapterDate ? pick(li, s.chapterDate, base) || '' : '', l: langs(src)[0] || null, pr: isPremium(li, t) || undefined } : null;
     }).filter(Boolean));
     work.chapters = withExtra(work.chapters);
-    return work;
+    return withComplete(ctx, work, chDoc, chRes);
   }
 };
+// A chapter list that looks incomplete (or a source with a "Full chapter list URL"): the rest read where the page's
+// own script would get it (hidden.js); unless the source turned it off
+async function withComplete(ctx, work, doc, res) {
+  const src = ctx.src || {};
+  if (src.fullChapters === false || (!src.chaptersUrl && !require('./hidden').looksIncomplete(work.chapters || []))) return work;
+  const more = await require('./hidden').complete(ctx, { doc, html: res.text, url: res.url, have: work.chapters || [] });
+  if (!more) return work;
+  const byId = new Map((work.chapters || []).map(c => [c.id, c]));
+  for (const c of more.chapters) { const have = byId.get(c.id); if (have) { if (!have.d && c.d) have.d = c.d; if (c.pr) have.pr = true; } else byId.set(c.id, Object.assign({}, c, { l: c.l || langs(src)[0] || null })); }
+  work.chapters = [...byId.values()];
+  work.chaptersVia = more.via;
+  return work;
+}
 
 const ADAPTERS = { mangadex, webtoons, madara, mangareader, custom };
 const TYPES = Object.keys(ADAPTERS);
-module.exports = { ADAPTERS, TYPES, pick, chapterNum, STATUS, applyActions };
+module.exports = { ADAPTERS, TYPES, pick, chapterNum, STATUS, applyActions, enrich, cleanValue, expandListing };

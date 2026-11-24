@@ -17,6 +17,7 @@ const lister = (src, adapter) => (src.listing === 'sitemap' && src.workPattern &
 // number said twice dropped (the name as the site shows it kept in `raw`, the volume in `v`)
 const { chapterTitle } = require('../naming');
 const { preferEnglish } = require('../titles');
+const { chapterDate, fixMisreadNumbers, bulkDates } = require('./chapters');
 function standardChapter(c, src) {
   // MangaDex gives the number apart from the title
   const raw = src.type === 'mangadex' && c.n ? `Chapter ${c.n} ${c.t || ''}` : c.t;
@@ -24,6 +25,8 @@ function standardChapter(c, src) {
   const out = Object.assign({}, c, { t: std.name, n: std.n != null ? std.n : c.n });
   if (std.v && !out.v) out.v = std.v;
   if (c.t && c.t !== std.name) out.raw = c.t;
+  // Dates as YYYY-MM-DD, also when the site shows "5d ago" or "May 9"
+  if (out.d && !/^\d{4}-\d{2}-\d{2}$/.test(out.d)) out.d = chapterDate(out.d);
   return out;
 }
 
@@ -31,7 +34,10 @@ function standardChapter(c, src) {
 function settingsKey(src) {
   const pick = { type: src.type, listing: src.listing, workPattern: src.workPattern, chapterPattern: src.chapterPattern, listPath: src.listPath, languages: src.languages,
     contentRating: src.contentRating, includeChapters: src.includeChapters !== false, selectors: src.selectors || {}, actions: src.actions || {} };
-  if (src.render) pick.render = src.renderWaitMs || true; // (only when on: other sources keep their key)
+  if (src.clean) pick.clean = src.clean;
+  if (src.render) pick.render = src.renderWaitMs || true;
+  if (src.chaptersUrl) pick.chaptersUrl = src.chaptersUrl;
+  if (src.fullChapters === false) pick.fullChapters = false; // (only when on: other sources keep their key)
   return require('crypto').createHash('sha1').update(JSON.stringify(pick)).digest('hex').slice(0, 16);
 }
 
@@ -40,6 +46,9 @@ const { chapterNum } = require('./adapters');
 function withSitemapChapters(list, fromSitemaps) {
   if (!fromSitemaps || !fromSitemaps.length) return list;
   const byId = new Map(list.map(c => [String(c.id), c]));
+  // (a day that a large share of the chapters carry: the site bulk-updated them; that date says nothing)
+  const bulk = bulkDates(fromSitemaps);
+  fromSitemaps = fromSitemaps.map(x => (x.d && bulk.has(String(x.d).slice(0, 10)) ? Object.assign({}, x, { d: '' }) : x));
   for (const x of fromSitemaps) {
     let p; try { p = decodeURI(new URL(x.u).pathname); } catch { continue; }
     const id = p.replace(/\/+$/, '');
@@ -53,6 +62,8 @@ function withSitemapChapters(list, fromSitemaps) {
   return list;
 }
 
+// How a source's requests are made for sites that answer 403 (fetcher.js: access)
+const accessOf = src => Object.assign({ mode: 'auto', home: src.siteUrl || src.baseUrl || '' }, src.access || {});
 let current = null;
 const FIELDS = ['title', 'altTitles', 'cover', 'summary', 'authors', 'genres', 'tags', 'status', 'type', 'year', 'url', 'languages', 'links'];
 const filled = v => v != null && v !== '' && !(Array.isArray(v) && !v.length) && v !== 'unknown';
@@ -89,7 +100,7 @@ async function crawl(msg, send) {
   // Several requests to the site at once (one per work read at once), each lane pausing gapMs between its own
   // requests; a robots.txt Crawl-delay brings it back to one at a time
   const parallel = Math.max(1, Math.min(8, Number(msg.concurrency) || 1));
-  const fetcher = createFetcher({ gapMs, parallel, allowLocal: msg.allowLocal });
+  const fetcher = createFetcher({ gapMs, parallel, allowLocal: msg.allowLocal, access: accessOf(src) });
   // How it's crawling right now: works read at once, requests in progress / waiting for their turn, the pause
   const concurrencyNow = () => { const l = fetcher.limits(); return { lanes: stats.concurrency || 1, parallel: l.parallel, crawlDelay: l.crawlDelay, active: fetcher.stats.active, waiting: fetcher.stats.waiting, gapMs }; };
   const run = current = { stop: false, fetcher };
@@ -141,6 +152,21 @@ async function crawl(msg, send) {
     listingComplete = !src.maxWorks || stats.listed < src.maxWorks;
     const sc = ctx.sitemapCounts;
     say(`${stats.listed} work(s) listed (${stats.added} new)` + (sc ? `; sitemaps: ${sc.files} read, ${sc.unchanged} unchanged, ${sc.notRead} not downloaded (same date)` + (sc.chapters ? `; ${sc.chapters} chapter addresses in them` : '') : ''));
+    // An update also reads ongoing works that are due for a check (a site's sitemap seldom changes when a chapter
+    // is added): about half their usual gap between chapters, at least every 7 days and at most every 12 hours
+    if (incremental && listingComplete && src.checkOngoing !== false && src.includeChapters !== false) {
+      const inQueue = new Set(queue), now = Date.now();
+      let due = 0;
+      for (const [sid, w] of Object.entries(works)) {
+        if (inQueue.has(sid) || w.status !== 'ongoing') continue;
+        const dates = (((chapters.get(sid) || {}).chapters) || []).map(c => Date.parse(c.d)).filter(Number.isFinite).sort((a, b) => b - a).slice(0, 12);
+        const gaps = dates.slice(1).map((d, i) => dates[i] - d).filter(g => g > 0).sort((a, b) => a - b);
+        const usual = gaps.length ? gaps[Math.floor(gaps.length / 2)] : null;
+        const every = Math.min(7 * 86400000, Math.max(12 * 3600000, usual ? usual / 2 : 7 * 86400000));
+        if (!w.detailAt || now - Date.parse(w.detailAt) >= every) { queue.push(sid); due++; }
+      }
+      if (due) { stats.ongoingChecked = due; say(`${due} ongoing work(s) due for a check of new chapters`); }
+    }
     // 2. Each work's details and chapter list: several works at once (msg.concurrency lanes taking the next
     // work from the list). The fetcher still spaces the requests to one site by gapMs, so more lanes only
     // help while pages are slow to answer; they never make the crawl hit the site faster than that.
@@ -158,6 +184,9 @@ async function crawl(msg, send) {
     const lim = fetcher.limits();
     say(`reading the works: ${lanes} at once; up to ${lim.parallel} request(s) to the site at once, each waiting ${gapMs} ms after its previous one` + (lim.crawlDelay != null ? ` (robots.txt asks for ${lim.crawlDelay} s between requests: one at a time)` : ''));
     report(worksProgress());
+    // Series pages the site refuses (401/403, a bot check) while its listing worked: after 3 refusals in a row no
+    // more are requested and the works keep what the listing gave (titles, links); never worked around
+    let refusals = 0, pagesRefused = null;
     const readWork = async sid => {
       const w = works[sid];
       try {
@@ -174,6 +203,8 @@ async function crawl(msg, send) {
           const byId = new Map(((incremental && old && old.chapters) || []).map(c => [String(c.id), c]));
           for (const c of full.chapters) byId.set(String(c.id), c);
           const list = [...byId.values()];
+          // Numbers that lost their decimal point ("605" in a list running 1…70 is 60.5)
+          for (const x of fixMisreadNumbers(list)) say(`"${w.title || sid}": chapter ${x.from} read as ${x.to}`);
           chapters.set(sid, { chapters: list, partial: Boolean(full.partial) });
           w.chapterCount = list.length;
           const nums = list.map(c => parseFloat(c.n)).filter(Number.isFinite);
@@ -189,9 +220,18 @@ async function crawl(msg, send) {
         }
         w.detailAt = new Date().toISOString();
         stats.read++; stats.updated++;
+        refusals = 0;
       } catch (e) {
         if (e.code === 'stopped') return;
-        if (e.code === 'blocked' || e.code === 'notPublic') { if (!aborted) aborted = e; return; } // the whole site
+        if (e.code === 'notPublic') { if (!aborted) aborted = e; return; } // the whole site
+        if (e.code === 'blocked' || (e.code === 'http' && (e.status === 401 || e.status === 403))) {
+          if (++refusals >= 3 && !pagesRefused) {
+            pagesRefused = e; stats.pagesRefused = true;
+            say(`the site refused 3 series pages in a row (${errText(e)}): no more series pages are requested; the works keep what the listing gave`);
+          }
+          stats.errors++; failed.add(sid); w.error = errText(e).slice(0, 200);
+          return;
+        }
         stats.errors++;
         failed.add(sid);
         w.error = errText(e).slice(0, 200);
@@ -199,12 +239,12 @@ async function crawl(msg, send) {
       }
     };
     const lane = async () => {
-      while (!run.stop && !aborted && next < queue.length) {
+      while (!run.stop && !aborted && !pagesRefused && next < queue.length) {
         const sid = queue[next++];
         const w = works[sid];
         const skipped = resume && w.detailAt && w.detailAt >= resume; // (read before an interruption)
         if (!skipped) await readWork(sid);
-        if (run.stop || aborted) return;
+        if (run.stop || aborted || pagesRefused) return;
         done++;
         if (!skipped) readCount++;
         if (done % 25 === 0 || done === queue.length) say(`${done} of ${queue.length} works read (${stats.chapters} chapters, ${stats.errors} errors)`);
@@ -244,11 +284,42 @@ async function crawl(msg, send) {
   return Object.assign({ stopped: run.stop, total: Object.keys(works).length }, stats);
 }
 
+// "Find a matching template": the templates likely for the site (its home page's markers) first, each tried with
+// a few requests (its first listing page and one work page), ranked by works found and work fields read
+async function findTemplate(msg) {
+  const { rankTemplates } = require('./templates');
+  const fetcher = createFetcher({ gapMs: 300, allowLocal: msg.allowLocal });
+  const origin = new URL(msg.url).origin;
+  let home = '';
+  try { home = (await fetcher.get(origin + '/')).text; } catch (e) { if (e.code === 'blocked' || e.code === 'robots' || e.code === 'notPublic') throw e; }
+  const ranked = rankTemplates(home);
+  const tryList = ranked.filter(t => t.likely).concat(ranked.filter(t => !t.likely)).slice(0, Math.max(6, ranked.filter(t => t.likely).length));
+  const out = [];
+  for (const t of tryList) {
+    const src = { type: 'custom', baseUrl: origin, includeChapters: true, selectors: Object.assign({}, t.selectors) };
+    if (!src.selectors.listUrl) continue;
+    const ctx = { src, get: fetcher.get, incremental: false, known: new Set() };
+    const r = { id: t.id, name: t.name, likely: t.likely, works: 0, fields: [], sample: null, error: null };
+    try {
+      for await (const page of ADAPTERS.custom.listWorks(ctx)) { r.works = page.length; r.sample = page[0] && (page[0].title || page[0].sid); if (page[0]) r.first = page[0]; break; }
+      if (r.first) {
+        const w = await ADAPTERS.custom.fetchWork(ctx, Object.assign({}, r.first));
+        r.fields = ['title', 'cover', 'summary', 'genres', 'authors', 'altTitles', 'status', 'chapters'].filter(k => (k === 'chapters' ? (w.chapters || []).length : k === 'status' ? w.status && w.status !== 'unknown' : Array.isArray(w[k]) ? w[k].length : w[k]));
+        r.chapters = (w.chapters || []).length;
+      }
+    } catch (e) { if (e.code === 'blocked') throw e; r.error = errText(e).slice(0, 160); }
+    delete r.first;
+    out.push(r);
+  }
+  out.sort((a, b) => (b.works > 0) - (a.works > 0) || b.fields.length - a.fields.length || (b.likely ? 1 : 0) - (a.likely ? 1 : 0));
+  return { results: out, requests: fetcher.stats.requests };
+}
+
 // "Test" in the Sources page: what the settings find on the site, without saving anything
 async function test(msg) {
   const src = Object.assign({}, msg.source, { includeChapters: true });
   const adapter = ADAPTERS[src.type];
-  const fetcher = createFetcher({ gapMs: 300, allowLocal: msg.allowLocal });
+  const fetcher = createFetcher({ gapMs: 300, allowLocal: msg.allowLocal, access: accessOf(src) });
   const ctx = { src, get: fetcher.get, page: src.render ? u => fetcher.render(u, { waitMs: src.renderWaitMs }) : null, incremental: false, known: new Set() };
   const out = { works: [], firstPageCount: 0, work: null, errors: [] };
   try {
@@ -272,7 +343,7 @@ if (require.main === module && process.send) {
     if (msg.type === 'stop') { stop(); return; }
     if (!['crawl', 'test', 'detect', 'siteFile', 'preview'].includes(msg.type)) return;
     const run = { crawl: () => crawl(msg, send), detect: () => require('./detect').detect(msg), test: () => test(msg),
-      siteFile: () => require('./sitefiles').readSiteFile(msg), preview: () => require('./sitefiles').previewPage(msg) }[msg.type];
+      siteFile: () => require('./sitefiles').readSiteFile(msg), preview: () => require('./sitefiles').previewPage(msg), findTemplate: () => findTemplate(msg) }[msg.type];
     try { send({ type: 'result', reqId: msg.reqId, result: await run() }); }
     catch (e) { send({ type: 'error', reqId: msg.reqId, code: e.code || null, message: e.message, stats: e.stats || null }); }
   });

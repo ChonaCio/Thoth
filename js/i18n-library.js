@@ -4326,4 +4326,554 @@
     "wz.renderWaitHelp": "Quanto tempo uma página tem para se montar (o navegador segue antes se nada estiver pendente). Padrão: 8.",
     "wz.rendering": "Montando a página em um navegador no servidor…"
   });
+  add('en', {
+    "cat.latestChapter": "Latest: {n}",
+    "cat.sortSites": "Most sites",
+    "cat.moreFilters": "More filters",
+    "cat.view": "View",
+    "cat.viewGrid": "Covers",
+    "cat.viewList": "List",
+    "cat.export": "{format}",
+    "cat.type": "Type",
+    "cat.any": "Any",
+    "cat.status": "Status",
+    "cat.sitesCount": "Sites",
+    "cat.sites1": "Only one site",
+    "cat.sites2": "On 2 sites",
+    "cat.sites3": "On 3 or more sites",
+    "cat.lacks": "Not on this site",
+    "cat.updatedWithin": "Updated",
+    "cat.updatedDay": "Today",
+    "cat.updatedWeek": "This week",
+    "cat.updatedMonth": "This month",
+    "cat.with": "Has genres or tags",
+    "cat.without": "Hasn't genres or tags",
+    "cat.genresPh": "e.g. Action, Murim",
+    "cat.author": "Author",
+    "cat.clearFilters": "Clear these filters",
+    "cat.clearConfirm": "This removes every crawled work, chapter list, manual merge and split, and the cached covers. The sources and their settings stay; their next crawls are full ones. It can't be undone. Type CLEAR to confirm.",
+    "cat.clearTypeIt": "Nothing was cleared: type CLEAR to confirm.",
+    "cat.cleared": "Catalog cleared: {count} works removed.",
+    "cat.clearTitle": "Clear the crawled catalog",
+    "cat.clearHelp": "Removes every work, chapter list, manual merge, split and cached cover. The sources and their settings are kept; their next crawls are full ones.",
+    "cat.clearButton": "Clear the catalog…",
+    "cat.everyHours": "Every {count} h",
+    "cat.paused": "paused",
+    "cat.blacklistHides": "its blacklist hides {count}",
+    "cat.schedule.hours": "Every few hours",
+    "cat.scheduleHours": "Hours between crawls",
+    "cat.pauseSource": "Paused",
+    "cat.pauseSourceHelp": "No scheduled crawls while paused (a crawl can still be started by hand).",
+    "cat.blacklist": "Blacklist",
+    "cat.blacklistHelp": "Works with any of these are left out of this source (one per line or separated by commas; any spelling: Sci-Fi also matches Science Fiction, \"Doe, Jane\" matches Jane Doe). A work is judged by what all its sites say; it stays through other sites unless they block it too.",
+    "cat.blGenres": "Genres or categories",
+    "cat.blTags": "Tags",
+    "cat.blAuthors": "Authors or artists",
+    "err.confirmClear": "Type CLEAR to confirm."
+  });
+  add('es', {
+    "cat.latestChapter": "Último: {n}",
+    "cat.sortSites": "Más sitios",
+    "cat.moreFilters": "Más filtros",
+    "cat.view": "Vista",
+    "cat.viewGrid": "Portadas",
+    "cat.viewList": "Lista",
+    "cat.export": "{format}",
+    "cat.type": "Tipo",
+    "cat.any": "Cualquiera",
+    "cat.status": "Estado",
+    "cat.sitesCount": "Sitios",
+    "cat.sites1": "Solo un sitio",
+    "cat.sites2": "En 2 sitios",
+    "cat.sites3": "En 3 o más sitios",
+    "cat.lacks": "No está en este sitio",
+    "cat.updatedWithin": "Actualizado",
+    "cat.updatedDay": "Hoy",
+    "cat.updatedWeek": "Esta semana",
+    "cat.updatedMonth": "Este mes",
+    "cat.with": "Con géneros o etiquetas",
+    "cat.without": "Sin géneros o etiquetas",
+    "cat.genresPh": "p. ej. Acción, Murim",
+    "cat.author": "Autor",
+    "cat.clearFilters": "Quitar estos filtros",
+    "cat.clearConfirm": "Esto borra todas las obras rastreadas, listas de capítulos, fusiones y separaciones manuales y las portadas en caché. Las fuentes y su configuración se conservan; sus próximos rastreos serán completos. No se puede deshacer. Escribe CLEAR para confirmar.",
+    "cat.clearTypeIt": "No se borró nada: escribe CLEAR para confirmar.",
+    "cat.cleared": "Catálogo borrado: {count} obras eliminadas.",
+    "cat.clearTitle": "Borrar el catálogo rastreado",
+    "cat.clearHelp": "Elimina todas las obras, listas de capítulos, fusiones y separaciones manuales y portadas en caché. Las fuentes y su configuración se conservan; sus próximos rastreos serán completos.",
+    "cat.clearButton": "Borrar el catálogo…",
+    "cat.everyHours": "Cada {count} h",
+    "cat.paused": "en pausa",
+    "cat.blacklistHides": "su lista negra oculta {count}",
+    "cat.schedule.hours": "Cada pocas horas",
+    "cat.scheduleHours": "Horas entre rastreos",
+    "cat.pauseSource": "En pausa",
+    "cat.pauseSourceHelp": "Sin rastreos programados mientras está en pausa (aún se puede iniciar uno a mano).",
+    "cat.blacklist": "Lista negra",
+    "cat.blacklistHelp": "Las obras con cualquiera de estos se excluyen de esta fuente (uno por línea o separados por comas; cualquier escritura: Sci-Fi también coincide con Science Fiction, \"Doe, Jane\" con Jane Doe). Una obra se juzga por lo que dicen todos sus sitios; sigue en el catálogo por otros sitios salvo que también la bloqueen.",
+    "cat.blGenres": "Géneros o categorías",
+    "cat.blTags": "Etiquetas",
+    "cat.blAuthors": "Autores o artistas",
+    "err.confirmClear": "Escribe CLEAR para confirmar."
+  });
+  add('fr', {
+    "cat.latestChapter": "Dernier : {n}",
+    "cat.sortSites": "Le plus de sites",
+    "cat.moreFilters": "Plus de filtres",
+    "cat.view": "Affichage",
+    "cat.viewGrid": "Couvertures",
+    "cat.viewList": "Liste",
+    "cat.export": "{format}",
+    "cat.type": "Type",
+    "cat.any": "Tous",
+    "cat.status": "Statut",
+    "cat.sitesCount": "Sites",
+    "cat.sites1": "Un seul site",
+    "cat.sites2": "Sur 2 sites",
+    "cat.sites3": "Sur 3 sites ou plus",
+    "cat.lacks": "Absent de ce site",
+    "cat.updatedWithin": "Mis à jour",
+    "cat.updatedDay": "Aujourd'hui",
+    "cat.updatedWeek": "Cette semaine",
+    "cat.updatedMonth": "Ce mois-ci",
+    "cat.with": "Avec les genres ou tags",
+    "cat.without": "Sans les genres ou tags",
+    "cat.genresPh": "ex. Action, Murim",
+    "cat.author": "Auteur",
+    "cat.clearFilters": "Effacer ces filtres",
+    "cat.clearConfirm": "Cela supprime toutes les œuvres explorées, listes de chapitres, fusions et séparations manuelles et les couvertures en cache. Les sources et leurs réglages restent ; leurs prochaines explorations seront complètes. Irréversible. Tapez CLEAR pour confirmer.",
+    "cat.clearTypeIt": "Rien n'a été effacé : tapez CLEAR pour confirmer.",
+    "cat.cleared": "Catalogue effacé : {count} œuvres supprimées.",
+    "cat.clearTitle": "Effacer le catalogue exploré",
+    "cat.clearHelp": "Supprime toutes les œuvres, listes de chapitres, fusions et séparations manuelles et couvertures en cache. Les sources et leurs réglages sont conservés ; leurs prochaines explorations seront complètes.",
+    "cat.clearButton": "Effacer le catalogue…",
+    "cat.everyHours": "Toutes les {count} h",
+    "cat.paused": "en pause",
+    "cat.blacklistHides": "sa liste noire masque {count}",
+    "cat.schedule.hours": "Toutes les quelques heures",
+    "cat.scheduleHours": "Heures entre les explorations",
+    "cat.pauseSource": "En pause",
+    "cat.pauseSourceHelp": "Pas d'exploration programmée pendant la pause (on peut toujours en lancer une à la main).",
+    "cat.blacklist": "Liste noire",
+    "cat.blacklistHelp": "Les œuvres ayant l'un de ces éléments sont exclues de cette source (un par ligne ou séparés par des virgules ; toute orthographe : Sci-Fi correspond aussi à Science Fiction, « Doe, Jane » à Jane Doe). Une œuvre est jugée d'après tous ses sites ; elle reste via les autres sites sauf s'ils la bloquent aussi.",
+    "cat.blGenres": "Genres ou catégories",
+    "cat.blTags": "Tags",
+    "cat.blAuthors": "Auteurs ou artistes",
+    "err.confirmClear": "Tapez CLEAR pour confirmer."
+  });
+  add('de', {
+    "cat.latestChapter": "Neuestes: {n}",
+    "cat.sortSites": "Meiste Websites",
+    "cat.moreFilters": "Weitere Filter",
+    "cat.view": "Ansicht",
+    "cat.viewGrid": "Cover",
+    "cat.viewList": "Liste",
+    "cat.export": "{format}",
+    "cat.type": "Typ",
+    "cat.any": "Beliebig",
+    "cat.status": "Status",
+    "cat.sitesCount": "Websites",
+    "cat.sites1": "Nur eine Website",
+    "cat.sites2": "Auf 2 Websites",
+    "cat.sites3": "Auf 3 oder mehr Websites",
+    "cat.lacks": "Nicht auf dieser Website",
+    "cat.updatedWithin": "Aktualisiert",
+    "cat.updatedDay": "Heute",
+    "cat.updatedWeek": "Diese Woche",
+    "cat.updatedMonth": "Diesen Monat",
+    "cat.with": "Mit Genres oder Tags",
+    "cat.without": "Ohne Genres oder Tags",
+    "cat.genresPh": "z. B. Action, Murim",
+    "cat.author": "Autor",
+    "cat.clearFilters": "Diese Filter entfernen",
+    "cat.clearConfirm": "Das entfernt alle durchsuchten Werke, Kapitellisten, manuellen Zusammenführungen und Trennungen sowie die zwischengespeicherten Cover. Die Quellen und ihre Einstellungen bleiben; ihre nächsten Crawls sind vollständig. Nicht umkehrbar. Gib CLEAR zur Bestätigung ein.",
+    "cat.clearTypeIt": "Nichts entfernt: Gib CLEAR zur Bestätigung ein.",
+    "cat.cleared": "Katalog geleert: {count} Werke entfernt.",
+    "cat.clearTitle": "Durchsuchten Katalog leeren",
+    "cat.clearHelp": "Entfernt alle Werke, Kapitellisten, manuellen Zusammenführungen und Trennungen sowie zwischengespeicherte Cover. Die Quellen und ihre Einstellungen bleiben; ihre nächsten Crawls sind vollständig.",
+    "cat.clearButton": "Katalog leeren…",
+    "cat.everyHours": "Alle {count} h",
+    "cat.paused": "pausiert",
+    "cat.blacklistHides": "ihre Sperrliste blendet {count} aus",
+    "cat.schedule.hours": "Alle paar Stunden",
+    "cat.scheduleHours": "Stunden zwischen Crawls",
+    "cat.pauseSource": "Pausiert",
+    "cat.pauseSourceHelp": "Keine geplanten Crawls während der Pause (von Hand lässt sich weiterhin einer starten).",
+    "cat.blacklist": "Sperrliste",
+    "cat.blacklistHelp": "Werke mit einem dieser Einträge werden bei dieser Quelle ausgelassen (einer pro Zeile oder durch Kommas getrennt; jede Schreibweise: Sci-Fi trifft auch Science Fiction, „Doe, Jane“ trifft Jane Doe). Ein Werk wird nach allen seinen Websites beurteilt; über andere Websites bleibt es, außer sie sperren es auch.",
+    "cat.blGenres": "Genres oder Kategorien",
+    "cat.blTags": "Tags",
+    "cat.blAuthors": "Autoren oder Zeichner",
+    "err.confirmClear": "Gib CLEAR zur Bestätigung ein."
+  });
+  add('pt', {
+    "cat.latestChapter": "Último: {n}",
+    "cat.sortSites": "Mais sites",
+    "cat.moreFilters": "Mais filtros",
+    "cat.view": "Visualização",
+    "cat.viewGrid": "Capas",
+    "cat.viewList": "Lista",
+    "cat.export": "{format}",
+    "cat.type": "Tipo",
+    "cat.any": "Qualquer",
+    "cat.status": "Status",
+    "cat.sitesCount": "Sites",
+    "cat.sites1": "Só um site",
+    "cat.sites2": "Em 2 sites",
+    "cat.sites3": "Em 3 ou mais sites",
+    "cat.lacks": "Não está neste site",
+    "cat.updatedWithin": "Atualizado",
+    "cat.updatedDay": "Hoje",
+    "cat.updatedWeek": "Esta semana",
+    "cat.updatedMonth": "Este mês",
+    "cat.with": "Com gêneros ou tags",
+    "cat.without": "Sem gêneros ou tags",
+    "cat.genresPh": "ex. Ação, Murim",
+    "cat.author": "Autor",
+    "cat.clearFilters": "Limpar estes filtros",
+    "cat.clearConfirm": "Isto apaga todas as obras rastreadas, listas de capítulos, fusões e separações manuais e as capas em cache. As fontes e suas configurações ficam; os próximos rastreios serão completos. Não pode ser desfeito. Digite CLEAR para confirmar.",
+    "cat.clearTypeIt": "Nada foi apagado: digite CLEAR para confirmar.",
+    "cat.cleared": "Catálogo apagado: {count} obras removidas.",
+    "cat.clearTitle": "Apagar o catálogo rastreado",
+    "cat.clearHelp": "Remove todas as obras, listas de capítulos, fusões e separações manuais e capas em cache. As fontes e suas configurações são mantidas; os próximos rastreios serão completos.",
+    "cat.clearButton": "Apagar o catálogo…",
+    "cat.everyHours": "A cada {count} h",
+    "cat.paused": "pausada",
+    "cat.blacklistHides": "sua lista negra oculta {count}",
+    "cat.schedule.hours": "A cada poucas horas",
+    "cat.scheduleHours": "Horas entre rastreios",
+    "cat.pauseSource": "Pausada",
+    "cat.pauseSourceHelp": "Sem rastreios agendados enquanto pausada (ainda dá para iniciar um manualmente).",
+    "cat.blacklist": "Lista negra",
+    "cat.blacklistHelp": "Obras com qualquer um destes ficam fora desta fonte (um por linha ou separados por vírgulas; qualquer grafia: Sci-Fi também corresponde a Science Fiction, \"Doe, Jane\" a Jane Doe). Uma obra é julgada pelo que todos os seus sites dizem; continua por outros sites a menos que eles também a bloqueiem.",
+    "cat.blGenres": "Gêneros ou categorias",
+    "cat.blTags": "Tags",
+    "cat.blAuthors": "Autores ou artistas",
+    "err.confirmClear": "Digite CLEAR para confirmar."
+  });
+  add('en', {
+    "cat.reason.similar": "Similar names: “{title}” and “{other}”"
+  });
+  add('es', {
+    "cat.reason.similar": "Nombres parecidos: «{title}» y «{other}»"
+  });
+  add('fr', {
+    "cat.reason.similar": "Noms proches : « {title} » et « {other} »"
+  });
+  add('de', {
+    "cat.reason.similar": "Ähnliche Namen: „{title}“ und „{other}“"
+  });
+  add('pt', {
+    "cat.reason.similar": "Nomes parecidos: “{title}” e “{other}”"
+  });
+  add('en', {
+    "cat.checkOngoing": "Check ongoing works for new chapters",
+    "cat.checkOngoingHelp": "A sitemap seldom changes when a chapter is added, so updates also re-read ongoing works when they are due: about half their usual gap between chapters, at least every 7 days and at most every 12 hours."
+  });
+  add('es', {
+    "cat.checkOngoing": "Revisar las obras en curso por capítulos nuevos",
+    "cat.checkOngoingHelp": "Un sitemap rara vez cambia al añadirse un capítulo, así que las actualizaciones también releen las obras en curso cuando toca: más o menos la mitad de su intervalo habitual entre capítulos, al menos cada 7 días y como mucho cada 12 horas."
+  });
+  add('fr', {
+    "cat.checkOngoing": "Vérifier les nouveaux chapitres des œuvres en cours",
+    "cat.checkOngoingHelp": "Un sitemap change rarement quand un chapitre est ajouté : les mises à jour relisent donc aussi les œuvres en cours quand c'est le moment — environ la moitié de leur intervalle habituel entre chapitres, au moins tous les 7 jours et au plus toutes les 12 heures."
+  });
+  add('de', {
+    "cat.checkOngoing": "Laufende Werke auf neue Kapitel prüfen",
+    "cat.checkOngoingHelp": "Eine Sitemap ändert sich selten, wenn ein Kapitel hinzukommt; Aktualisierungen lesen daher auch laufende Werke erneut, wenn sie fällig sind: etwa die Hälfte ihres üblichen Abstands zwischen Kapiteln, mindestens alle 7 Tage und höchstens alle 12 Stunden."
+  });
+  add('pt', {
+    "cat.checkOngoing": "Verificar capítulos novos de obras em andamento",
+    "cat.checkOngoingHelp": "Um sitemap raramente muda quando um capítulo é adicionado, então as atualizações também releem as obras em andamento quando é a hora: cerca de metade do intervalo habitual entre capítulos, pelo menos a cada 7 dias e no máximo a cada 12 horas."
+  });
+  add('en', {
+    "cat.fullChapters": "Get the complete chapter list",
+    "cat.fullChaptersHelp": "Many sites show only the newest chapters until \"Show all\" or \"Load more\" is pressed. When a list looks incomplete, the rest is read where the page's own script would get it: data in the page, the address its script loads, the site's chapter API (robots.txt of each address is followed).",
+    "cat.chaptersUrl": "Full chapter list URL",
+    "cat.chaptersUrlHelp": "Optional: where the whole list is, when it isn't found automatically (HTML or JSON). Placeholders: {url} (the work's page), {slug}, {id}, {page}, {skip}, {take}, {cursor}."
+  });
+  add('es', {
+    "cat.fullChapters": "Obtener la lista completa de capítulos",
+    "cat.fullChaptersHelp": "Muchos sitios muestran solo los capítulos más nuevos hasta pulsar \"Ver todos\" o \"Cargar más\". Si una lista parece incompleta, el resto se lee donde lo buscaría el script de la página: datos en la página, la dirección que carga su script, la API de capítulos del sitio (se respeta el robots.txt de cada dirección).",
+    "cat.chaptersUrl": "URL de la lista completa de capítulos",
+    "cat.chaptersUrlHelp": "Opcional: dónde está la lista entera cuando no se encuentra sola (HTML o JSON). Marcadores: {url} (la página de la obra), {slug}, {id}, {page}, {skip}, {take}, {cursor}."
+  });
+  add('fr', {
+    "cat.fullChapters": "Obtenir la liste complète des chapitres",
+    "cat.fullChaptersHelp": "Beaucoup de sites n'affichent que les derniers chapitres jusqu'à « Tout afficher » ou « Charger plus ». Quand une liste semble incomplète, la suite est lue là où le script de la page irait la chercher : données dans la page, adresse chargée par son script, API de chapitres du site (le robots.txt de chaque adresse est respecté).",
+    "cat.chaptersUrl": "URL de la liste complète des chapitres",
+    "cat.chaptersUrlHelp": "Facultatif : où se trouve la liste entière quand elle n'est pas trouvée automatiquement (HTML ou JSON). Variables : {url} (la page de l'œuvre), {slug}, {id}, {page}, {skip}, {take}, {cursor}."
+  });
+  add('de', {
+    "cat.fullChapters": "Vollständige Kapitelliste holen",
+    "cat.fullChaptersHelp": "Viele Websites zeigen nur die neuesten Kapitel, bis „Alle anzeigen“ oder „Mehr laden“ gedrückt wird. Wirkt eine Liste unvollständig, wird der Rest dort gelesen, wo das Skript der Seite ihn holen würde: Daten in der Seite, die Adresse, die ihr Skript lädt, die Kapitel-API der Website (robots.txt jeder Adresse wird befolgt).",
+    "cat.chaptersUrl": "URL der vollständigen Kapitelliste",
+    "cat.chaptersUrlHelp": "Optional: wo die ganze Liste liegt, wenn sie nicht automatisch gefunden wird (HTML oder JSON). Platzhalter: {url} (Seite des Werks), {slug}, {id}, {page}, {skip}, {take}, {cursor}."
+  });
+  add('pt', {
+    "cat.fullChapters": "Obter a lista completa de capítulos",
+    "cat.fullChaptersHelp": "Muitos sites mostram só os capítulos mais novos até apertar \"Ver todos\" ou \"Carregar mais\". Quando uma lista parece incompleta, o resto é lido onde o script da página o buscaria: dados na página, o endereço que o script carrega, a API de capítulos do site (o robots.txt de cada endereço é respeitado).",
+    "cat.chaptersUrl": "URL da lista completa de capítulos",
+    "cat.chaptersUrlHelp": "Opcional: onde está a lista inteira quando não é encontrada sozinha (HTML ou JSON). Marcadores: {url} (a página da obra), {slug}, {id}, {page}, {skip}, {take}, {cursor}."
+  });
+  add('en', {
+    "cat.sel.tags": "Tags",
+    "cat.sel.type": "Type (Manga, Manhwa…)",
+    "cat.sel.year": "Release year",
+    "cat.sel.altSeparator": "Separator of the alternative titles",
+    "cat.sel.altSeparatorHelp": "What separates the other titles in that element (empty: commas, semicolons, slashes or lines).",
+    "wz.clean": "Clean up the values",
+    "wz.clean.counts": "Remove counts (\"Adventure 999\", \"Action · 1.2k\")",
+    "wz.clean.label": "Remove a label before the value (\"Status: Ongoing\")",
+    "wz.clean.own": "Only the element's own text",
+    "wz.clean.remove": "Also remove (regular expression):",
+    "err.invalidRegex": "That isn't a valid regular expression."
+  });
+  add('es', {
+    "cat.sel.tags": "Etiquetas",
+    "cat.sel.type": "Tipo (Manga, Manhwa…)",
+    "cat.sel.year": "Año de publicación",
+    "cat.sel.altSeparator": "Separador de los títulos alternativos",
+    "cat.sel.altSeparatorHelp": "Qué separa los otros títulos en ese elemento (vacío: comas, punto y coma, barras o líneas).",
+    "wz.clean": "Limpiar los valores",
+    "wz.clean.counts": "Quitar cantidades (\"Aventura 999\", \"Acción · 1.2k\")",
+    "wz.clean.label": "Quitar una etiqueta antes del valor (\"Estado: En curso\")",
+    "wz.clean.own": "Solo el texto propio del elemento",
+    "wz.clean.remove": "Quitar también (expresión regular):",
+    "err.invalidRegex": "Esa no es una expresión regular válida."
+  });
+  add('fr', {
+    "cat.sel.tags": "Tags",
+    "cat.sel.type": "Type (Manga, Manhwa…)",
+    "cat.sel.year": "Année de sortie",
+    "cat.sel.altSeparator": "Séparateur des titres alternatifs",
+    "cat.sel.altSeparatorHelp": "Ce qui sépare les autres titres dans cet élément (vide : virgules, points-virgules, barres obliques ou lignes).",
+    "wz.clean": "Nettoyer les valeurs",
+    "wz.clean.counts": "Retirer les nombres (« Aventure 999 », « Action · 1.2k »)",
+    "wz.clean.label": "Retirer un libellé avant la valeur (« Statut : En cours »)",
+    "wz.clean.own": "Seulement le texte propre de l'élément",
+    "wz.clean.remove": "Retirer aussi (expression régulière) :",
+    "err.invalidRegex": "Ce n'est pas une expression régulière valide."
+  });
+  add('de', {
+    "cat.sel.tags": "Tags",
+    "cat.sel.type": "Typ (Manga, Manhwa…)",
+    "cat.sel.year": "Erscheinungsjahr",
+    "cat.sel.altSeparator": "Trennzeichen der alternativen Titel",
+    "cat.sel.altSeparatorHelp": "Was die anderen Titel in diesem Element trennt (leer: Kommas, Semikolons, Schrägstriche oder Zeilen).",
+    "wz.clean": "Werte bereinigen",
+    "wz.clean.counts": "Zahlen entfernen („Abenteuer 999“, „Action · 1.2k“)",
+    "wz.clean.label": "Bezeichnung vor dem Wert entfernen („Status: Laufend“)",
+    "wz.clean.own": "Nur der eigene Text des Elements",
+    "wz.clean.remove": "Außerdem entfernen (regulärer Ausdruck):",
+    "err.invalidRegex": "Das ist kein gültiger regulärer Ausdruck."
+  });
+  add('pt', {
+    "cat.sel.tags": "Tags",
+    "cat.sel.type": "Tipo (Manga, Manhwa…)",
+    "cat.sel.year": "Ano de lançamento",
+    "cat.sel.altSeparator": "Separador dos títulos alternativos",
+    "cat.sel.altSeparatorHelp": "O que separa os outros títulos nesse elemento (vazio: vírgulas, ponto e vírgula, barras ou linhas).",
+    "wz.clean": "Limpar os valores",
+    "wz.clean.counts": "Remover contagens (\"Aventura 999\", \"Ação · 1.2k\")",
+    "wz.clean.label": "Remover um rótulo antes do valor (\"Status: Em andamento\")",
+    "wz.clean.own": "Só o texto próprio do elemento",
+    "wz.clean.remove": "Remover também (expressão regular):",
+    "err.invalidRegex": "Essa não é uma expressão regular válida."
+  });
+  add('en', {
+    "wz.templates": "Templates",
+    "wz.templatesHelp": "For known site engines and common layouts: a template fills the listing address and the work page's fields; adjust them afterwards. \"Find a matching template\" tries the likely ones on the site (a few requests each).",
+    "wz.templatePick": "Start from a template…",
+    "wz.templateUse": "Use it",
+    "wz.templateFind": "Find a matching template",
+    "wz.templateLikely": "likely",
+    "wz.templateResult": "{works} works on its first page · fields read: {fields} · e.g. {sample}",
+    "wz.templateNone": "No template found works on this site.",
+    "wz.templateApplied": "Template \"{name}\" applied: check the fields and the preview.",
+    "wz.maxPages": "Max listing pages",
+    "wz.maxPagesHelp": "Each listing is read page after page until a page adds nothing new, or this many pages.",
+    "wz.extraListUrls": "More listing addresses",
+    "wz.extraListUrlsHelp": "One per line, read the same way, e.g. one per type: /manhwa?page={page}. {letter} (0-9, a … z) and {a|b|c} make one listing per value.",
+    "wz.linkPattern": "Work address pattern",
+    "wz.linkPatternHelp": "Optional: a regular expression on the links' paths; only links that match are works (can stand in for the work selector)."
+  });
+  add('es', {
+    "wz.templates": "Plantillas",
+    "wz.templatesHelp": "Para motores de sitios conocidos y estructuras comunes: una plantilla rellena la dirección del listado y los campos de la página de la obra; ajústalos después. \"Buscar una plantilla\" prueba las probables en el sitio (unas pocas peticiones cada una).",
+    "wz.templatePick": "Empezar desde una plantilla…",
+    "wz.templateUse": "Usarla",
+    "wz.templateFind": "Buscar una plantilla que encaje",
+    "wz.templateLikely": "probable",
+    "wz.templateResult": "{works} obras en su primera página · campos leídos: {fields} · p. ej. {sample}",
+    "wz.templateNone": "Ninguna plantilla encontró obras en este sitio.",
+    "wz.templateApplied": "Plantilla «{name}» aplicada: revisa los campos y la vista previa.",
+    "wz.maxPages": "Máximo de páginas de listado",
+    "wz.maxPagesHelp": "Cada listado se lee página tras página hasta que una no añade nada nuevo, o hasta este número de páginas.",
+    "wz.extraListUrls": "Más direcciones de listado",
+    "wz.extraListUrlsHelp": "Una por línea, leídas igual, p. ej. una por tipo: /manhwa?page={page}. {letter} (0-9, a … z) y {a|b|c} hacen un listado por valor.",
+    "wz.linkPattern": "Patrón de dirección de obra",
+    "wz.linkPatternHelp": "Opcional: una expresión regular sobre la ruta de los enlaces; solo los que coinciden son obras (puede sustituir al selector de obra)."
+  });
+  add('fr', {
+    "wz.templates": "Modèles",
+    "wz.templatesHelp": "Pour les moteurs de sites connus et les structures courantes : un modèle remplit l'adresse de liste et les champs de la page d'œuvre ; ajustez-les ensuite. « Trouver un modèle » essaie les probables sur le site (quelques requêtes chacun).",
+    "wz.templatePick": "Partir d'un modèle…",
+    "wz.templateUse": "L'utiliser",
+    "wz.templateFind": "Trouver un modèle adapté",
+    "wz.templateLikely": "probable",
+    "wz.templateResult": "{works} œuvres sur sa première page · champs lus : {fields} · ex. {sample}",
+    "wz.templateNone": "Aucun modèle n'a trouvé d'œuvres sur ce site.",
+    "wz.templateApplied": "Modèle « {name} » appliqué : vérifiez les champs et l'aperçu.",
+    "wz.maxPages": "Pages de liste au maximum",
+    "wz.maxPagesHelp": "Chaque liste est lue page après page jusqu'à ce qu'une page n'ajoute rien, ou jusqu'à ce nombre de pages.",
+    "wz.extraListUrls": "Autres adresses de liste",
+    "wz.extraListUrlsHelp": "Une par ligne, lues de la même façon, ex. une par type : /manhwa?page={page}. {letter} (0-9, a … z) et {a|b|c} font une liste par valeur.",
+    "wz.linkPattern": "Modèle d'adresse d'œuvre",
+    "wz.linkPatternHelp": "Facultatif : une expression régulière sur le chemin des liens ; seuls ceux qui correspondent sont des œuvres (peut remplacer le sélecteur d'œuvre)."
+  });
+  add('de', {
+    "wz.templates": "Vorlagen",
+    "wz.templatesHelp": "Für bekannte Website-Engines und übliche Aufbauten: Eine Vorlage füllt die Listenadresse und die Felder der Werkseite; danach anpassen. „Passende Vorlage finden“ probiert die wahrscheinlichen auf der Website aus (je ein paar Anfragen).",
+    "wz.templatePick": "Mit einer Vorlage beginnen…",
+    "wz.templateUse": "Verwenden",
+    "wz.templateFind": "Passende Vorlage finden",
+    "wz.templateLikely": "wahrscheinlich",
+    "wz.templateResult": "{works} Werke auf ihrer ersten Seite · gelesene Felder: {fields} · z. B. {sample}",
+    "wz.templateNone": "Keine Vorlage fand auf dieser Website Werke.",
+    "wz.templateApplied": "Vorlage „{name}“ angewendet: Felder und Vorschau prüfen.",
+    "wz.maxPages": "Höchstzahl Listenseiten",
+    "wz.maxPagesHelp": "Jede Liste wird Seite für Seite gelesen, bis eine nichts Neues bringt, oder bis zu so vielen Seiten.",
+    "wz.extraListUrls": "Weitere Listenadressen",
+    "wz.extraListUrlsHelp": "Eine pro Zeile, genauso gelesen, z. B. eine pro Typ: /manhwa?page={page}. {letter} (0-9, a … z) und {a|b|c} ergeben eine Liste pro Wert.",
+    "wz.linkPattern": "Adressmuster der Werke",
+    "wz.linkPatternHelp": "Optional: ein regulärer Ausdruck auf den Pfad der Links; nur passende Links sind Werke (kann den Werk-Selektor ersetzen)."
+  });
+  add('pt', {
+    "wz.templates": "Modelos",
+    "wz.templatesHelp": "Para motores de sites conhecidos e estruturas comuns: um modelo preenche o endereço da listagem e os campos da página da obra; ajuste-os depois. \"Encontrar um modelo\" testa os prováveis no site (algumas requisições cada).",
+    "wz.templatePick": "Começar de um modelo…",
+    "wz.templateUse": "Usar",
+    "wz.templateFind": "Encontrar um modelo que sirva",
+    "wz.templateLikely": "provável",
+    "wz.templateResult": "{works} obras na primeira página · campos lidos: {fields} · ex. {sample}",
+    "wz.templateNone": "Nenhum modelo encontrou obras neste site.",
+    "wz.templateApplied": "Modelo “{name}” aplicado: confira os campos e a prévia.",
+    "wz.maxPages": "Máximo de páginas de listagem",
+    "wz.maxPagesHelp": "Cada listagem é lida página por página até uma não trazer nada novo, ou até este número de páginas.",
+    "wz.extraListUrls": "Mais endereços de listagem",
+    "wz.extraListUrlsHelp": "Um por linha, lidos do mesmo jeito, ex. um por tipo: /manhwa?page={page}. {letter} (0-9, a … z) e {a|b|c} fazem uma listagem por valor.",
+    "wz.linkPattern": "Padrão de endereço de obra",
+    "wz.linkPatternHelp": "Opcional: uma expressão regular no caminho dos links; só os que combinam são obras (pode substituir o seletor de obra)."
+  });
+  add('en', {
+    "cat.undo": "Undo",
+    "cat.undone": "Undone.",
+    "cat.corrections": "Manual corrections ({count})",
+    "cat.correctionsHelp": "Works you separated or split off stay apart, and suggestions you marked \"Not the same\" aren't suggested again. Undo lets them be suggested (or merged automatically) again.",
+    "cat.keptApart": "Kept apart",
+    "cat.notSameList": "Marked \"Not the same\""
+  });
+  add('es', {
+    "cat.undo": "Deshacer",
+    "cat.undone": "Deshecho.",
+    "cat.corrections": "Correcciones manuales ({count})",
+    "cat.correctionsHelp": "Las obras que separaste quedan aparte, y las sugerencias marcadas \"No son la misma\" no se vuelven a sugerir. Deshacer permite que se sugieran (o se fusionen automáticamente) de nuevo.",
+    "cat.keptApart": "Mantenidas aparte",
+    "cat.notSameList": "Marcadas \"No son la misma\""
+  });
+  add('fr', {
+    "cat.undo": "Annuler",
+    "cat.undone": "Annulé.",
+    "cat.corrections": "Corrections manuelles ({count})",
+    "cat.correctionsHelp": "Les œuvres séparées restent séparées, et les suggestions marquées « Pas la même » ne sont plus proposées. Annuler permet de les proposer (ou fusionner automatiquement) à nouveau.",
+    "cat.keptApart": "Gardées séparées",
+    "cat.notSameList": "Marquées « Pas la même »"
+  });
+  add('de', {
+    "cat.undo": "Rückgängig",
+    "cat.undone": "Rückgängig gemacht.",
+    "cat.corrections": "Manuelle Korrekturen ({count})",
+    "cat.correctionsHelp": "Getrennte Werke bleiben getrennt, und als „Nicht dasselbe“ markierte Vorschläge werden nicht erneut vorgeschlagen. Rückgängig erlaubt, sie wieder vorzuschlagen (oder automatisch zusammenzuführen).",
+    "cat.keptApart": "Getrennt gehalten",
+    "cat.notSameList": "Als „Nicht dasselbe“ markiert"
+  });
+  add('pt', {
+    "cat.undo": "Desfazer",
+    "cat.undone": "Desfeito.",
+    "cat.corrections": "Correções manuais ({count})",
+    "cat.correctionsHelp": "Obras que você separou ficam separadas, e sugestões marcadas \"Não é a mesma\" não são sugeridas de novo. Desfazer permite que sejam sugeridas (ou mescladas automaticamente) outra vez.",
+    "cat.keptApart": "Mantidas separadas",
+    "cat.notSameList": "Marcadas \"Não é a mesma\""
+  });
+  add('en', {
+    "cat.access": "Access (sites that answer 403)",
+    "cat.accessHelp": "Some sites answer 403 Forbidden to plain requests although their pages open in a browser. Automatic retries such an answer with what a visitor's browser sends anyway — the site's own cookies, a Referer — and your cookies and headers below, and remembers what worked. Bot checks are never solved or worked around, bot-check cookies are dropped, and the user agent never changes.",
+    "cat.accessMode": "Requests",
+    "cat.accessAuto": "Automatic (retry 403s like a browser)",
+    "cat.accessPlain": "Plain requests only",
+    "cat.accessCookies": "Your cookies for this site",
+    "cat.accessCookiesHelp": "Optional (name=value; other=value, or a browser's Cookie: line), e.g. an age confirmation. Saved write-only: only their names are shown afterwards. Never sent to other sites.",
+    "cat.accessHeaders": "Extra headers",
+    "cat.accessHeadersHelp": "Optional, one per line (Name: value), e.g. an API key the site gave you. Identity and browser headers (User-Agent, Sec-…, X-Forwarded-For…) can't be added. Saved write-only.",
+    "cat.accessSaved": "Saved: {names} (leave empty to keep them)",
+    "cat.accessRemoveCookies": "Remove the saved cookies",
+    "cat.accessRemoveHeaders": "Remove the saved headers"
+  });
+  add('es', {
+    "cat.access": "Acceso (sitios que responden 403)",
+    "cat.accessHelp": "Algunos sitios responden 403 Prohibido a peticiones simples aunque sus páginas abren en un navegador. Automático reintenta esa respuesta con lo que el navegador de un visitante envía de todos modos — las cookies del propio sitio, un Referer — y tus cookies y cabeceras de abajo, y recuerda lo que funcionó. Las comprobaciones antibots nunca se resuelven ni se evitan, sus cookies se descartan y el agente de usuario nunca cambia.",
+    "cat.accessMode": "Peticiones",
+    "cat.accessAuto": "Automático (reintentar los 403 como un navegador)",
+    "cat.accessPlain": "Solo peticiones simples",
+    "cat.accessCookies": "Tus cookies para este sitio",
+    "cat.accessCookiesHelp": "Opcional (nombre=valor; otra=valor, o la línea Cookie: de un navegador), p. ej. una confirmación de edad. Se guardan sin poder leerse: después solo se muestran sus nombres. Nunca se envían a otros sitios.",
+    "cat.accessHeaders": "Cabeceras adicionales",
+    "cat.accessHeadersHelp": "Opcional, una por línea (Nombre: valor), p. ej. una clave de API que te dio el sitio. No se pueden añadir cabeceras de identidad ni de navegador (User-Agent, Sec-…, X-Forwarded-For…). Se guardan sin poder leerse.",
+    "cat.accessSaved": "Guardadas: {names} (déjalo vacío para conservarlas)",
+    "cat.accessRemoveCookies": "Quitar las cookies guardadas",
+    "cat.accessRemoveHeaders": "Quitar las cabeceras guardadas"
+  });
+  add('fr', {
+    "cat.access": "Accès (sites qui répondent 403)",
+    "cat.accessHelp": "Certains sites répondent 403 Interdit aux requêtes simples alors que leurs pages s'ouvrent dans un navigateur. Automatique réessaie avec ce que le navigateur d'un visiteur envoie de toute façon — les cookies du site, un Referer — et vos cookies et en-têtes ci-dessous, et retient ce qui a marché. Les vérifications anti-robots ne sont jamais résolues ni contournées, leurs cookies sont ignorés et l'agent utilisateur ne change jamais.",
+    "cat.accessMode": "Requêtes",
+    "cat.accessAuto": "Automatique (réessayer les 403 comme un navigateur)",
+    "cat.accessPlain": "Requêtes simples uniquement",
+    "cat.accessCookies": "Vos cookies pour ce site",
+    "cat.accessCookiesHelp": "Facultatif (nom=valeur; autre=valeur, ou la ligne Cookie: d'un navigateur), ex. une confirmation d'âge. Enregistrés sans relecture : seuls leurs noms sont affichés ensuite. Jamais envoyés à d'autres sites.",
+    "cat.accessHeaders": "En-têtes supplémentaires",
+    "cat.accessHeadersHelp": "Facultatif, un par ligne (Nom: valeur), ex. une clé d'API fournie par le site. Les en-têtes d'identité et de navigateur (User-Agent, Sec-…, X-Forwarded-For…) ne peuvent pas être ajoutés. Enregistrés sans relecture.",
+    "cat.accessSaved": "Enregistrés : {names} (laisser vide pour les garder)",
+    "cat.accessRemoveCookies": "Supprimer les cookies enregistrés",
+    "cat.accessRemoveHeaders": "Supprimer les en-têtes enregistrés"
+  });
+  add('de', {
+    "cat.access": "Zugriff (Websites, die 403 antworten)",
+    "cat.accessHelp": "Manche Websites antworten auf einfache Anfragen mit 403 Verboten, obwohl ihre Seiten im Browser aufgehen. Automatisch wiederholt eine solche Antwort mit dem, was der Browser eines Besuchers ohnehin sendet — die eigenen Cookies der Website, ein Referer — und deinen Cookies und Headern unten, und merkt sich, was funktioniert hat. Bot-Prüfungen werden nie gelöst oder umgangen, ihre Cookies verworfen, und der User-Agent ändert sich nie.",
+    "cat.accessMode": "Anfragen",
+    "cat.accessAuto": "Automatisch (403 wie ein Browser wiederholen)",
+    "cat.accessPlain": "Nur einfache Anfragen",
+    "cat.accessCookies": "Deine Cookies für diese Website",
+    "cat.accessCookiesHelp": "Optional (name=wert; anderer=wert, oder die Cookie:-Zeile eines Browsers), z. B. eine Altersbestätigung. Nur schreibbar gespeichert: danach werden nur ihre Namen gezeigt. Nie an andere Websites gesendet.",
+    "cat.accessHeaders": "Zusätzliche Header",
+    "cat.accessHeadersHelp": "Optional, einer pro Zeile (Name: Wert), z. B. ein API-Schlüssel der Website. Identitäts- und Browser-Header (User-Agent, Sec-…, X-Forwarded-For…) lassen sich nicht hinzufügen. Nur schreibbar gespeichert.",
+    "cat.accessSaved": "Gespeichert: {names} (leer lassen, um sie zu behalten)",
+    "cat.accessRemoveCookies": "Gespeicherte Cookies entfernen",
+    "cat.accessRemoveHeaders": "Gespeicherte Header entfernen"
+  });
+  add('pt', {
+    "cat.access": "Acesso (sites que respondem 403)",
+    "cat.accessHelp": "Alguns sites respondem 403 Proibido a requisições simples embora suas páginas abram num navegador. Automático tenta de novo com o que o navegador de um visitante envia de qualquer forma — os cookies do próprio site, um Referer — e seus cookies e cabeçalhos abaixo, e lembra o que funcionou. Verificações anti-robôs nunca são resolvidas nem contornadas, seus cookies são descartados e o agente de usuário nunca muda.",
+    "cat.accessMode": "Requisições",
+    "cat.accessAuto": "Automático (repetir os 403 como um navegador)",
+    "cat.accessPlain": "Só requisições simples",
+    "cat.accessCookies": "Seus cookies para este site",
+    "cat.accessCookiesHelp": "Opcional (nome=valor; outro=valor, ou a linha Cookie: de um navegador), ex. uma confirmação de idade. Salvos sem leitura: depois só os nomes aparecem. Nunca enviados a outros sites.",
+    "cat.accessHeaders": "Cabeçalhos extras",
+    "cat.accessHeadersHelp": "Opcional, um por linha (Nome: valor), ex. uma chave de API que o site deu. Cabeçalhos de identidade e de navegador (User-Agent, Sec-…, X-Forwarded-For…) não podem ser adicionados. Salvos sem leitura.",
+    "cat.accessSaved": "Salvos: {names} (deixe vazio para mantê-los)",
+    "cat.accessRemoveCookies": "Remover os cookies salvos",
+    "cat.accessRemoveHeaders": "Remover os cabeçalhos salvos"
+  });
 })();

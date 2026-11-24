@@ -16,6 +16,9 @@ const { ADAPTERS, TYPES } = require('./adapters');
 const { publicUrl, UA } = require('./fetcher');
 const { normTitle, fromUrl } = require('../metadata/providers');
 const terms = require('../metadata/terms');
+const names = require('./names');
+// A work's metadata-site entries ("anilist:123", "mangadex:…") from its links (read from its page)
+const siteIds = w => Object.entries(w.links || {}).filter(([, id]) => id).map(([p, id]) => p + ':' + id);
 
 const { db } = store;
 if (!db.catalogSources) db.catalogSources = {};
@@ -65,16 +68,29 @@ function parseSource(body, current) {
   if ('contentRating' in b) s.contentRating = String(b.contentRating || '').split(/[\s,]+/).filter(x => ['safe', 'suggestive', 'erotica', 'pornographic'].includes(x)).join(',') || 'safe,suggestive';
   if ('includeChapters' in b || !current) s.includeChapters = b.includeChapters !== false;
   if ('maxWorks' in b) s.maxWorks = Math.max(0, Math.min(1000000, Math.round(Number(b.maxWorks) || 0)));
-  if ('schedule' in b || !current) s.schedule = Object.keys(SCHEDULES).includes(b.schedule) ? b.schedule : 'manual';
+  if ('schedule' in b || !current) s.schedule = Object.keys(SCHEDULES).includes(b.schedule) || b.schedule === 'hours' ? b.schedule : 'manual';
   if ('gapMs' in b) s.gapMs = Math.max(200, Math.min(60000, Math.round(Number(b.gapMs) || 0))) || adapter.defaults.gapMs;
   else if (!current) s.gapMs = adapter.defaults.gapMs || 1000;
   // Works read at the same time in a crawl (0: the server's setting)
   if ('concurrency' in b) { const n = Math.round(Number(b.concurrency) || 0); if (n) s.concurrency = Math.max(1, Math.min(8, n)); else delete s.concurrency; }
   if ('listPath' in b) s.listPath = String(b.listPath || '').trim().replace(/[^\w\-/]/g, '').slice(0, 80);
   if ('selectors' in b && b.selectors && typeof b.selectors === 'object') {
-    const keys = ['listUrl', 'firstPage', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'authors', 'altTitles', 'status', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate'];
+    const keys = ['listUrl', 'firstPage', 'maxPages', 'extraListUrls', 'linkPattern', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'tags', 'authors', 'altTitles', 'altSeparator', 'status', 'type', 'year', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate'];
     s.selectors = {};
     for (const k of keys) if (b.selectors[k] != null && String(b.selectors[k]).trim()) s.selectors[k] = String(b.selectors[k]).trim().slice(0, 400);
+  }
+  // Clean-up rules per field: { field: { counts, label, own, remove (a regular expression) } }
+  if ('clean' in b) {
+    const out = {};
+    for (const [k, r] of Object.entries((b.clean && typeof b.clean === 'object') ? b.clean : {})) {
+      if (!/^(workTitle|altTitles|summary|genres|tags|authors|status|type|year|title)$/.test(k) || !r || typeof r !== 'object') continue;
+      const one = {};
+      for (const x of ['counts', 'label', 'own']) if (r[x] === true) one[x] = true;
+      const re = String(r.remove || '').slice(0, 200);
+      if (re) { try { new RegExp(re, 'giu'); one.remove = re; } catch { throw err(400, 'invalidRegex'); } }
+      if (Object.keys(one).length) out[k] = one;
+    }
+    if (Object.keys(out).length) s.clean = out; else delete s.clean;
   }
   // Clicks to make before collecting (other sites): { list, work, chapters: [{ selector, mode: 'open' | 'add' }] }
   if ('actions' in b) s.actions = cleanActions(b.actions);
@@ -82,6 +98,32 @@ function parseSource(body, current) {
   // their scripts get (ms)
   if ('render' in b) { if (b.render) s.render = true; else { delete s.render; delete s.renderWaitMs; } }
   if ('renderWaitMs' in b && s.render) s.renderWaitMs = Math.max(1000, Math.min(60000, Math.round(Number(b.renderWaitMs) || 8000)));
+  // Blacklist: works with any of these genres/categories, tags or authors are left out of this source's entries
+  if ('blacklist' in b) {
+    const listOf = v => [...new Set((Array.isArray(v) ? v : String(v || '').split(/[\n,;]+/)).map(x => String(x || '').replace(/\s+/g, ' ').trim().slice(0, 80)).filter(Boolean))].slice(0, 300);
+    const bl = { genres: listOf(b.blacklist && b.blacklist.genres), tags: listOf(b.blacklist && b.blacklist.tags), authors: listOf(b.blacklist && b.blacklist.authors) };
+    if (bl.genres.length || bl.tags.length || bl.authors.length) s.blacklist = bl; else delete s.blacklist;
+  }
+  // "Every N hours" schedule
+  if ('scheduleHours' in b) { const h = Math.round(Number(b.scheduleHours) || 0); if (h >= 1) s.scheduleHours = Math.min(24 * 30, h); else delete s.scheduleHours; }
+  // Updates also re-read ongoing works when they're due (on by default)
+  if ('checkOngoing' in b) { if (b.checkOngoing === false) s.checkOngoing = false; else delete s.checkOngoing; }
+  // Complete chapter lists: the "Full chapter list URL" ({url} {slug} {id} {page} {skip} {take} {cursor}) and whether
+  // to look for the rest at all (on by default)
+  if ('chaptersUrl' in b) { const u = String(b.chaptersUrl || '').trim().slice(0, 400); if (u) s.chaptersUrl = u; else delete s.chaptersUrl; }
+  if ('fullChapters' in b) { if (b.fullChapters === false) s.fullChapters = false; else delete s.fullChapters; }
+  // Access for sites that answer 403: mode 'auto' | 'plain'; cookies / headers are write-only (kept unless new ones
+  // are given or removeCookies / removeHeaders is set)
+  if ('access' in b && b.access && typeof b.access === 'object') {
+    const a = Object.assign({}, s.access || {});
+    if (b.access.mode) a.mode = b.access.mode === 'plain' ? 'plain' : 'auto';
+    const { cookiePairs, headerLines } = require('./fetcher');
+    if (b.access.removeCookies) delete a.cookies; else if (String(b.access.cookies || '').trim()) a.cookies = cookiePairs(b.access.cookies).join('; ').slice(0, 4000);
+    if (b.access.removeHeaders) delete a.headers; else if (String(b.access.headers || '').trim()) a.headers = headerLines(b.access.headers);
+    if (!a.cookies) delete a.cookies;
+    if (a.headers && !Object.keys(a.headers).length) delete a.headers;
+    if (a.mode === 'auto' && !a.cookies && !a.headers) delete s.access; else s.access = a;
+  }
   if ('enabled' in b) s.enabled = b.enabled !== false;
   if ('autoDetect' in b) s.autoDetect = b.autoDetect !== false;
   if ('siteUrl' in b) { const u = String(b.siteUrl || '').trim().replace(/\/+$/, ''); if (u && !publicUrl(u, ALLOW_LOCAL)) throw err(400, 'invalidUrl'); if (u) s.siteUrl = u; }
@@ -97,6 +139,8 @@ function parseSource(body, current) {
 function listSources() {
   return Object.values(db.catalogSources).sort((a, b) => String(a.created).localeCompare(String(b.created))).map(sourceView);
 }
+// (the administrator's cookies and headers never leave the server: only their names)
+const accessView = a => (a ? { mode: a.mode || 'auto', cookieNames: String(a.cookies || '').split(/;\s*/).filter(Boolean).map(x => x.split('=')[0]), headerNames: Object.keys(a.headers || {}) } : { mode: 'auto', cookieNames: [], headerNames: [] });
 function sourceView(s) {
   if (!liveCrawl(s.id)) adoptDetected(s.id); // (a finished crawl's detection, kept)
   const st = cstore.readState(sourceDir(s.id));
@@ -104,7 +148,9 @@ function sourceView(s) {
   return Object.assign({}, s, {
     works: st.total != null ? st.total : (loaded.get(s.id) || { list: [] }).list.length,
     lastCrawlAt: st.lastCrawlAt || null, lastCompleteAt: st.lastCompleteAt || null, lastError: st.lastError || null, lastStats: st.stats || null,
-    interrupted: Boolean(st.running && !job), job, label: ADAPTERS[s.type].label, icon: Boolean(s.iconUrl)
+    interrupted: Boolean(st.running && !job), job, label: ADAPTERS[s.type].label, icon: Boolean(s.iconUrl),
+    hidden: s.blacklist ? (catalogItems(), hiddenBySource.get(s.id) || 0) : 0,
+    access: accessView(s.access)
   });
 }
 // A new source needs only a name and its address: the rest is detected now (robots.txt, every sitemap, the
@@ -159,6 +205,25 @@ function removeSource(id) {
   fs.rmSync(sourceDir(id), { recursive: true, force: true });
   loaded.delete(id);
   catalogVersion++;
+}
+
+// Clear the crawled catalog: every source's works, chapters and crawl state (the next crawl is a full one), the
+// manual merges, splits and "not the same" marks, and the cached covers. Kept: the sources and their settings.
+function clearCatalog() {
+  if (Object.keys(db.catalogSources).some(liveCrawl)) throw err(409, 'catalogCrawling');
+  let removed = 0;
+  for (const id of Object.keys(db.catalogSources)) {
+    removed += sourceWorks(id).length;
+    const dir = sourceDir(id);
+    for (const f of fs.existsSync(dir) ? fs.readdirSync(dir) : []) if (f !== 'detected.json') fs.rmSync(path.join(dir, f), { recursive: true, force: true });
+    loaded.delete(id);
+  }
+  db.catalogMerges = { groups: {}, dismissed: [], apart: [] };
+  store.saveLibrary();
+  fs.rmSync(COVER_DIR, { recursive: true, force: true });
+  catalogVersion++;
+  console.log(`[catalog] cleared: ${removed} works removed (sources kept)`);
+  return { removed };
 }
 
 /* ---------------- crawling: independent crawler processes ----------------
@@ -337,7 +402,9 @@ function ask(msg) {
 
 // What a source's settings find on the site (nothing saved)
 function testSource(body) {
-  const s = Object.assign(parseSource(body), { id: 'test' });
+  // (editing a source: its saved cookies and headers are used too, unless the form gives new ones)
+  const saved = body && body.sourceId && db.catalogSources[body.sourceId];
+  const s = Object.assign(parseSource(body, saved && saved.access ? { access: saved.access } : undefined), { id: 'test' });
   return ask({ type: 'test', source: s, allowLocal: ALLOW_LOCAL });
 }
 // What a site's robots.txt, sitemaps and pages say about it: proposed settings for a new source
@@ -373,6 +440,12 @@ function readSiteFile(id, url) {
 // A page of a site, made inert, for the source wizard's element picker (any public page: administrators only)
 // actions: clicks to make first (as crawls make them), with a report of each
 // render: the page built in a headless browser first (what a source with "Build pages in a browser" reads)
+// Layout templates, and which fit a site (tried by the helper process: a few requests per template)
+function templates() { return require('./templates').publicTemplates(); }
+function findTemplate(url) {
+  if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
+  return ask({ type: 'findTemplate', url: String(url), allowLocal: ALLOW_LOCAL });
+}
 function previewPage(url, { inert = false, actions = null, render = false, waitMs = 0 } = {}) {
   if (!publicUrl(String(url || ''), ALLOW_LOCAL)) throw err(400, 'invalidUrl');
   const acts = actions ? cleanActions({ work: actions }).work || [] : [];
@@ -390,7 +463,7 @@ function startSchedule() {
 }
 function checkSchedule() {
   for (const s of Object.values(db.catalogSources)) {
-    const every = SCHEDULES[s.schedule] || 0;
+    const every = s.schedule === 'hours' ? (s.scheduleHours || 0) * 3600000 : SCHEDULES[s.schedule] || 0;
     if (!every || s.enabled === false) continue;
     const st = cstore.readState(sourceDir(s.id));
     const last = Date.parse(st.lastCrawlAt || 0) || 0;
@@ -413,7 +486,11 @@ function sourceWorks(id) {
   // ("[AI ANIMATION]", "(Raw)", "Full Colored"): w.title is the clean title, w.rawTitle the site's, w.editions the version
   const src = db.catalogSources[id] || {};
   const names = [src.name, src.detected && src.detected.found && src.detected.found.name].filter(Boolean);
+  const { fixMojibake, fixDeep } = require('./text');
   const list = Object.values(data.works).map(w => {
+    // (text a site sent already garbled — "CafÃ©" — repaired)
+    for (const k of ['title', 'rawTitle', 'summary']) if (typeof w[k] === 'string') w[k] = fixMojibake(w[k]);
+    for (const k of ['altTitles', 'rawAltTitles', 'authors', 'genres']) if (Array.isArray(w[k])) w[k] = fixDeep(w[k]);
     const remove = db.catalogSettings.titleRemove || [];
     const p = parseTitle(w.rawTitle || w.title, { sourceNames: names, remove });
     const alt = [...new Set((w.rawAltTitles || w.altTitles || []).map(a => parseTitle(a, { sourceNames: names, remove }).title).filter(a => a && a !== p.title))];
@@ -466,8 +543,9 @@ function libraryIndex() {
 }
 function libraryMatch(w) {
   const idx = libraryIndex();
-  const site = w.links && w.links.mangadex ? 'mangadex:' + w.links.mangadex : (fromUrl(w.url || '') ? (x => x.provider + ':' + x.id)(fromUrl(w.url)) : null);
-  if (site && idx.bySite.has(site)) return { seriesId: idx.bySite.get(site), by: 'link' };
+  const ids = siteIds(w).concat(fromUrl(w.url || '') ? [(x => x.provider + ':' + x.id)(fromUrl(w.url))] : []);
+  const site = ids.find(x => idx.bySite.has(x));
+  if (site) return { seriesId: idx.bySite.get(site), by: 'link' };
   const link = String(w.url || '').replace(/\/+$/, '').toLowerCase();
   if (link && idx.byLink.has(link)) return { seriesId: idx.byLink.get(link), by: 'link' };
   for (const t of [w.title].concat(w.altTitles || [])) { const k = normTitle(t); if (k && idx.byTitle.has(k)) return { seriesId: idx.byTitle.get(k), by: 'title' }; }
@@ -480,10 +558,11 @@ let itemsMemo = { ver: null, items: null };
 const editionKey = list => (list && list.length ? list.slice().sort((a, b) => EDITION_ORDER.indexOf(a) - EDITION_ORDER.indexOf(b)).join('+') : 'base');
 const editionRank = key => (key === 'base' ? 0 : key.includes('+') ? 10 + key.split('+').length : 1 + EDITION_ORDER.indexOf(key));
 function catalogItems() {
-  const ver = catalogVersion + ':' + store.generation() + ':' + Object.keys(db.catalogSources).join(',') + ':' + JSON.stringify(Object.keys(db.catalogMerges.groups).length) + ':' + catalogVersion;
+  const ver = catalogVersion + ':' + store.generation() + ':' + Object.keys(db.catalogSources).join(',') + ':' + JSON.stringify(Object.values(db.catalogSources).map(x => x.blacklist || 0)) + ':' + JSON.stringify(Object.keys(db.catalogMerges.groups).length) + ':' + catalogVersion;
   const works = allWorks();
   const v2 = ver + ':' + works.length + ':' + catalogVersion;
   if (itemsMemo.ver === v2) return itemsMemo.items;
+  hiddenBySource.clear();
   const units = unitItems(works);
   // Versions: units with the same clean title and different versions are one work (like a library's "Work" and
   // "Work (Colored)"); a second unit of a version already taken stays its own work
@@ -522,18 +601,46 @@ function unitItems(works) {
       if (doneGroups.has(gid)) continue;
       doneGroups.add(gid);
       const g = db.catalogMerges.groups[gid];
-      const members = g.keys.map(k => byKey.get(k)).filter(Boolean);
-      const primary = byKey.get(g.primary) || members[0];
+      const members = allowed(g.keys.map(k => byKey.get(k)).filter(Boolean));
+      if (!members.length) continue;
+      const primary = members.includes(byKey.get(g.primary)) ? byKey.get(g.primary) : members[0];
       items.push(makeItem(primary, members, gid));
-    } else items.push(makeItem(w, [w], null));
+    } else if (allowed([w]).length) items.push(makeItem(w, [w], null));
   }
   return items;
+}
+// Blacklists: an entry is left out when its source's blacklist names a genre, tag or author that any entry of the
+// same work has (what all its sites say); the work stays through the other sites unless they block it too
+let blacklistMemo = { ver: null, map: null };
+function blacklists() {
+  const ver = JSON.stringify(Object.values(db.catalogSources).map(x => x.blacklist || null));
+  if (blacklistMemo.ver === ver) return blacklistMemo.map;
+  const map = new Map();
+  for (const x of Object.values(db.catalogSources)) {
+    const bl = x.blacklist; if (!bl) continue;
+    map.set(x.id, { terms: new Set(bl.genres.concat(bl.tags).map(g => terms.keyOf(terms.canonical(g)))), people: new Set(bl.authors.map(personKey).filter(Boolean)) });
+  }
+  blacklistMemo = { ver, map };
+  return map;
+}
+const hiddenBySource = new Map();
+function allowed(members) {
+  const bls = blacklists();
+  if (!bls.size || !members.some(m => bls.has(m.sourceId))) return members;
+  const g = new Set(members.flatMap(m => m.genres || []).map(x => terms.keyOf(terms.canonical(x))));
+  const p = new Set(members.flatMap(m => m.authors || []).map(personKey));
+  return members.filter(m => {
+    const bl = bls.get(m.sourceId);
+    const out = bl && ([...bl.terms].some(k => g.has(k)) || [...bl.people].some(k => p.has(k)));
+    if (out) hiddenBySource.set(m.sourceId, (hiddenBySource.get(m.sourceId) || 0) + 1);
+    return !out;
+  });
 }
 function makeItem(primary, members, groupId) {
   const lib = members.map(libraryMatch).find(Boolean) || null;
   // The title shown: English first (the main entry's, another source's, or one of the other titles)
   const title = preferEnglish([primary.title].concat(members.map(m => m.title), primary.altTitles || [], ...members.map(m => m.altTitles || []))) || primary.title || '';
-  const genres = terms.unify(...members.map(m => m.genres || []));
+  const genres = terms.unify(...members.map(m => (m.genres || []).concat(m.tags || [])));
   return {
     key: groupId ? 'g:' + groupId : primary.key, groupId, title, altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== title))].slice(0, 20),
     editions: primary.editions || [], edition: editionKey(primary.editions),
@@ -548,7 +655,11 @@ function makeItem(primary, members, groupId) {
   };
 }
 const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
-function list(q) {
+// Filters (all optional): q (words in titles/authors), source, lacks (a source that doesn't have it), inLibrary
+// (yes|no), genre, merged, type, status, sites ('1' | '2' | '3' = at least 3), updated ('day' | 'week' | 'month':
+// a chapter or change within), with/without (genres or tags it must have / must not have, comma separated),
+// author (part of an author's name)
+function filtered(q) {
   let items = catalogItems();
   const term = searchable(q.q);
   if (term) items = items.filter(it => (it._text || (it._text = searchable((it._allTitles || [it.title].concat(it.altTitles)).concat(it.authors).join('\n')))).includes(term));
@@ -556,16 +667,57 @@ function list(q) {
   if (q.inLibrary === 'yes') items = items.filter(it => it.inLibrary); else if (q.inLibrary === 'no') items = items.filter(it => !it.inLibrary);
   if (q.genre) { const k = terms.keyOf(terms.canonical(q.genre)); items = items.filter(it => it.genres.some(g => terms.keyOf(g) === k)); }
   if (q.merged === 'yes') items = items.filter(it => it.groupId);
+  if (q.lacks) items = items.filter(it => !(it._allSources || it.sources.map(s => s.sourceId)).includes(q.lacks));
+  if (q.type) items = items.filter(it => String(it.type || '').toLowerCase() === String(q.type).toLowerCase());
+  if (q.status) items = items.filter(it => (it.status || 'unknown') === q.status);
+  if (q.sites) { const n = Number(q.sites) || 1; items = items.filter(it => { const c = (it._allSources || it.sources).length; return n >= 3 ? c >= 3 : c === n; }); }
+  if (q.updated) {
+    const ms = { day: 86400000, week: 7 * 86400000, month: 31 * 86400000 }[q.updated];
+    if (ms) { const since = new Date(Date.now() - ms).toISOString(); items = items.filter(it => it.updatedAt && it.updatedAt >= since); }
+  }
+  const keysOf = v => String(v || '').split(',').map(x => x.trim()).filter(Boolean).map(x => terms.keyOf(terms.canonical(x)));
+  const want = keysOf(q.with), avoid = keysOf(q.without);
+  if (want.length || avoid.length) items = items.filter(it => { const have = new Set(it.genres.map(g => terms.keyOf(g))); return want.every(k => have.has(k)) && !avoid.some(k => have.has(k)); });
+  if (q.author) { const a = searchable(q.author); items = items.filter(it => it.authors.some(x => searchable(x).includes(a))); }
+  return items;
+}
+function sortItems(items, sort) {
   const sorters = {
     title: (a, b) => store.collator.compare(a.title, b.title),
     updated: (a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')),
-    chapters: (a, b) => b.chapters - a.chapters
+    chapters: (a, b) => b.chapters - a.chapters,
+    sites: (a, b) => (b._allSources || b.sources).length - (a._allSources || a.sources).length || store.collator.compare(a.title, b.title)
   };
-  items = items.slice().sort(sorters[q.sort] || sorters.title);
+  return items.slice().sort(sorters[sort] || sorters.title);
+}
+function list(q) {
+  const items = sortItems(filtered(q), q.sort);
   const offset = Math.max(0, Number(q.offset) || 0), limit = Math.min(200, Math.max(1, Number(q.limit) || 60));
   return { total: items.length, offset, items: items.slice(offset, offset + limit).map(publicItem) };
 }
 const publicItem = it => { const o = Object.assign({}, it); delete o._text; delete o._allTitles; delete o._allSources; return o; };
+const countBy = (items, fn) => { const m = new Map(); for (const it of items) { const v = fn(it); if (v) m.set(v, (m.get(v) || 0) + 1); } return [...m].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count); };
+// The filtered list as a file: CSV (one link column per source) or JSON (everything, with each source's latest chapter)
+function exportList(q, format) {
+  const items = sortItems(filtered(q), q.sort).slice(0, 50000);
+  const srcs = Object.values(db.catalogSources);
+  if (format === 'json') return JSON.stringify({ exportedAt: new Date().toISOString(), total: items.length, works: items.map(it => {
+    const o = publicItem(it); delete o.coverKey; delete o.cover; return o;
+  }) }, null, 1);
+  const head = ['title', 'alternative titles', 'type', 'status', 'year', 'authors', 'genres', 'chapters', 'latest chapter', 'updated', 'in library', 'sites'].concat(srcs.map(x => x.name));
+  const rows = items.map(it => [it.title, it.altTitles.join(' | '), it.type || '', it.status || '', it.year || '', it.authors.join(' | '), it.genres.join(' | '), it.chapters, it.lastChapter || '', it.updatedAt || '',
+    it.inLibrary ? it.inLibrary.title || 'yes' : '', it.sources.length].concat(srcs.map(x => (it.sources.find(y => y.sourceId === x.id) || {}).url || '')));
+  return csv([head].concat(rows));
+}
+const csv = rows => '\ufeff' + rows.map(r => r.map(v => { const t = String(v == null ? '' : v); return /[",\r\n]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t; }).join(',')).join('\r\n') + '\r\n';
+// One work's combined chapter list as a file: CSV (one link column per source) or JSON
+function exportChapters(key, format) {
+  const d = detail(key);
+  if (format === 'json') return JSON.stringify({ title: d.title, key: d.key, sources: d.sources.map(x => ({ name: x.name, url: x.url, chapters: x.chapterList.length })), chapters: d.allChapters }, null, 1);
+  const names = d.sources.map(x => x.name);
+  return csv([['number', 'title', 'date', 'premium'].concat(names)].concat(d.allChapters.slice().reverse().map(c => [c.n == null ? '' : c.n, c.t || '', c.d || '', c.pr ? 'yes' : '']
+    .concat(names.map(n => ((c.links || []).find(l => l.name === n) || {}).u || '')))));
+}
 function facets() {
   const items = catalogItems();
   const genres = new Map();
@@ -573,7 +725,8 @@ function facets() {
   return {
     total: items.length, inLibrary: items.filter(it => it.inLibrary).length,
     sources: Object.values(db.catalogSources).map(s => ({ id: s.id, name: s.name, works: sourceWorks(s.id).length })),
-    genres: [...genres].map(([name, count]) => ({ name, count })).sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, 200)
+    genres: [...genres].map(([name, count]) => ({ name, count })).sort((a, b) => store.collator.compare(a.name, b.name)).slice(0, 200),
+    types: countBy(items, it => it.type), statuses: countBy(items, it => it.status || 'unknown')
   };
 }
 // One work in full: every source's metadata and chapters; for a work the library has, which chapters it lacks
@@ -629,8 +782,23 @@ function mergeSuggestions({ limit = 200, source = null } = {}) {
   const keys = new Map();
   const add = (reason, key, wkey, detail) => { const k = reason + '\0' + key; if (!keys.has(k)) keys.set(k, { keys: [], detail }); const e = keys.get(k); if (!e.keys.includes(wkey)) e.keys.push(wkey); };
   for (const w of works) {
-    if (w.links && w.links.mangadex) add('link', 'mangadex:' + w.links.mangadex, w.key, { url: w.url });
-    for (const t of [w.title].concat(w.altTitles || [])) { const n = normTitle(t); if (n && n.length > 2) add('title', n + '|' + editionKey(w.editions), w.key, { title: t }); }
+    for (const id of siteIds(w)) add('link', id, w.key, { url: w.url });
+    for (const t of [w.title].concat(w.altTitles || [])) for (const n of names.matchKeys(t)) if (n.length > 2) add('title', n + '|' + editionKey(w.editions), w.key, { title: t });
+  }
+  // Near-identical main titles (a typo or a letter apart), compared within buckets of the same start or end
+  const near = new Map();
+  for (const w of works) {
+    const k = names.nameKey(w.title);
+    if (k.length < 10) continue;
+    for (const b of ['^' + k.slice(0, 5), '$' + k.slice(-5)]) { if (!near.has(b)) near.set(b, []); near.get(b).push([k, w]); }
+  }
+  for (const list of near.values()) {
+    if (list.length < 2 || list.length > 400) continue;
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const [ka, a] = list[i], [kb, b] = list[j];
+      if (a.key === b.key || editionKey(a.editions) !== editionKey(b.editions) || !names.nearNames(ka, kb)) continue;
+      add('similar', [ka, kb].sort().join('~'), a.key, { title: a.title, other: b.title }); add('similar', [ka, kb].sort().join('~'), b.key, { title: a.title, other: b.title });
+    }
   }
   for (const [k, e] of keys) {
     if (e.keys.length < 2 || e.keys.length > 12) continue;
@@ -639,7 +807,8 @@ function mergeSuggestions({ limit = 200, source = null } = {}) {
       const ra = find(e.keys[0]), rb = find(e.keys[i]);
       if (ra !== rb) parent.set(rb, ra);
       const r = find(e.keys[0]);
-      if (!why.has(r) || (why.get(r).reason === 'title' && reason === 'link')) why.set(r, { reason, detail: e.detail });
+      const rank = x => ({ link: 0, title: 1, similar: 2 })[x];
+      if (!why.has(r) || rank(reason) < rank(why.get(r).reason)) why.set(r, { reason, detail: e.detail });
     }
   }
   const groups = new Map();
@@ -660,7 +829,8 @@ function mergeSuggestions({ limit = 200, source = null } = {}) {
       works: members.map(m => Object.assign(workSummary(m), { merged: grouped.has(m.key) })) },
     why.get(root) || { reason: 'title', detail: {} }));
   }
-  out.sort((a, b) => (a.reason === 'link' ? 0 : 1) - (b.reason === 'link' ? 0 : 1) || store.collator.compare(a.works[0].title || '', b.works[0].title || ''));
+  const order = { link: 0, title: 1, similar: 2 };
+  out.sort((a, b) => (order[a.reason] || 0) - (order[b.reason] || 0) || store.collator.compare(a.works[0].title || '', b.works[0].title || ''));
   return { total: out.length, groups: out.slice(0, limit) };
 }
 // Works an administrator separated ("a|b", keys sorted): never merged again automatically
@@ -723,8 +893,9 @@ function sameWork(a, b) {
   const authorsA = new Set((a.authors || []).map(personKey).filter(Boolean));
   const author = (b.authors || []).map(personKey).find(k => k && authorsA.has(k));
   if (author) return { reason: 'titleAuthor', detail: { title: a.title, author: (b.authors || []).find(x => personKey(x) === author) } };
-  const altA = new Set((a.altTitles || []).map(normTitle).filter(k => k && k.length > 2 && k !== normTitle(a.title)));
-  const alt = (b.altTitles || []).find(t => altA.has(normTitle(t)));
+  const mainA = new Set(names.matchKeys(a.title));
+  const altA = new Set((a.altTitles || []).flatMap(names.matchKeys).filter(k => k.length > 2 && !mainA.has(k)));
+  const alt = (b.altTitles || []).find(t => names.matchKeys(t).some(k => altA.has(k)));
   if (alt) return { reason: 'titleAlt', detail: { title: a.title, alt } };
   return null;
 }
@@ -740,15 +911,17 @@ function autoMerge() {
   const byLink = new Map(), byTitle = new Map();
   const push = (m, k, w) => { if (!m.has(k)) m.set(k, []); m.get(k).push(w); };
   for (const w of works) {
-    if (w.links && w.links.mangadex) push(byLink, String(w.links.mangadex), w);
-    const t = normTitle(w.title);
-    if (t && t.length > 2) push(byTitle, t + '|' + editionKey(w.editions), w);
+    for (const id of siteIds(w)) push(byLink, id, w);
+    for (const t of names.matchKeys(w.title)) if (t.length > 2) push(byTitle, t + '|' + editionKey(w.editions), w);
   }
-  const pairs = [];
+  const pairs = [], seenPair = new Set();
   for (const list of byLink.values()) if (list.length >= 2 && list.length <= 6) for (let i = 1; i < list.length; i++) pairs.push([list[0], list[i], { reason: 'link', detail: { title: list[0].title } }]);
   for (const list of byTitle.values()) {
     if (list.length < 2 || list.length > 6) continue;
-    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) { const why = sameWork(list[i], list[j]); if (why) pairs.push([list[i], list[j], why]); }
+    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
+      const pk = pairKey(list[i].key, list[j].key); if (list[i].key === list[j].key || seenPair.has(pk)) continue; seenPair.add(pk);
+      const why = sameWork(list[i], list[j]); if (why) pairs.push([list[i], list[j], why]);
+    }
   }
   let merged = 0;
   for (const [a, b, why] of pairs) {
@@ -781,6 +954,27 @@ function mergedGroups({ source } = {}) {
 // What the Merge tab shows of a work to compare it: its cover, title, other titles, authors, source, chapters
 const workSummary = m => ({ key: m.key, title: m.title, altTitles: (m.altTitles || []).slice(0, 4), authors: (m.authors || []).slice(0, 3), type: m.type || null, year: m.year || null,
   source: (db.catalogSources[m.sourceId] || {}).name || m.sourceId, sourceId: m.sourceId, url: m.url, chapters: m.chapterCount || 0, lastChapter: m.lastChapter || null, cover: Boolean(m.cover) });
+// Manual corrections that aren't merges: works kept apart (separated or split off) and suggestions marked "not the
+// same" — each can be undone (then they may be suggested, or merged automatically, again)
+function corrections() {
+  const byKey = new Map(allWorks().map(w => [w.key, w]));
+  const sum = k => (byKey.has(k) ? workSummary(byKey.get(k)) : { key: k, title: k, source: (db.catalogSources[k.split(':')[0]] || {}).name || '', gone: true });
+  const apart = (db.catalogMerges.apart || []).slice(-500).reverse().map(p => ({ pair: p, works: p.split('|').map(sum) })).filter(x => x.works.some(w => !w.gone));
+  const dismissed = (db.catalogMerges.dismissed || []).slice(-500).reverse().map(k => ({ key: k, works: String(k).split(',').map(sum) })).filter(x => x.works.some(w => !w.gone));
+  return { apart, dismissed };
+}
+function undoApart(pair) {
+  const before = (db.catalogMerges.apart || []).length;
+  db.catalogMerges.apart = (db.catalogMerges.apart || []).filter(p => p !== pair);
+  if (db.catalogMerges.apart.length === before) throw err(404, 'notFound');
+  store.saveLibrary(); catalogVersion++;
+}
+function undoDismiss(key) {
+  const before = (db.catalogMerges.dismissed || []).length;
+  db.catalogMerges.dismissed = (db.catalogMerges.dismissed || []).filter(k => k !== key);
+  if (db.catalogMerges.dismissed.length === before) throw err(404, 'notFound');
+  store.saveLibrary(); catalogVersion++;
+}
 function dismiss(key) {
   db.catalogMerges.dismissed = [...new Set((db.catalogMerges.dismissed || []).concat(String(key)))].slice(-5000);
   store.saveLibrary();
@@ -859,5 +1053,5 @@ function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, d
 // More crawls allowed at once: start the waiting ones now
 require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
 
-module.exports = { titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
+module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
   list, facets, detail, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

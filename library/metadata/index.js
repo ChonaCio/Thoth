@@ -117,7 +117,15 @@ async function warmIndexes(ids, onSource) {
   }
 }
 
-async function applyLocal(libraryId, onlySeriesId) {
+// One at a time: libraries scanned side by side finish close together, and two runs reading the same sources'
+// indexes at once (still being built after a restart) could see them half-built and clear works' data
+let applyChain = Promise.resolve();
+function applyLocal(libraryId, onlySeriesId) {
+  const run = applyChain.then(() => applyLocalNow(libraryId, onlySeriesId));
+  applyChain = run.catch(() => {});
+  return run;
+}
+async function applyLocalNow(libraryId, onlySeriesId) {
   const t0 = Date.now();
   const lib = db.libraries[libraryId];
   if (!lib) return { works: 0, books: 0 };

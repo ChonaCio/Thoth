@@ -228,7 +228,9 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
     'a page for the picker is made inert: no scripts, nothing the browser would load from the site (images become placeholders)');
   ok((await call('GET', `/api/catalog/preview?url=${encodeURIComponent('ftp://x')}`)).status === 400, 'the preview takes only web addresses');
   // ---- clicks to make before collecting ----
-  const tabbed = { name: 'Tabbed', type: 'custom', baseUrl: SITE, includeChapters: true, selectors: { listUrl: '/tabs/list', item: 'div.w', workTitle: 'h1.t', genres: 'span.g', chapter: 'li.c' } };
+  // (fullChapters off: here only the clicks may bring the chapters; the automatic completion would find the tab's
+  // address by itself, see test-crawl-rules)
+  const tabbed = { name: 'Tabbed', type: 'custom', baseUrl: SITE, includeChapters: true, fullChapters: false, selectors: { listUrl: '/tabs/list', item: 'div.w', workTitle: 'h1.t', genres: 'span.g', chapter: 'li.c' } };
   const noClick = (await call('POST', '/api/catalog/sources/test', tabbed)).data.test;
   const withClick = (await call('POST', '/api/catalog/sources/test', Object.assign({}, tabbed, { actions: { work: [{ selector: 'button.info-tab', mode: 'add' }], chapters: [{ selector: 'button.ch-tab', mode: 'add' }] } }))).data.test;
   ok(noClick.work.chapterCount === 0 && withClick.work.chapterCount === 2 && withClick.work.genres.join() === 'Mystery',
@@ -417,6 +419,49 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(!(await call('GET', '/api/catalog/merge-suggestions')).data.groups.some(x => x.key === g.key), 'a merged group is no longer suggested');
   await call('DELETE', `/api/catalog/merge/${mg.groupId}`);
   ok((await call('GET', '/api/catalog?q=blue%20moon')).data.total === 2, 'separating them again');
+  let corr = (await call('GET', '/api/catalog/corrections')).data;
+  const pair = corr.apart.find(x => x.works.some(w => w.title === 'Blue Moon'));
+  ok(pair && pair.works.length === 2, 'manual corrections: the separated works are listed as kept apart');
+  await call('DELETE', `/api/catalog/corrections/apart?pair=${encodeURIComponent(pair.pair)}`);
+  corr = (await call('GET', '/api/catalog/corrections')).data;
+  ok(!corr.apart.some(x => x.pair === pair.pair) && (await call('GET', '/api/catalog/merge-suggestions')).data.groups.some(x => x.works.some(w => w.title === 'Blue Moon')), 'undo: they can be suggested again');
+
+  // ---- more filters, exports ----
+  const tot = (await call('GET', '/api/catalog')).data.total;
+  ok((await call('GET', '/api/catalog?sites=1')).data.total === tot && (await call('GET', '/api/catalog?sites=2')).data.total === 0, 'filter: how many sites have it');
+  ok((await call('GET', `/api/catalog?lacks=${custom.id}`)).data.items.every(it => !it.sources.some(x => x.sourceId === custom.id)), 'filter: works a site lacks');
+  const withF = (await call('GET', '/api/catalog?with=Fantasy')).data, withoutF = (await call('GET', '/api/catalog?without=fantasy')).data;
+  ok(withF.items.some(it => it.key === blue.key) && !withoutF.items.some(it => it.key === blue.key) && withF.total + withoutF.total === tot, 'advanced: genres it must have / must not have (any spelling)');
+  ok((await call('GET', '/api/catalog?sort=sites')).data.total === tot && (await call('GET', '/api/catalog/facets')).data.statuses.length > 0, 'sort by sites; facets list statuses');
+  const csvRes = await fetch(`${BASE}/api/catalog/export.csv?q=blue`, { headers: { Cookie: cookie } });
+  const csvText = await csvRes.text();
+  ok(csvRes.status === 200 && /attachment/.test(csvRes.headers.get('content-disposition')) && /^\ufeff?title,/.test(csvText) && csvText.split('\r\n').filter(Boolean).length === 3 && csvText.includes('Blue Moon'), 'export: the filtered list as CSV (a link column per site)');
+  const jsonRes = await (await fetch(`${BASE}/api/catalog/export.json?q=blue`, { headers: { Cookie: cookie } })).json();
+  ok(jsonRes.total === 2 && jsonRes.works.every(w => w.title && Array.isArray(w.sources)), 'export: the filtered list as JSON');
+  const chCsv = await (await fetch(`${BASE}/api/catalog/work/chapters.csv?key=${encodeURIComponent(blue.key)}`, { headers: { Cookie: cookie } })).text();
+  ok(/^\ufeff?number,title,date,premium,/.test(chCsv) && chCsv.split('\r\n').filter(Boolean).length === 5, 'export: a work’s chapter list as CSV');
+
+  // ---- blacklist (per source; any spelling) ----
+  const madaraId = blue.key.split(':')[0];
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { blacklist: { genres: ['Science Fiction'] } });
+  cat = (await call('GET', '/api/catalog?q=blue%20moon')).data;
+  const srcRow = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === madaraId);
+  ok(cat.total === 1 && !cat.items.some(it => it.key === blue.key) && srcRow.hidden >= 1 && srcRow.blacklist.genres[0] === 'Science Fiction', 'a source’s blacklist leaves its works with that genre out (Sci-Fi = Science Fiction); the other site’s stays');
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { blacklist: { genres: [] } });
+  ok((await call('GET', '/api/catalog?q=blue%20moon')).data.total === 2 && !(await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === madaraId).blacklist, 'an empty blacklist brings them back');
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { schedule: 'hours', scheduleHours: 6, enabled: false });
+  const hs = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === madaraId);
+  ok(hs.schedule === 'hours' && hs.scheduleHours === 6 && hs.enabled === false, 'schedule every N hours; a source can be paused');
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { schedule: 'manual', enabled: true });
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { access: { mode: 'auto', cookies: 'session=secret1; age=ok', headers: 'X-Api-Key: secret2' } });
+  let av = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === madaraId).access;
+  const raw = JSON.stringify((await call('GET', '/api/catalog/sources')).data);
+  ok(av.cookieNames.join() === 'session,age' && av.headerNames.join() === 'X-Api-Key' && !raw.includes('secret1') && !raw.includes('secret2'), 'access cookies and headers are write-only: only their names come back');
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { access: { mode: 'auto', cookies: '', headers: '' } });
+  ok((await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === madaraId).access.cookieNames.length === 2, 'saving without new values keeps them');
+  await call('PATCH', `/api/catalog/sources/${madaraId}`, { access: { mode: 'auto', removeCookies: true, removeHeaders: true } });
+  av = (await call('GET', '/api/catalog/sources')).data.sources.find(x => x.id === madaraId).access;
+  ok(!av.cookieNames.length && !av.headerNames.length, 'and they can be removed');
 
   // ---- updating ----
   extraChapter = true;
@@ -429,6 +474,13 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   // ---- removing a source ----
   await call('DELETE', `/api/catalog/sources/${custom.id}`);
   ok((await call('GET', '/api/catalog')).data.total === 3 && !fs.existsSync(path.join(DATA, 'catalog', custom.id)), 'removing a source removes its works');
+
+  // ---- clearing the crawled catalog ----
+  ok((await call('POST', '/api/catalog/clear', {})).status === 400, 'clearing needs CLEAR typed');
+  const nSources = (await call('GET', '/api/catalog/sources')).data.sources.length;
+  const cl = (await call('POST', '/api/catalog/clear', { confirm: 'CLEAR' })).data;
+  ok(cl.removed === 3 && (await call('GET', '/api/catalog')).data.total === 0 && (await call('GET', '/api/catalog/sources')).data.sources.length === nSources && !fs.existsSync(path.join(DATA, 'cache', 'catalog-covers')),
+    'clearing removes every crawled work and cached cover; the sources stay');
 
   console.log(`\nALL ${passed} CATALOG CHECKS PASSED`);
   srv.kill(); site.close();

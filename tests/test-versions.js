@@ -85,9 +85,11 @@ async function latencyDuringScan(c, libId) {
   const c = (await call('POST', '/api/setup', { username: 'admin', password: 'adminpass1' })).cookie;
   const lv = (await call('POST', '/api/libraries', { name: 'Versions', root: V }, c)).data.library.id;
   const lh = (await call('POST', '/api/libraries', { name: 'Heavy', root: H }, c)).data.library.id;
-  // second library waits while the first scans
+  // Both libraries scan: side by side with several scan processes (one per process), in turn with one
   const both = (await call('GET', '/api/libraries', null, c)).data.libraries;
-  ok(both.some(l => l.scanProgress && l.scanProgress.queued), 'scans are queued: one library waits while another scans');
+  const procs = (await call('GET', '/api/processes', null, c)).data.scanService.processes;
+  ok(both.every(l => l.scanning || l.lastScan) && (procs > 1 || both.some(l => l.scanProgress && l.scanProgress.queued)),
+    `both libraries scan (${procs} scan process(es): ${procs > 1 ? 'side by side' : 'one waits for the other'})`);
   let libs = await idle(c);
   ok(libs.every(l => l.lastScan.mode === 'worker'), 'scans ran in the separate scan process');
   ok(libs.find(l => l.id === lh).booksCount === 456, `heavy library fully scanned (${libs.find(l => l.id === lh).booksCount} books)`);

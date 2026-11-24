@@ -157,6 +157,9 @@ const books = async seriesId => (await call('GET', `/api/series/${seriesId}`)).d
   await until(async () => { try { process.kill(pid, 0); return false; } catch { return true; } });
   log = '';
   await start();
+  // (after the start-up scan and the folder sources read again with it)
+  await until(async () => { const l = (await call('GET', '/api/libraries')).data.libraries[0]; return l && !l.scanning; });
+  await wait(300);
   ok((await call('GET', '/api/metadata/sources')).data.folder[0].id === A.id && (await work('One Piece')).summary === 'Pirates!', 'sources and their data survive a restart');
 
   console.log(`\nALL ${passed} FOLDER SOURCE CHECKS PASSED`);

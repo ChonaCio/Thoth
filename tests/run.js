@@ -27,7 +27,8 @@ const SUITES = {
   files: { file: 'test-files.js', quick: true },       // file management: deleting duplicates, merging works, works cache, covers ahead
   filelocks: { file: 'test-file-locks.js', quick: true }, // file jobs: locked files, a disk that stops answering, job phases
   catalog: { file: 'test-catalog.js', quick: true },   // external catalog: crawling fake sites (several works at once), catalog, merges, covers
-  render: { file: 'test-render.js', quick: true },     // pages built in a headless browser: the address guard; building (skipped without Chrome/Edge/Chromium)
+  render: { file: 'test-render.js', quick: true },
+  crawlrules: { file: 'test-crawl-rules.js', quick: true }, // catalog rules: title keys, page charsets, robots.txt errors, 429 slow-down, metadata links     // pages built in a headless browser: the address guard; building (skipped without Chrome/Edge/Chromium)
   processes: { file: 'test-processes.js' },           // scan pool, server settings, restarts (slow, big temp files)
   metadata: { file: 'test-metadata.js' },              // online metadata end to end (network)
   providers: { file: 'test-providers-live.js' },       // each metadata site answers (network)

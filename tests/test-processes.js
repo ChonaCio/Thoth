@@ -1,4 +1,4 @@
-﻿// node test-processes.js <app dir> â€” Server settings, the scan pool (start/stop/restart/crash), scan
+﻿// node test-processes.js <app dir> — Server settings, the scan pool (start/stop/restart/crash), scan
 // speed with concurrency, server restart, "code changed" detection. Runs on a copy of the app.
 const { spawn, execFileSync } = require('child_process');
 const fs = require('fs'), path = require('path'), os = require('os'), assert = require('assert'), zlib = require('zlib');
@@ -43,7 +43,7 @@ const call = async (m, u, b, c = cookie) => {
   const sc = r.headers.get('set-cookie');
   return { status: r.status, data: await r.json(), cookie: sc ? sc.split(';')[0] : null };
 };
-const ok = (c, n) => { assert(c, n); passed++; console.log('  âœ“', n); };
+const ok = (c, n) => { assert(c, n); passed++; console.log('  ✓', n); };
 const wait = ms => new Promise(r => setTimeout(r, ms));
 const svc = async () => (await call('GET', '/api/processes')).data.scanService;
 const pids = s => s.workers.map(w => w.pid);
@@ -90,14 +90,14 @@ async function timedFullScan(id) {
   l = { lastScan: await timedFullScan(L) };
   ok(l.lastScan.updated === l.lastScan.books && l.lastScan.read === l.lastScan.books, `full scan: every book read (${l.lastScan.read}/${l.lastScan.books})`);
 
-  // ---- speed: same library, 1 process Ã— 1 file vs 4 processes Ã— 4 files ----
+  // ---- speed: same library, 1 process × 1 file vs 4 processes × 4 files ----
   const M = (await call('POST', '/api/libraries', { name: 'Many', root: MANY })).data.library.id;
   await until(async () => { const x = await lib(M); return !x.scanning && x.lastScan && x; }, 300000);
   await call('PATCH', '/api/config', { scanWorkers: 1, scanConcurrency: 1 });
   const slow = await timedFullScan(M);
   await call('PATCH', '/api/config', { scanWorkers: 4, scanConcurrency: 4 });
   const fast = await timedFullScan(M);
-  console.log(`    full scan of ${fast.books} books: 1 process Ã— 1 file = ${slow.durationMs} ms; 4 processes Ã— 4 files = ${fast.durationMs} ms (${(slow.durationMs / fast.durationMs).toFixed(1)}Ã— faster)`);
+  console.log(`    full scan of ${fast.books} books: 1 process × 1 file = ${slow.durationMs} ms; 4 processes × 4 files = ${fast.durationMs} ms (${(slow.durationMs / fast.durationMs).toFixed(1)}× faster)`);
   ok(slow.books === fast.books && fast.processes === 4 && fast.concurrency === 4, 'both scans found every book; the report says how it ran');
   ok(fast.durationMs < slow.durationMs, 'more processes and files at once is faster');
   await call('PATCH', '/api/config', { scanWorkers: 2, scanConcurrency: 4 });
@@ -117,6 +117,17 @@ async function timedFullScan(id) {
   ok(s.state === 'running' && s.workers.length === 2 && pids(s).every(p => !before.includes(p)), 'start: new processes for the waiting scans');
   await until(async () => !(await lib(L)).scanning && !(await lib(M)).scanning, 300000);
   ok(true, 'the waiting scans ran after starting');
+
+  // ---- several libraries at once (one per process): both waiting scans run side by side ----
+  await call('POST', '/api/processes/scan-service/stop', {});
+  await call('POST', `/api/libraries/${M}/scan`, { full: true });
+  await call('POST', `/api/libraries/${L}/scan`, { full: true });
+  s = (await call('POST', '/api/processes/scan-service/start', {})).data.scanService;
+  const both = await until(async () => { const x = await svc(); return (x.running || []).length === 2 && x; }, 10000).catch(() => null);
+  await until(async () => !(await lib(L)).scanning && !(await lib(M)).scanning, 300000);
+  const span = x => { const end = Date.parse(x.lastScan.at); return [end - x.lastScan.durationMs, end]; };
+  const [sL, eL] = span(await lib(L)), [sM, eM] = span(await lib(M));
+  ok(sL < eM && sM < eL, `two libraries scanned at the same time with 2 processes${both ? ' (both shown as running)' : ''}`);
 
   // ---- restart ----
   const b2 = await svc();
@@ -139,7 +150,7 @@ async function timedFullScan(id) {
   const done = await until(async () => { const x = await lib(H); return !x.scanning && x.lastScan && x; }, 120000);
   ok(done.booksCount === 8 && !done.scanError, 'after starting again, the heavy library scans completely');
 
-  // ---- crash recovery: a dead process is replaced while scanning; 3 crashes in a minute â†’ give up ----
+  // ---- crash recovery: a dead process is replaced while scanning; 3 crashes in a minute → give up ----
   const busyPool = async () => { await call('POST', `/api/libraries/${H}/scan`, { full: true }); return until(async () => { const x = await svc(); return x.workers.length === 2 && x.current && x; }); };
   let victim = (await busyPool()).workers[0].pid;
   process.kill(victim);
@@ -153,7 +164,7 @@ async function timedFullScan(id) {
   // ---- server restart & code-changed detection ----
   fs.appendFileSync(path.join(APP, 'library', 'api.js'), '\n// changed\n');
   let srvInfo = (await call('GET', '/api/processes')).data.server;
-  ok(srvInfo.restartNeeded === true, 'changing server code on disk â†’ restart needed');
+  ok(srvInfo.restartNeeded === true, 'changing server code on disk → restart needed');
   ok(srvInfo.supervised && srvInfo.supervisorPid === srv.pid && srvInfo.pid !== srv.pid, 'npm start runs the server under the built-in supervisor');
   r = await call('POST', '/api/processes/server/restart', {});
   ok(r.status === 202, 'restart server accepted (no systemd/Docker needed)');

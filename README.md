@@ -173,7 +173,7 @@ them in small batches, each process reading several files at once. Libraries are
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each, only while scanning). Changing it during a scan restarts the scan with the new number. |
+| Scan processes | CPU cores − 1, up to 4 | Processes reading files in parallel. More = faster on multi-core servers (~40 MB memory each, only while scanning). As many libraries are scanned at the same time (each lists its folders on its own process, and every process helps read files), e.g. at start-up. Changing it during a scan restarts the scan with the new number. |
 | Files at once per process | 4 | Files each process reads at the same time. Higher helps fast disks and network storage; lower is gentler on slow disks. |
 | Works looked up at once | 3 | Metadata lookups running in parallel (1–8). Each site still gets a pause between requests. |
 | Sources crawled at once | 2 | External catalog crawls running at the same time (1–8), each its own process; others wait in line. |
@@ -515,6 +515,61 @@ sites added as **sources**, with its metadata and chapter list.
   sitemap files whose date in the index or whose content didn't change, and in a changed file reads only the
   works that are new or whose entries changed (the hashes are saved again after a crawl that finished). Sites without a known theme use the generic reader (title, cover and summary from the page's standard
   tags; chapters = links whose address matches the chapter pattern).
+- **More filters and exports (Catalog tab):** *More filters* adds type, status, how many sites have a work (1, 2,
+  3+), a site that **lacks** it, *updated today / this week / this month*, genres or tags a work **must have** or
+  **must not have** (any spelling), and an author. Sort by most sites too. **List** view (cover, title, its sites as
+  links, chapters, latest chapter, last update) or **Covers**; the choice is remembered. **CSV / JSON** export the
+  filtered list (a link column per site); a work's page exports its combined chapter list the same way.
+- **Grouping the same work:** titles also match with numbers written either way (*Three Title* = `3-title`,
+  *Twenty-One Days* = *21 Days*, *Room 007* = *Room 7*), without a leading *The / A / An* (names of 8+ characters)
+  and without bracketed extras (*(Official)*, *[Manhwa]*, *(2019)*). Works whose pages link to the **same entry on
+  AniList, MyAnimeList, MangaUpdates, MangaDex, Kitsu or Anime-Planet** are merged automatically (a page linking to
+  several entries of one site, like a recommendations list, doesn't count), and those links also match library
+  series. Titles a letter apart (*…Swordmaster's Revenge* / *…Swordmasters Revange*; 10+ characters, 2 letters from
+  18, never different numbers) are **suggested** (*Similar names*). **Manual corrections** on the Merge tab lists
+  works kept apart and suggestions marked *Not the same*, each with **Undo**.
+- **Per source (wizard → Crawling):** a **blacklist** of genres or categories, tags and authors (one per line, any
+  spelling: *Sci-Fi* = *Science Fiction*, *Doe, Jane* = *Jane Doe*; a work is judged by what all its sites say, and
+  stays through other sites unless they block it too; the source's card says how many it hides), crawls **every N
+  hours**, **Pause** (no scheduled crawls), *Check ongoing works for new chapters* (on: an update also re-reads
+  ongoing works when they're due — half their usual gap between chapters, every 12 h to 7 days — since sitemaps
+  seldom change when a chapter is added), and **Access** (below).
+- **Complete chapter lists** (*Get the complete chapter list*, on by default): when a work page's list looks
+  incomplete (it doesn't reach chapter 1, or has big gaps), the rest is read where the page's own script would get
+  it: the source's **Full chapter list URL** (`{url}` `{slug}` `{id}` `{page}` `{skip}` `{take}` `{cursor}`), chapter
+  data in the page (Next.js, Angular state, Inertia, JSON scripts), an address template in an attribute
+  (`data-api-url="…/api/manga/__SLUG__/chapters"` filled from the page's `data-*` values) or built in an inline
+  script, or the site's chapter API (`{api}/api/chapters?postId=…`). Paging is followed (next links, skip/take or
+  offset/limit with a total, page/last_page, cursors); premium flags in the data are kept; each address's robots.txt
+  applies.
+- **Chapters:** release dates are read from what sites show ("5d ago", "about 1 month ago", "May 9", "hace 3 días")
+  as real dates; a lone number that lost its decimal point (a *605* in a list running 1…70, between 61 and 60) is
+  read as **60.5** when the evidence agrees (its neighbours, else its date; logged); sitemap dates that a large
+  share of chapters carry (a bulk update) are ignored.
+- **More fields and clean-up (wizard → Work page):** tags, type, release year, and the separator of the alternative
+  titles; under each text field, **Clean up the values**: remove counts ("Adventure 999", "Action · 1.2k"), a label
+  before the value ("Status: Ongoing"), keep only the element's own text, or remove a regular expression.
+- **Templates (wizard → Works list):** 26 layouts for known site engines and common structures (Madara, MangaStream
+  / MangaReader and its list mode, FoOlSlide, Iken, FanFox, MangaTown, Mangakakalot, MangaBuddy, MangaPill, Bato,
+  Genkan, paged catalogues, per-type pages, A–Z directories, latest feeds…) fill the listing and work-page fields.
+  **Find a matching template** tries the likely ones on the site (those whose markers are on its home page first;
+  a few requests each) and ranks them by works found and fields read. Listings can have more addresses (one per
+  line), `{letter}` / `{LETTER}` (0-9, a … z) and `{a|b|c}` for one listing per value, a page limit, and a work
+  address pattern that picks the work links.
+- **Access (sites that answer 403):** *Automatic* (default) retries a 403 that isn't bot protection with what a
+  visitor's browser sends anyway — the site's own cookies (its home page visited at most once an hour, when
+  robots.txt allows), a Referer (the page, the site, the source's home page) — and your own **cookies and
+  headers** for the site (optional, **write-only**: only their names are shown afterwards; never sent to other
+  sites). What worked is remembered per host. Bot checks are never solved or worked around, bot-check cookies
+  (`cf_clearance`, `datadome`…) are dropped, the user agent never changes, and identity headers (User-Agent, Sec-…,
+  X-Forwarded-For…) can't be added. *Plain requests only* reports the 403 as is.
+- **Politeness:** a robots.txt that answers a server error makes the site off-limits until it answers (RFC 9309);
+  a 429 or 503 halves the requests at once to that site and doubles their spacing for 10 minutes; after 3 series
+  pages in a row are refused (401/403/bot check), no more are requested and the works keep what the listing gave.
+  Pages are read in the charset they declare, and titles a site sent already garbled ("CafÃ©") are repaired.
+- **Clearing the catalog (Sources tab):** *Clear the catalog…* (type `CLEAR`) removes every crawled work, chapter
+  list, manual merge and split, and the cached covers; the sources and their settings stay, and their next crawls
+  are full ones.
 - **Icons:** each source shows its site's own icon (the one its pages declare, else `/favicon.ico`).
 - **Adding or editing a source is a wizard:** *Site* (a name and the address; *Detect settings* reads its robots.txt,
   sitemaps and pages; with automatic settings that's all it needs) → *Kind of site* → *Works list* → *Work page* →

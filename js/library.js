@@ -1,9 +1,9 @@
 /*
  * Library pages: home, library browsing, series, book, search, collections, read lists,
  * and library management (admins). Each page has:
- *   render(route) â†’ HTML from what's loaded so far (shows a spinner until data arrives)
- *   enter(route)  â†’ loads data, then re-renders if the user is still on that page
- *   mount(el)     â†’ optional, wires up things after the HTML is in place
+ *   render(route) → HTML from what's loaded so far (shows a spinner until data arrives)
+ *   enter(route)  → loads data, then re-renders if the user is still on that page
+ *   mount(el)     → optional, wires up things after the HTML is in place
  */
 (function () {
   'use strict';
@@ -23,13 +23,13 @@
 
   /* ---------------- page cache ----------------
    * Every page keeps its data in `cache`, stamped with when it was fetched (_at). Coming back to a page:
-   *   fresh (fetched less than FRESH_MS ago, nothing changed since) â†’ shown as is, no request at all;
-   *   older, or marked stale by a change (markStale) â†’ shown at once, refreshed in the background.
+   *   fresh (fetched less than FRESH_MS ago, nothing changed since) → shown as is, no request at all;
+   *   older, or marked stale by a change (markStale) → shown at once, refreshed in the background.
    * So switching between pages never waits for the server unless the page was never opened. */
   var FRESH_MS = 60 * 1000;
   function stamp(x) { if (x && typeof x === 'object' && !x.error) { x._at = Date.now(); delete x.stale; } return x; }
   function isFresh(x) { return Boolean(x && !x.error && !x.stale && x._at && Date.now() - x._at < FRESH_MS); }
-  // Mark one cached page, or every entry of a map of pages (cache.series, cache.book, â€¦), as out of date
+  // Mark one cached page, or every entry of a map of pages (cache.series, cache.book, …), as out of date
   function markStale(x) {
     if (!x || typeof x !== 'object') return;
     if ('_at' in x || 'error' in x) { x.stale = true; return; }
@@ -84,7 +84,7 @@
     return pageCount ? Math.max(2, Math.round(p.page / pageCount * 100)) : 0;
   }
 
-  // "3 books Â· 2 versions", "One-shot", or "3 books Â· Colored" for a single non-base version
+  // "3 books · 2 versions", "One-shot", or "3 books · Colored" for a single non-base version
   function editionLabel(e) { return t('edition.' + (e || 'base')); }
   // A version's name as a colored tag (Regular plain); plain for inside a tab
   function editionTag(e, inTab) {
@@ -95,8 +95,8 @@
   var WORK_TYPES = ['manga', 'manhwa', 'manhua', 'webcomic', 'comic', 'novel', 'book', 'other'];
   function cardSubtitle(s) {
     var main = s.oneshot ? t('lib.oneshot') : count(s.booksCount, 'lib.bookCount1', 'lib.booksCount');
-    if (s.editions && s.editions.length > 1) return main + ' Â· ' + t('lib.versions', { count: s.editions.length });
-    if (s.edition && s.edition !== 'base') return main + ' Â· ' + editionLabel(s.edition);
+    if (s.editions && s.editions.length > 1) return main + ' · ' + t('lib.versions', { count: s.editions.length });
+    if (s.edition && s.edition !== 'base') return main + ' · ' + editionLabel(s.edition);
     return main;
   }
 
@@ -158,7 +158,7 @@
         '<a class="book-row__main" href="#book/' + b.id + '">' +
           '<span class="book-row__num">' + esc(b.number) + '</span>' +
           '<span class="book-row__text"><span class="book-row__title">' + esc(b.title) + '</span>' +
-            '<span class="book-row__sub">' + esc([b.pageCount ? t('book.pages', { count: b.pageCount }) : b.format.toUpperCase(), b.releaseDate].filter(Boolean).join(' Â· ')) + '</span></span>' +
+            '<span class="book-row__sub">' + esc([b.pageCount ? t('book.pages', { count: b.pageCount }) : b.format.toUpperCase(), b.releaseDate].filter(Boolean).join(' · ')) + '</span></span>' +
           '<span class="book-row__state">' + (p && p.completed ? icon('check') : '') + '<span>' + esc(state) + '</span>' +
             (pct && pct < 100 ? '<span class="book-row__bar"><span style="width:' + pct + '%"></span></span>' : '') + '</span>' +
           (b.error ? '<span class="cover__error" title="' + esc(b.error) + '">!</span>' : '') +
@@ -218,9 +218,9 @@
   function libKey(route) { return libId(route) + (libDeleted(route) ? ':deleted' : ''); }
 
   /* Advanced search: every facet value can be included or excluded.
-   *   genre/tag/person (lists; person = a writer, artist, â€¦ in any role): the work needs ALL included values and NONE of the excluded ones
+   *   genre/tag/person (lists; person = a writer, artist, … in any role): the work needs ALL included values and NONE of the excluded ones
    *   type/status/metadata (one value per work): ANY of the included values, none of the excluded
-   * plus a year range and an author. In the address: genre=â€¦&genre=â€¦&xgenre=â€¦&yearFrom=â€¦&author=â€¦ */
+   * plus a year range and an author. In the address: genre=…&genre=…&xgenre=…&yearFrom=…&author=… */
   var MULTI = ['type', 'status', 'genre', 'tag', 'person', 'metadata'];
   function resetCriteria(st) {
     st.inc = {}; st.exc = {};
@@ -253,7 +253,7 @@
       st.reset = true;
     }
   }
-  // { genre: [...], xgenre: [...], yearFrom, â€¦ } for the API and the address
+  // { genre: [...], xgenre: [...], yearFrom, … } for the API and the address
   function criteriaParams(st) {
     var p = {};
     MULTI.forEach(function (f) { if (st.inc[f].length) p[f] = st.inc[f]; if (st.exc[f].length) p['x' + f] = st.exc[f]; });
@@ -355,7 +355,7 @@
   }
   var filterTimer;
   var library = {
-    title: function (route) { return (libDeleted(route) ? t('del.hiddenTitle') + ' Â· ' : '') + libraryName(libId(route)); },
+    title: function (route) { return (libDeleted(route) ? t('del.hiddenTitle') + ' · ' : '') + libraryName(libId(route)); },
     render: function (route) {
       var key = libId(route);
       applyRouteFilters(route);
@@ -406,7 +406,7 @@
         if ((b = e.target.closest('[data-adv-toggle]'))) { st.panel = !st.panel; return refreshFilters(route); }
         if ((b = e.target.closest('[data-filter-clear]'))) { resetCriteria(st); return changed(true); }
         if ((b = e.target.closest('[data-adv]'))) {
-          // Each click: neutral â†’ include â†’ exclude â†’ neutral
+          // Each click: neutral → include → exclude → neutral
           var f = b.dataset.adv, v = b.dataset.value;
           var inI = st.inc[f].indexOf(v), inX = st.exc[f].indexOf(v);
           if (inI !== -1) { st.inc[f].splice(inI, 1); st.exc[f].push(v); }
@@ -462,7 +462,7 @@
         renderLibGrid(route);
         fetchSeries(route, false, keep);
       }
-      // What the search can offer (genres, tags, â€¦ with counts) for this library
+      // What the search can offer (genres, tags, … with counts) for this library
       var id = libId(route);
       if (isFresh(cache.facets[id])) return;
       api('GET', '/api/series/facets?' + Store.qs({ library: id === 'all' ? '' : id })).then(function (r) {
@@ -487,7 +487,7 @@
     var el = $('#lib-active');
     if (el) { el.outerHTML = activeChipsHtml(route); renderIcons($('#lib-filters')); }
   }
-  // The chosen criteria as removable chips ("+ Action", "âˆ’ Gore", "1990â€“2000", "Author: Oda")
+  // The chosen criteria as removable chips ("+ Action", "− Gore", "1990–2000", "Author: Oda")
   function activeChipsHtml(route) {
     var st = libState(route);
     var label = function (f, v) {
@@ -496,7 +496,7 @@
     var chips = [];
     MULTI.forEach(function (f) {
       st.inc[f].forEach(function (v) { chips.push(['inc', f, v, '+ ' + t('filter.' + f) + ': ' + label(f, v)]); });
-      st.exc[f].forEach(function (v) { chips.push(['exc', f, v, 'âˆ’ ' + t('filter.' + f) + ': ' + label(f, v)]); });
+      st.exc[f].forEach(function (v) { chips.push(['exc', f, v, '− ' + t('filter.' + f) + ': ' + label(f, v)]); });
     });
     if (st.yearFrom || st.yearTo) {
       if (st.yearFrom) chips.push(['val', 'yearFrom', '', t('adv.yearFrom') + ' ' + st.yearFrom]);
@@ -508,13 +508,13 @@
         esc(c[3]) + ' ' + icon('close') + '</button>';
     }).join('') + '<button type="button" class="btn btn--text btn--small" data-filter-clear>' + esc(t('filter.clear')) + '</button>' : '') + '</div>';
   }
-  // One value in the search panel: click â†’ include â†’ exclude â†’ neither
+  // One value in the search panel: click → include → exclude → neither
   var advTermTimer = null;
   function advChip(st, f, v, label, count) {
     var s = st.inc[f].indexOf(v) !== -1 ? 'inc' : st.exc[f].indexOf(v) !== -1 ? 'exc' : '';
     return '<button type="button" class="chip chip--adv' + (s ? ' is-' + s : '') + '" data-adv="' + f + '" data-value="' + esc(v) + '" aria-pressed="' + (s ? 'true' : 'false') + '"' +
       ' title="' + esc(t(s === 'inc' ? 'adv.stateInc' : s === 'exc' ? 'adv.stateExc' : 'adv.stateNone')) + '">' +
-      (s === 'inc' ? '+ ' : s === 'exc' ? 'âˆ’ ' : '') + esc(label) + (count ? ' <span class="chip__count">' + count + '</span>' : '') + '</button>';
+      (s === 'inc' ? '+ ' : s === 'exc' ? '− ' : '') + esc(label) + (count ? ' <span class="chip__count">' + count + '</span>' : '') + '</button>';
   }
   // The "Search & filters" button, the active criteria and (when open) the panel with every value
   function filtersHtml(route) {
@@ -605,7 +605,7 @@
     var p = (providersCache || []).filter(function (x) { return x.id === id; })[0]; // folder sources have their own names
     return p ? p.name : id;
   }
-  // People as chips like the tags ("Eiichiro Oda Â· Writer, Penciller"), one per person; each opens the
+  // People as chips like the tags ("Eiichiro Oda · Writer, Penciller"), one per person; each opens the
   // library filtered by that person (any role). Without a library (s null) they're plain chips.
   function authorsLine(list, s) {
     if (!list || !list.length) return '';
@@ -621,7 +621,7 @@
         : '<span class="chip chip--person">' + inner + '</span>';
     }).join('') + '</div>';
   }
-  // "https://www.example.org/x" â†’ "example.org"
+  // "https://www.example.org/x" → "example.org"
   function linkHost(url) {
     var m = /^https?:\/\/(?:www\.)?([^/?#:]+)/i.exec(url || '');
     return m ? m[1] : url;
@@ -632,7 +632,7 @@
     // One line per source: the folder sources (JSON files), then every link of the work (its pages on the
     // metadata sites it was matched to, links from its JSON files, links added by hand)
     var lines = loc.map(function (l) {
-      return '<li>' + icon('description') + ' <span>' + esc(l.name) + (isAdmin() && s.localFile ? ' <span class="muted">Â· ' + esc(s.localFile) + '</span>' : '') + '</span></li>';
+      return '<li>' + icon('description') + ' <span>' + esc(l.name) + (isAdmin() && s.localFile ? ' <span class="muted">· ' + esc(s.localFile) + '</span>' : '') + '</span></li>';
     }).concat(urls.map(function (l) {
       // Only the source's name (a known site, else the page's host), opening the address
       return '<li>' + icon('open_in_new') + ' <a href="' + esc(l.url) + '" target="_blank" rel="noopener noreferrer" title="' + esc(l.url) + '">' +
@@ -642,8 +642,8 @@
     var localLine = loc.length && isAdmin() && s.localCover ? '<p class="muted small">' + esc(t('msrc.withCover')) + '</p>' : '';
     var locked = md && md.locked ? [].concat(md.locked) : [];
     var status = !md ? t('meta.never')
-      : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (locked.length ? ' Â· ' + t('meta.lockedTo', { provider: locked.map(function (l) { return providerName(l.provider); }).join(', ') }) : '') +
-          (md.cover ? ' Â· ' + (md.coverProvider ? t('meta.coverFrom', { provider: providerName(md.coverProvider) }) : t('meta.coverDownloaded')) + (s.coverSource === 'metadata' ? '' : ' (' + t('meta.coverNotShown') + ')') : ' Â· ' + t('meta.noCover'))
+      : md.matched ? t('meta.updated', { time: A().fmtDate(md.fetchedAt) }) + (locked.length ? ' · ' + t('meta.lockedTo', { provider: locked.map(function (l) { return providerName(l.provider); }).join(', ') }) : '') +
+          (md.cover ? ' · ' + (md.coverProvider ? t('meta.coverFrom', { provider: providerName(md.coverProvider) }) : t('meta.coverDownloaded')) + (s.coverSource === 'metadata' ? '' : ' (' + t('meta.coverNotShown') + ')') : ' · ' + t('meta.noCover'))
       : t('meta.noMatch', { time: A().fmtDate(md.fetchedAt) });
     return '<div class="detail__in detail__meta-src">' +
       '<span class="muted small">' + esc(t('meta.sources')) + '</span>' + links + localLine +
@@ -675,7 +675,7 @@
         w.type ? '<span class="badge badge--primary">' + esc(t('type.' + w.type)) + '</span>' : '',
         w.year ? esc(w.year) : '',
         w.status !== 'unknown' ? '<span class="badge">' + esc(t('series.status.' + w.status)) + '</span>' : '',
-        w.rating != null ? '<span title="' + esc(t('meta.rating')) + '">â˜… ' + esc((w.rating / 10).toFixed(1)) + '</span>' : '',
+        w.rating != null ? '<span title="' + esc(t('meta.rating')) + '">★ ' + esc((w.rating / 10).toFixed(1)) + '</span>' : '',
         w.publisher ? esc(w.publisher) : '',
         s.readingDirection !== 'ltr' ? esc(t('series.direction.' + s.readingDirection)) : ''
       ].filter(Boolean);
@@ -704,9 +704,9 @@
           '<div class="detail__body">' +
             // The version shown: a colored tag after the title (none for Regular)
             '<h1 class="detail__title">' + esc(w.title) + (s.edition !== 'base' ? ' ' + editionTag(s.edition) : '') + '</h1>' +
-            '<div class="detail__meta">' + meta.join('<span class="dot">Â·</span>') + '</div>' +
+            '<div class="detail__meta">' + meta.join('<span class="dot">·</span>') + '</div>' +
             authorsLine(w.authors, w) +
-            (w.altTitles && w.altTitles.length ? '<p class="muted small detail__alt">' + esc(w.altTitles.slice(0, 4).join(' Â· ')) + '</p>' : '') +
+            (w.altTitles && w.altTitles.length ? '<p class="muted small detail__alt">' + esc(w.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
             progressLine +
             filterChips(w, 'genre', w.genres || [], 'chip--genre') +
             filterChips(w, 'tag', w.tags, '') +
@@ -765,7 +765,7 @@
           '<div class="detail__body">' +
             '<p class="detail__eyebrow">' + esc(b.oneshot ? t('lib.oneshot') : t('book.number', { number: b.number })) + '</p>' +
             '<h1 class="detail__title">' + esc(b.title) + '</h1>' +
-            (b.altTitles && b.altTitles.length ? '<p class="muted small detail__alt">' + esc(b.altTitles.slice(0, 4).join(' Â· ')) + '</p>' : '') +
+            (b.altTitles && b.altTitles.length ? '<p class="muted small detail__alt">' + esc(b.altTitles.slice(0, 4).join(' · ')) + '</p>' : '') +
             authorsLine(b.authors, s) +
             (s && b.genres && b.genres.length ? filterChips(s, 'genre', b.genres, 'chip--genre') : '') +
             (s && b.tags && b.tags.length ? filterChips(s, 'tag', b.tags, '') : '') +
@@ -785,8 +785,8 @@
           '</div>' +
         '</div>' +
         '<div class="prev-next">' +
-          (d.prev ? '<a class="prev-next__link" href="#book/' + d.prev.id + '">' + icon('chevron_left') + '<span><span class="muted small">' + esc(t('book.prev')) + '</span><br>' + esc(d.prev.number + ' Â· ' + d.prev.title) + '</span></a>' : '<span></span>') +
-          (d.next ? '<a class="prev-next__link prev-next__link--next" href="#book/' + d.next.id + '"><span><span class="muted small">' + esc(t('book.next')) + '</span><br>' + esc(d.next.number + ' Â· ' + d.next.title) + '</span>' + icon('chevron_right') + '</a>' : '') +
+          (d.prev ? '<a class="prev-next__link" href="#book/' + d.prev.id + '">' + icon('chevron_left') + '<span><span class="muted small">' + esc(t('book.prev')) + '</span><br>' + esc(d.prev.number + ' · ' + d.prev.title) + '</span></a>' : '<span></span>') +
+          (d.next ? '<a class="prev-next__link prev-next__link--next" href="#book/' + d.next.id + '"><span><span class="muted small">' + esc(t('book.next')) + '</span><br>' + esc(d.next.number + ' · ' + d.next.title) + '</span>' + icon('chevron_right') + '</a>' : '') +
         '</div>';
     },
     enter: function (route) {
@@ -954,10 +954,10 @@
     return '<div class="progress' + (known ? '' : ' progress--indeterminate') + '" role="progressbar" aria-label="' + esc(label) + '"' +
         (known ? ' aria-valuemin="0" aria-valuemax="100" aria-valuenow="' + p.percent + '"' : '') + '>' +
       '<div class="progress__track"><span class="progress__fill" style="width:' + (known ? p.percent : 30) + '%"></span></div>' +
-      '<div class="progress__text small">' + esc(parts.join(' Â· ')) + (p && p.elapsedMs ? '<span class="muted"> Â· ' + esc(t('progress.elapsed', { time: fmtTime(p.elapsedMs) })) + '</span>' : '') + '</div>' +
+      '<div class="progress__text small">' + esc(parts.join(' · ')) + (p && p.elapsedMs ? '<span class="muted"> · ' + esc(t('progress.elapsed', { time: fmtTime(p.elapsedMs) })) + '</span>' : '') + '</div>' +
     '</div>';
   }
-  // A running library scan: finding files (count so far) â†’ reading new/changed files (x of y) â†’ saving
+  // A running library scan: finding files (count so far) → reading new/changed files (x of y) → saving
   function scanProgressBar(prog, full) {
     var p = prog || { phase: 'listing' };
     var label = (full ? scanModeLabel(typeof full === 'object' ? full : { full: true }) + ': ' : '') + t('progress.phase.' + (p.phase || 'listing'));
@@ -985,20 +985,20 @@
     if (l.scanError) return '<p class="notice notice--error">' + esc(A().errMsg({ code: l.scanError, message: l.scanError })) + '</p>';
     var s = l.lastScan;
     if (!s) return '<p class="muted small">' + esc(t('manage.neverScanned')) + '</p>';
-    var html = '<p class="muted small">' + esc(t('manage.lastScan', { time: A().fmtDate(s.at) })) + ' (' + esc(scanModeLabel(s) + (s.reason ? ', ' + t('manage.reason.' + s.reason) : '')) + ') Â· ' +
+    var html = '<p class="muted small">' + esc(t('manage.lastScan', { time: A().fmtDate(s.at) })) + ' (' + esc(scanModeLabel(s) + (s.reason ? ', ' + t('manage.reason.' + s.reason) : '')) + ') · ' +
       esc(t('manage.scanSummary', { series: s.series, books: s.books, added: s.added, updated: s.updated, removed: s.removed })) +
-      (s.scanMode === 'quick' && s.folders ? ' Â· ' + esc(t('manage.foldersSkipped', { skipped: s.foldersSkipped || 0, total: s.folders })) : '') + '</p>';
+      (s.scanMode === 'quick' && s.folders ? ' · ' + esc(t('manage.foldersSkipped', { skipped: s.foldersSkipped || 0, total: s.folders })) : '') + '</p>';
     if (s.unsupported) html += '<p class="notice">' + esc(t(s.unsupported === 1 ? 'manage.unsupported1' : 'manage.unsupported', { count: s.unsupported, examples: (s.unsupportedExamples || []).slice(0, 2).join(', ') })) + '</p>';
     if (s.failedBooks) html += '<p class="notice notice--error">' + esc(t(s.failedBooks === 1 ? 'manage.failed1' : 'manage.failed', { count: s.failedBooks })) + '</p>';
     if (s.errors && s.errors.length) html += '<p class="notice notice--error">' + esc(t('manage.scanErrors')) + ': ' + esc(s.errors.slice(0, 3).join('; ')) + '</p>';
     return html;
   }
-  // "Metadata: AniList â†’ MangaDex â†’ â€¦ Â· 12 of 40 works matched"
+  // "Metadata: AniList → MangaDex → … · 12 of 40 works matched"
   function metadataLine(l) {
     if (!l.metadata) return '';
     var on = l.metadata.providers.filter(function (p) { return p.enabled; }).map(function (p) { return providerName(p.id); });
-    return '<p class="muted small">' + esc(t('meta.line', { providers: on.length ? on.join(' â†’ ') : t('meta.noneOn') })) +
-      (l.seriesCount ? ' Â· ' + esc(t('meta.matched', { count: l.metadataCount || 0, total: l.seriesCount })) : '') + '</p>';
+    return '<p class="muted small">' + esc(t('meta.line', { providers: on.length ? on.join(' → ') : t('meta.noneOn') })) +
+      (l.seriesCount ? ' · ' + esc(t('meta.matched', { count: l.metadataCount || 0, total: l.seriesCount })) : '') + '</p>';
   }
   var manage = {
     title: function () { return t('nav.manageLibraries'); },
@@ -1018,7 +1018,7 @@
             '<div class="lib-card__head"><span class="lib-card__icon">' + icon('library') + '</span>' +
               '<div class="lib-card__text"><h2 class="card__title"><a href="#library/' + l.id + '">' + esc(l.name) + '</a></h2>' +
               '<p class="muted small lib-card__path">' + icon('folder_open') + '<span>' + esc(l.root) + '</span></p></div></div>' +
-            '<p class="small">' + esc(count(l.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + ' Â· ' + esc(count(l.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</p>' +
+            '<p class="small">' + esc(count(l.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + ' · ' + esc(count(l.booksCount, 'lib.bookCount1', 'lib.booksCount')) + '</p>' +
             '<p class="muted small">' + esc(oneshotsOf(l).folder
               ? t('manage.oneshotsLineExtra', { folder: oneshotsOf(l).folder })
               : t('manage.oneshotsLineRoot')) + '</p>' +
@@ -1065,7 +1065,7 @@
   };
 
   /* ================= RENAME FILES (admins) ================= */
-  // Check a library for files to rename (chapter-1.cbz â†’ Chapter 1.cbz), review, rename the picked ones
+  // Check a library for files to rename (chapter-1.cbz → Chapter 1.cbz), review, rename the picked ones
   var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', locked: 'ren.err.locked', stalled: 'ren.err.stalled',notEmpty: 'files.err.notEmpty', notDeletable: 'files.err.notDeletable', otherDisk: 'files.err.otherDisk' };
   // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
   // except `excluded`; mode 'some' = only the ticked ones (`selected`)
@@ -1112,7 +1112,7 @@
     if (!j) return '';
     var p = { percent: j.status === 'queued' ? null : j.progress, done: j.done, total: j.total, etaMs: null, elapsedMs: 0, phase: j.status };
     return '<div id="ren-job" class="card card--wide ren-job" role="status">' +
-      progressBar(p, t(j.status === 'queued' ? 'ren.jobQueued' : 'ren.jobRunning'), t('ren.jobProgress', { done: j.done, total: j.total || 'â€¦', renamed: j.renamed })) +
+      progressBar(p, t(j.status === 'queued' ? 'ren.jobQueued' : 'ren.jobRunning'), t('ren.jobProgress', { done: j.done, total: j.total || '…', renamed: j.renamed })) +
       renamePhaseHtml(j) +
       '<p class="muted small">' + esc(t('ren.jobHelp')) + '</p></div>';
   }
@@ -1145,15 +1145,15 @@
       x.involved.map(function (f) {
         return '<tr' + (f.role === 'this' ? ' class="is-this"' : '') + '><td><code>' + esc(f.fileName) + '</code> <span class="muted small">' + esc(t(role[f.role])) + '</span>' +
             (f.same ? ' <span class="badge">' + esc(t('ren.same')) + '</span>' : '') + (f.error ? ' <span class="badge badge--danger">' + esc(t('ren.unreadable')) + '</span>' : '') + '</td>' +
-          '<td' + (f.pageCount && f.pageCount === largest && x.involved.length > 1 ? ' class="ren-most"' : '') + '>' + esc(f.pageCount || 'â€”') + '</td>' +
-          '<td>' + esc(f.size ? fmtSize(f.size) : 'â€”') + '</td><td>' + esc(f.modified ? A().fmtDate(f.modified) : 'â€”') + '</td><td>' + esc(f.readers || 0) + '</td>' +
+          '<td' + (f.pageCount && f.pageCount === largest && x.involved.length > 1 ? ' class="ren-most"' : '') + '>' + esc(f.pageCount || '—') + '</td>' +
+          '<td>' + esc(f.size ? fmtSize(f.size) : '—') + '</td><td>' + esc(f.modified ? A().fmtDate(f.modified) : '—') + '</td><td>' + esc(f.readers || 0) + '</td>' +
           '<td><button class="btn btn--text btn--small btn--danger" data-lib="files-del" data-id="' + esc(f.bookId) + '" data-name="' + esc(f.fileName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('delete') + esc(t('files.deleteThis')) + '</button></td></tr>';
       }).join('') + '</tbody></table>' +
       (x.status === 'exists' && x.other ? '<span class="files-dup__actions"><button class="btn btn--text btn--small" data-lib="files-replace" data-id="' + x.bookId + '" data-name="' + esc(x.other.fileName) + '"' + (st.job ? ' disabled' : '') + '>' + icon('edit') + esc(t('files.keepThis')) + '</button></span>' : '') +
       '<p class="muted small">' + esc(t(x.status === 'exists' ? 'ren.involvedHelpExists' : 'ren.involvedHelp')) + '</p></div>';
   }
   function fmtFileInfo(x) {
-    return [x.size ? fmtSize(x.size) : '', x.pageCount ? t('series.pages', { count: x.pageCount }) : ''].filter(Boolean).join(' Â· ');
+    return [x.size ? fmtSize(x.size) : '', x.pageCount ? t('series.pages', { count: x.pageCount }) : ''].filter(Boolean).join(' · ');
   }
   // The result of a finished file job (rename, delete or merge)
   function fileJobResult(r) {
@@ -1170,10 +1170,10 @@
       '<strong>' + esc(lines.join(' ')) + '</strong>' +
       (r.error ? '<p>' + esc(r.error) + '</p>' : '') +
       (r.foldersDeleted && r.foldersDeleted.length ? '<p class="small">' + esc(t('files.foldersDeleted', { folders: r.foldersDeleted.join(', ') })) + '</p>' : '') +
-      (r.repeats && r.repeats.length && !(r.foldersDeleted && r.foldersDeleted.length) ? '<p class="small">' + esc(t('files.repeatsLeft', { files: r.repeats.slice(0, 10).join(', ') + (r.skipped > 10 ? 'â€¦' : '') })) + '</p>' : '') +
+      (r.repeats && r.repeats.length && !(r.foldersDeleted && r.foldersDeleted.length) ? '<p class="small">' + esc(t('files.repeatsLeft', { files: r.repeats.slice(0, 10).join(', ') + (r.skipped > 10 ? '…' : '') })) + '</p>' : '') +
       (r.foldersKept && r.foldersKept.length ? '<p class="small">' + esc(t('files.foldersKept', { folders: r.foldersKept.join(', ') })) + '</p>' : '') +
       (r.failedCount > failed.length ? '<p class="small">' + esc(t('ren.failedMore', { count: r.failedCount })) + '</p>' : '') +
-      (failed.length ? '<ul class="msrc-examples">' + failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> â€” ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
+      (failed.length ? '<ul class="msrc-examples">' + failed.slice(0, 20).map(function (f) { return '<li><code>' + esc(f.from) + '</code> — ' + esc(RENAME_ERRORS[f.error] ? t(RENAME_ERRORS[f.error]) : f.error) + '</li>'; }).join('') + '</ul>' : '') +
     '</div></div>';
   }
   var renamePage = {
@@ -1185,10 +1185,10 @@
       var head = filesTabs('rename') +
         '<p class="page-lead">' + esc(t('ren.intro')) + '</p>' +
         '<details class="card card--wide msrc-how"><summary class="card__title">' + esc(t('ren.rulesTitle')) + '</summary>' +
-          // Examples worked out by the server with the current rules ("â€”" = left as it is)
+          // Examples worked out by the server with the current rules ("—" = left as it is)
           (st.rules ? '<pre class="msrc-pre">' + esc(st.rules.map(function (x) {
             var pad = Math.max.apply(null, st.rules.map(function (y) { return y.from.length; }));
-            return x.from + new Array(pad - x.from.length + 2).join(' ') + 'â†’ ' + (x.to || t('ren.unchanged'));
+            return x.from + new Array(pad - x.from.length + 2).join(' ') + '→ ' + (x.to || t('ren.unchanged'));
           }).join('\n')) + '</pre>' : '') +
           '<p class="small muted">' + esc(t('ren.rulesHelp')) + '</p></details>' +
         renameJobHtml(st.job) +
@@ -1240,9 +1240,9 @@
               var bad = x.status !== 'ok' && !guess;
               var checked = guess ? Boolean(st.guessPicked[x.bookId]) : isRenameSelected(st, x.bookId);
               return '<li class="ren-row' + (bad ? ' is-conflict' : '') + (guess ? ' is-guess' : '') + '"><label class="checkbox"><input type="checkbox" ' + (guess ? 'data-ren-guess' : 'data-ren') + '="' + x.bookId + '"' + (bad ? ' disabled' : checked ? ' checked' : '') + ' aria-label="' + esc(x.fromName) + '" />' +
-                '<span class="ren-row__names"><code class="ren-from">' + esc(x.fromName) + '</code><span class="ren-arrow" aria-hidden="true">â†’</span><code class="ren-to">' + esc(x.toName) + '</code></span></label>' +
+                '<span class="ren-row__names"><code class="ren-from">' + esc(x.fromName) + '</code><span class="ren-arrow" aria-hidden="true">→</span><code class="ren-to">' + esc(x.toName) + '</code></span></label>' +
                 (bad ? '<span class="badge badge--danger" title="' + esc(x.with || '') + '">' + esc(t('ren.status.' + x.status)) + '</span>' : '') +
-                // A number that probably lost its decimal point (505 in a work with chapters 1â€“70): only a suggestion
+                // A number that probably lost its decimal point (505 in a work with chapters 1–70): only a suggestion
                 (x.guess ? '<span class="badge badge--warn" title="' + esc(t('ren.guessHelp')) + '">' + esc(t('ren.guessBadge', { from: x.guess.from, to: x.guess.to })) + '</span>' +
                   '<p class="ren-guess muted small">' + esc(t('ren.guessWhy', { from: x.guess.from, first: x.guess.first, last: x.guess.last, to: x.guess.to })) + '</p>' : '') +
                 // The new name is taken or wanted by other files: all of them, to choose which to keep
@@ -1285,7 +1285,7 @@
     }
   };
 
-  /* ---- File management â†’ Merge works ----
+  /* ---- File management → Merge works ----
    * Suggestions (works the metadata says are the same) and a manual merge: pick works, choose the one to keep;
    * the others' files move into its folder (a job in the same queue as renaming). */
   function mergeState() {
@@ -1321,7 +1321,7 @@
   function mergeJobHtml(j) {
     if (!j) return '';
     var p = { percent: j.status === 'queued' ? null : j.progress, done: j.done, total: j.total, etaMs: null, elapsedMs: 0 };
-    return '<div class="card card--wide ren-job" role="status">' + progressBar(p, t(j.status === 'queued' ? 'files.mergeQueued' : 'files.merging'), t('files.mergeProgress', { done: j.done, total: j.total || 'â€¦' })) + '</div>';
+    return '<div class="card card--wide ren-job" role="status">' + progressBar(p, t(j.status === 'queued' ? 'files.mergeQueued' : 'files.merging'), t('files.mergeProgress', { done: j.done, total: j.total || '…' })) + '</div>';
   }
   function reasonText(g) {
     var d = g.detail || {};
@@ -1336,7 +1336,7 @@
       '<label class="merge-row__keep" title="' + esc(t('files.keepTitle')) + '"><input type="radio" name="' + esc(name) + '" value="' + w.id + '" data-merge-target="' + esc(name) + '"' + (isTarget ? ' checked' : '') + (w.oneshot ? ' disabled' : '') + ' /><span class="small">' + esc(t('files.keep')) + '</span></label>' +
       '<label class="checkbox"><input type="checkbox" data-merge-include="' + esc(name) + '" value="' + w.id + '"' + (included || isTarget ? ' checked' : '') + (isTarget ? ' disabled' : '') + ' />' +
         '<span class="merge-row__what"><a href="#series/' + w.id + '">' + esc(w.title) + '</a>' +
-        ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' Â· ')) + '</span>' +
+        ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span>' +
         (w.oneshot ? ' <span class="badge">' + esc(t('lib.oneshot')) + '</span>' : '') + '</span></label></li>';
   }
   // "Delete the other folders when done": per suggestion / for the manual merge
@@ -1355,7 +1355,7 @@
       '<label class="search-field">' + icon('search') + '<input type="search" id="merge-find" placeholder="' + esc(t('files.findWorks')) + '" value="' + esc(st.q) + '" /></label>' +
       (st.found ? (st.found.length ? '<ul class="merge-found">' + st.found.map(function (w) {
         var added = st.manual.some(function (x) { return x.id === w.id; });
-        return '<li><span>' + esc(w.title) + ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' Â· ')) + '</span></span>' +
+        return '<li><span>' + esc(w.title) + ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span></span>' +
           '<button class="btn btn--text btn--small" data-lib="merge-add" data-id="' + w.id + '"' + (added ? ' disabled' : '') + '>' + icon('add') + esc(t(added ? 'files.added' : 'files.add')) + '</button></li>';
       }).join('') + '</ul>' : '<p class="muted small">' + esc(t('lib.noMatch')) + '</p>') : '') +
       (st.manual.length ? '<ul class="merge-list">' + st.manual.map(function (w) { return mergeRow('manual', w, st.manualTarget, true); }).join('') + '</ul>' +
@@ -1464,7 +1464,11 @@
       '</nav>';
   }
   function catState() {
-    if (!cache.catalog) cache.catalog = { q: '', source: '', inLibrary: '', genre: '', sort: 'title', items: null, total: 0, error: null, loading: false, facets: null, seq: 0 };
+    if (!cache.catalog) {
+      var view = 'grid'; try { view = localStorage.getItem('thoth.catView') === 'list' ? 'list' : 'grid'; } catch (e) { /* no storage */ }
+      cache.catalog = { q: '', source: '', inLibrary: '', genre: '', sort: 'title', type: '', status: '', sites: '', lacks: '', updated: '', with: '', without: '', author: '', more: false, view: view,
+        items: null, total: 0, error: null, loading: false, facets: null, seq: 0 };
+    }
     return cache.catalog;
   }
   var catCover = function (key) { return '/api/catalog/cover?key=' + encodeURIComponent(key); };
@@ -1479,8 +1483,21 @@
           (it.inLibrary ? '<span class="cat-card__have" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') + '</div>' +
         '<div class="media-card__body"><h3 class="media-card__title">' + esc(it.title) + '</h3>' +
           '<p class="media-card__meta cat-card__meta">' + it.sources.map(function (s) { return sourceIconHtml(s.sourceId, 'src-icon--xs'); }).join('') + '<span>' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : '',
-            it.versions && it.versions.length > 1 ? t('lib.versions', { count: it.versions.length }) : ''].filter(Boolean).join(' Â· ')) + '</span></p></div>' +
+            it.versions && it.versions.length > 1 ? t('lib.versions', { count: it.versions.length }) : ''].filter(Boolean).join(' · ')) + '</span></p></div>' +
       '</a></article>';
+  }
+  // The list's filters as query parameters (also for its exports)
+  var CAT_FILTERS = ['q', 'source', 'lacks', 'inLibrary', 'genre', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'sort'];
+  function catFilterParams() { var st = catState(), o = {}; CAT_FILTERS.forEach(function (k) { if (st[k]) o[k] = st[k]; }); return o; }
+  // A row of the list view: cover, title, its sites (links), chapters, last update
+  function catalogRow(it) {
+    return '<li class="cat-row"><a class="cat-row__cover" href="#catalog/work?key=' + encodeURIComponent(it.key) + '" tabindex="-1">' + (it.cover ? '<img loading="lazy" decoding="async" alt="" src="' + catCover(it.coverKey) + '" />' : icon('image')) + '</a>' +
+      '<div class="cat-row__body"><a class="cat-row__title" href="#catalog/work?key=' + encodeURIComponent(it.key) + '">' + esc(it.title) + '</a>' +
+        (it.inLibrary ? ' <span class="badge badge--success" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') +
+        '<p class="muted small">' + esc([it.type, it.status && it.status !== 'unknown' ? t('series.status.' + it.status) : '', it.chapters ? t('cat.chapters', { count: it.chapters }) : '', it.lastChapter ? t('cat.latestChapter', { n: it.lastChapter }) : '',
+          it.updatedAt ? A().fmtDate(it.updatedAt) : ''].filter(Boolean).join(' · ')) + '</p>' +
+        '<p class="cat-row__sites small">' + it.sources.map(function (x) { return x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + sourceIconHtml(x.sourceId, 'src-icon--xs') + esc(x.name) + '</a>' : esc(x.name); }).join(' ') + '</p>' +
+      '</div></li>';
   }
   function fetchCatalog(append) {
     var st = catState();
@@ -1488,7 +1505,7 @@
     st.loading = true;
     var grid = $('#cat-grid');
     if (grid && !append) { grid.classList.add('is-loading'); }
-    return api('GET', '/api/catalog?' + Store.qs({ q: st.q, source: st.source, inLibrary: st.inLibrary, genre: st.genre, sort: st.sort, offset: append ? st.items.length : 0, limit: 60 })).then(function (r) {
+    return api('GET', '/api/catalog?' + Store.qs(Object.assign(catFilterParams(), { offset: append ? st.items.length : 0, limit: 60 }))).then(function (r) {
       if (seq !== st.seq) return;
       st.items = append ? st.items.concat(r.items) : r.items; st.total = r.total; st.error = null;
     }, function (e) { if (seq === st.seq) st.error = e; }).then(function () { if (seq === st.seq) { st.loading = false; renderCatalogGrid(); } });
@@ -1501,7 +1518,7 @@
     if (st.error) html = errorBanner(st.error);
     else if (!st.items) html = spinner;
     else if (!st.items.length) html = emptyState('travel_explore', st.facets && !st.facets.sources.length ? t('cat.noSourcesTitle') : '', st.facets && !st.facets.sources.length ? t(isAdmin() ? 'cat.noSourcesAdmin' : 'cat.noSources') : t('lib.noMatch'));
-    else html = '<p class="muted small grid-count">' + esc(t('cat.count', { count: st.total })) + '</p>' + grid(st.items.map(catalogCard)) +
+    else html = '<p class="muted small grid-count">' + esc(t('cat.count', { count: st.total })) + '</p>' + (st.view === 'list' ? '<ul class="cat-rows">' + st.items.map(catalogRow).join('') + '</ul>' : grid(st.items.map(catalogCard))) +
       (st.items.length < st.total ? '<div class="load-more"><button class="btn btn--outline btn--pill" data-lib="cat-more"' + (st.loading ? ' disabled' : '') + '>' + esc(t('lib.loadMore')) + '</button></div>' : '');
     el.innerHTML = html;
     el.classList.toggle('is-loading', false);
@@ -1521,10 +1538,40 @@
           '<select class="select select--compact" id="cat-have" aria-label="' + esc(t('cat.inLibrary')) + '">' + opt('', t('cat.haveAll'), st.inLibrary) + opt('yes', t('cat.haveYes'), st.inLibrary) + opt('no', t('cat.haveNo'), st.inLibrary) + '</select>' +
           '<select class="select select--compact" id="cat-genre" aria-label="' + esc(t('filter.genre')) + '">' + opt('', t('cat.allGenres'), st.genre) +
             ((fc && fc.genres) || []).map(function (g) { return opt(g.name, g.name + ' (' + g.count + ')', st.genre); }).join('') + '</select>' +
-          '<select class="select select--compact" id="cat-sort" aria-label="' + esc(t('lib.sort')) + '">' + opt('title', t('lib.sortTitle'), st.sort) + opt('updated', t('cat.sortUpdated'), st.sort) + opt('chapters', t('cat.sortChapters'), st.sort) + '</select>' +
+          '<select class="select select--compact" id="cat-sort" aria-label="' + esc(t('lib.sort')) + '">' + opt('title', t('lib.sortTitle'), st.sort) + opt('updated', t('cat.sortUpdated'), st.sort) + opt('chapters', t('cat.sortChapters'), st.sort) + opt('sites', t('cat.sortSites'), st.sort) + '</select>' +
+          '<button type="button" class="btn btn--outline btn--small" data-lib="cat-more-filters" aria-expanded="' + (st.more ? 'true' : 'false') + '">' + icon('tune') + esc(t('cat.moreFilters')) + (catAdvancedCount() ? ' (' + catAdvancedCount() + ')' : '') + '</button>' +
+          '<div class="seg" role="group" aria-label="' + esc(t('cat.view')) + '">' +
+            '<button type="button" class="icon-btn' + (st.view !== 'list' ? ' is-active' : '') + '" data-lib="cat-view" data-view="grid" aria-pressed="' + (st.view !== 'list') + '" title="' + esc(t('cat.viewGrid')) + '" aria-label="' + esc(t('cat.viewGrid')) + '">' + icon('grid_view') + '</button>' +
+            '<button type="button" class="icon-btn' + (st.view === 'list' ? ' is-active' : '') + '" data-lib="cat-view" data-view="list" aria-pressed="' + (st.view === 'list') + '" title="' + esc(t('cat.viewList')) + '" aria-label="' + esc(t('cat.viewList')) + '">' + icon('view_list') + '</button>' +
+          '</div>' +
         '</div>' +
       '</div>' +
+      (st.more ? catAdvancedPanel() : '') +
       '<div id="cat-grid"></div>';
+  }
+  var CAT_ADV = ['type', 'status', 'sites', 'lacks', 'updated', 'with', 'without', 'author'];
+  function catAdvancedCount() { var st = catState(); return CAT_ADV.filter(function (k) { return st[k]; }).length; }
+  // More filters: type, status, how many sites, a site that lacks it, recent updates, genres/tags it must (not) have,
+  // an author; and the filtered list as a file
+  function catAdvancedPanel() {
+    var st = catState(), fc = st.facets || {};
+    var opt = function (v, label, cur) { return '<option value="' + esc(v) + '"' + (String(v) === String(cur) ? ' selected' : '') + '>' + esc(label) + '</option>'; };
+    var sel = function (id, key, label, options) { return '<label class="field field--inline"><span>' + esc(label) + '</span><select class="select select--compact" id="' + id + '" data-cat-adv="' + key + '">' + options + '</select></label>'; };
+    var txt = function (id, key, label, ph) { return '<label class="field field--inline"><span>' + esc(label) + '</span><input type="text" id="' + id + '" data-cat-adv="' + key + '" value="' + esc(st[key]) + '" placeholder="' + esc(ph || '') + '" list="cat-genre-list" autocomplete="off" /></label>'; };
+    var exp = function (fmt) { return '<a class="btn btn--outline btn--small" href="/api/catalog/export.' + fmt + '?' + Store.qs(catFilterParams()) + '" download>' + icon('download') + esc(t('cat.export', { format: fmt.toUpperCase() })) + '</a>'; };
+    return '<section class="cat-adv panel">' +
+      '<div class="cat-adv__grid">' +
+        sel('cat-type', 'type', t('cat.type'), opt('', t('cat.any'), st.type) + (fc.types || []).map(function (x) { return opt(x.name, x.name + ' (' + x.count + ')', st.type); }).join('')) +
+        sel('cat-status', 'status', t('cat.status'), opt('', t('cat.any'), st.status) + (fc.statuses || []).map(function (x) { return opt(x.name, t('series.status.' + x.name) + ' (' + x.count + ')', st.status); }).join('')) +
+        sel('cat-sites', 'sites', t('cat.sitesCount'), opt('', t('cat.any'), st.sites) + opt('1', t('cat.sites1'), st.sites) + opt('2', t('cat.sites2'), st.sites) + opt('3', t('cat.sites3'), st.sites)) +
+        sel('cat-lacks', 'lacks', t('cat.lacks'), opt('', t('cat.any'), st.lacks) + ((fc.sources) || []).map(function (x) { return opt(x.id, x.name, st.lacks); }).join('')) +
+        sel('cat-updated', 'updated', t('cat.updatedWithin'), opt('', t('cat.any'), st.updated) + opt('day', t('cat.updatedDay'), st.updated) + opt('week', t('cat.updatedWeek'), st.updated) + opt('month', t('cat.updatedMonth'), st.updated)) +
+        txt('cat-with', 'with', t('cat.with'), t('cat.genresPh')) + txt('cat-without', 'without', t('cat.without'), t('cat.genresPh')) +
+        '<label class="field field--inline"><span>' + esc(t('cat.author')) + '</span><input type="text" id="cat-author" data-cat-adv="author" value="' + esc(st.author) + '" autocomplete="off" /></label>' +
+      '</div>' +
+      '<datalist id="cat-genre-list">' + ((fc.genres) || []).map(function (g) { return '<option value="' + esc(g.name) + '"></option>'; }).join('') + '</datalist>' +
+      '<div class="cat-adv__foot">' + (catAdvancedCount() ? '<button type="button" class="btn btn--text btn--small" data-lib="cat-clear-filters">' + icon('close') + esc(t('cat.clearFilters')) + '</button>' : '') + exp('csv') + exp('json') + '</div>' +
+    '</section>';
   }
   var catTimer = null;
   function catalogBrowseMount(el) {
@@ -1533,6 +1580,12 @@
     $('#cat-q', el).addEventListener('input', function (e) { st.q = e.target.value; clearTimeout(catTimer); catTimer = setTimeout(function () { fetchCatalog(); }, 250); });
     [['#cat-source', 'source'], ['#cat-have', 'inLibrary'], ['#cat-genre', 'genre'], ['#cat-sort', 'sort']].forEach(function (x) {
       $(x[0], el).addEventListener('change', function (e) { st[x[1]] = e.target.value; fetchCatalog(); });
+    });
+    // More filters: selects at once, text after a pause; the page is drawn again so the exports carry them
+    Array.prototype.forEach.call(el.querySelectorAll('[data-cat-adv]'), function (x) {
+      var apply = function () { st[x.dataset.catAdv] = x.value.trim(); fetchCatalog(); var lnk = el.querySelectorAll('.cat-adv__foot a'); Array.prototype.forEach.call(lnk, function (a) { a.href = a.href.split('?')[0] + '?' + Store.qs(catFilterParams()); }); };
+      if (x.tagName === 'SELECT') x.addEventListener('change', apply);
+      else x.addEventListener('input', function () { clearTimeout(catTimer); catTimer = setTimeout(apply, 400); });
     });
   }
 
@@ -1554,7 +1607,7 @@
     var missingList = miss && miss.chapters.length ? '<details class="card card--wide cat-missing"><summary class="card__title">' + esc(t('cat.missingTitle', { count: miss.chapters.length })) + '</summary><ul class="cat-chapters">' +
         miss.chapters.slice(0, 500).map(function (c) { return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n) + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span><span class="muted small">' + esc(c.source) + '</span>' +
           (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer">' + icon('open_in_new') + '</a>' : '') + '</li>'; }).join('') + '</ul></details>' : '';
-    // A version's name: its tags (Raw + Uncensoredâ€¦), or Regular
+    // A version's name: its tags (Raw + Uncensored…), or Regular
     var versionLabel = function (v) { return (v.editions && v.editions.length ? v.editions : ['base']).map(function (e) { return editionTag(e, true); }).join(' '); };
     var versionTabs = w.versions && w.versions.length > 1 ? '<nav class="tabs version-tabs" aria-label="' + esc(t('series.versions')) + '">' + w.versions.map(function (v) {
         var on = v.key === w.key;
@@ -1571,10 +1624,11 @@
       var list = w.allChapters || [], all = d.showAll && d.showAll.all, rows = all ? list : list.slice(0, 100);
       return '<section class="card card--wide cat-source">' +
         '<p class="muted small">' + esc(t('cat.allChaptersHelp', { count: list.length, sources: w.sources.length })) + '</p>' +
+        (list.length ? '<p class="cat-export">' + ['csv', 'json'].map(function (fmt) { return '<a class="btn btn--text btn--small" href="/api/catalog/work/chapters.' + fmt + '?key=' + encodeURIComponent(w.key) + '" download>' + icon('download') + esc(t('cat.export', { format: fmt.toUpperCase() })) + '</a>'; }).join('') + '</p>' : '') +
         (rows.length ? '<ul class="cat-chapters cat-chapters--all">' + rows.map(function (c) {
-          return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n != null ? c.n : 'â€”') + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span>' +
+          return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n != null ? c.n : '—') + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span>' +
             '<span class="cat-ch__links">' + c.links.map(function (l) {
-              return l.u ? '<a class="chip chip--link cat-ch__src' + (l.pr ? ' is-premium' : '') + '" href="' + esc(l.u) + '" target="_blank" rel="noopener noreferrer" title="' + esc(t('cat.readOn', { source: l.name }) + (l.pr ? ' â€” ' + t('cat.premium') : '')) + '">' + sourceIconHtml(l.sourceId, 'src-icon--xs') + esc(l.name) + (l.pr ? icon('lock') : '') + '</a>'
+              return l.u ? '<a class="chip chip--link cat-ch__src' + (l.pr ? ' is-premium' : '') + '" href="' + esc(l.u) + '" target="_blank" rel="noopener noreferrer" title="' + esc(t('cat.readOn', { source: l.name }) + (l.pr ? ' — ' + t('cat.premium') : '')) + '">' + sourceIconHtml(l.sourceId, 'src-icon--xs') + esc(l.name) + (l.pr ? icon('lock') : '') + '</a>'
                 : '<span class="chip">' + esc(l.name) + '</span>';
             }).join('') + '</span>' + (c.d ? '<span class="muted small">' + esc(c.d) + '</span>' : '') + '</li>';
           }).join('') + '</ul>' : '<p class="muted">' + esc(t('cat.noChapters')) + '</p>') +
@@ -1592,9 +1646,9 @@
         (s.title && s.title !== w.title ? '<p class="small"><strong>' + esc(s.title) + '</strong></p>' : '') +
         (s.error ? '<p class="notice notice--error small">' + esc(s.error) + '</p>' : '') +
         (s.partial ? '<p class="notice notice--info small">' + esc(t('cat.partial')) + '</p>' : '') +
-        '<p class="muted small">' + esc(t('cat.chapters', { count: s.chapterList.length }) + (s.premium ? ' Â· ' + t('cat.premiumCount', { count: s.premium }) : '') + (s.detailAt ? ' Â· ' + t('cat.readAt', { time: A().fmtDate(s.detailAt) }) : '')) + '</p>' +
+        '<p class="muted small">' + esc(t('cat.chapters', { count: s.chapterList.length }) + (s.premium ? ' · ' + t('cat.premiumCount', { count: s.premium }) : '') + (s.detailAt ? ' · ' + t('cat.readAt', { time: A().fmtDate(s.detailAt) }) : '')) + '</p>' +
         (rows.length ? '<ul class="cat-chapters">' + rows.map(function (c) {
-          return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n != null ? c.n : 'â€”') + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span><span class="muted small">' + esc([c.d, c.l].filter(Boolean).join(' Â· ')) + '</span>' +
+          return '<li' + (c.pr ? ' class="is-premium"' : '') + '><span class="cat-ch__n">' + esc(c.n != null ? c.n : '—') + '</span><span class="cat-ch__t">' + esc(c.t || '') + premiumBadge(c) + '</span><span class="muted small">' + esc([c.d, c.l].filter(Boolean).join(' · ')) + '</span>' +
             (c.u ? '<a class="small" href="' + esc(c.u) + '" target="_blank" rel="noopener noreferrer" aria-label="' + esc(t('cat.openOnSite')) + '">' + icon('open_in_new') + '</a>' : '') + '</li>';
         }).join('') + '</ul>' : '') +
         (!all && s.chapterList.length > 50 ? '<button class="btn btn--text btn--small" data-lib="cat-all-chapters" data-key="' + esc(s.key) + '" data-work="' + esc(key) + '">' + esc(t('cat.showAll', { count: s.chapterList.length })) + '</button>' : '') +
@@ -1607,9 +1661,9 @@
           '<h1 class="detail__title">' + esc(w.title) + (w.editions && w.editions.length ? ' ' + w.editions.map(function (e) { return editionTag(e); }).join(' ') : '') + '</h1>' +
           '<div class="detail__meta">' + [w.type ? '<span class="badge badge--primary">' + esc(t('type.' + w.type)) + '</span>' : '', w.year ? esc(w.year) : '',
             w.status && w.status !== 'unknown' ? '<span class="badge">' + esc(t('series.status.' + w.status)) + '</span>' : '', esc(t('cat.chapters', { count: w.chapters })),
-            w.lastChapter ? esc(t('cat.lastChapter', { n: w.lastChapter })) : ''].filter(Boolean).join('<span class="dot">Â·</span>') + '</div>' +
+            w.lastChapter ? esc(t('cat.lastChapter', { n: w.lastChapter })) : ''].filter(Boolean).join('<span class="dot">·</span>') + '</div>' +
           (w.authors.length ? '<p class="detail__authors">' + esc(w.authors.join(', ')) + '</p>' : '') +
-          (w.altTitles.length ? '<p class="muted small detail__alt">' + esc(w.altTitles.slice(0, 6).join(' Â· ')) + '</p>' : '') +
+          (w.altTitles.length ? '<p class="muted small detail__alt">' + esc(w.altTitles.slice(0, 6).join(' · ')) + '</p>' : '') +
           (w.genres.length ? chips(w.genres.map(esc), 'chip--genre') : '') +
           (w.summary ? '<p class="detail__summary">' + esc(w.summary) + '</p>' : '') +
           '<p class="muted small">' + esc(t('cat.foundOn', { sources: w.sources.map(function (s) { return s.name; }).join(', ') })) + '</p>' +
@@ -1630,8 +1684,8 @@
     if (isCatalogRoute()) A().renderPage();
     var qs = st.source ? '?source=' + encodeURIComponent(st.source) : '';
     return Promise.all([api('GET', '/api/catalog/merge-suggestions' + qs), api('GET', '/api/catalog/merged' + qs), st.sources ? Promise.resolve(null) : api('GET', '/api/catalog/facets'),
-      api('GET', '/api/catalog/title-cleanup').then(null, function () { return null; })]).then(function (r) {
-      st.data = r[0]; st.merged = r[1]; if (r[2]) st.sources = r[2].sources; if (r[3]) st.cleanup = r[3]; st.choice = {};
+      api('GET', '/api/catalog/title-cleanup').then(null, function () { return null; }), api('GET', '/api/catalog/corrections').then(null, function () { return null; })]).then(function (r) {
+      st.data = r[0]; st.merged = r[1]; if (r[2]) st.sources = r[2].sources; if (r[3]) st.cleanup = r[3]; st.corrections = r[4]; st.choice = {};
       r[0].groups.forEach(function (g) { var inc = {}; g.works.forEach(function (w) { inc[w.key] = true; }); st.choice[g.key] = { primary: g.primary, include: inc }; });
     }, function (e) { st.error = e; }).then(function () { st.loading = false; if (isCatalogRoute()) A().renderPage(); });
   }
@@ -1639,17 +1693,17 @@
   function mergeWorkHtml(w) {
     var facts = [w.source, t('cat.chapters', { count: w.chapters })].concat(w.lastChapter ? [t('cat.lastChapter', { n: w.lastChapter })] : []).concat(w.type ? [w.type] : []).concat(w.year ? [String(w.year)] : []);
     return '<span class="merge-thumb">' + (w.cover ? '<img alt="" loading="lazy" src="' + esc(catCover(w.key)) + '" onerror="this.remove()" />' : '') + icon('menu_book') + '</span>' +
-      '<span class="merge-row__what"><a href="#catalog/work?key=' + encodeURIComponent(w.key) + '">' + esc(w.title || 'â€”') + '</a>' +
+      '<span class="merge-row__what"><a href="#catalog/work?key=' + encodeURIComponent(w.key) + '">' + esc(w.title || '—') + '</a>' +
         (w.merged ? ' <span class="badge">' + esc(t('cat.alreadyMerged')) + '</span>' : '') +
-        '<span class="muted small merge-row__facts">' + esc(facts.join(' Â· ')) + '</span>' +
+        '<span class="muted small merge-row__facts">' + esc(facts.join(' · ')) + '</span>' +
         (w.authors && w.authors.length ? '<span class="muted small">' + esc(t('cat.by', { people: w.authors.join(', ') })) + '</span>' : '') +
-        (w.altTitles && w.altTitles.length ? '<span class="muted small merge-row__alt">' + esc(w.altTitles.join(' Â· ')) + '</span>' : '') +
+        (w.altTitles && w.altTitles.length ? '<span class="muted small merge-row__alt">' + esc(w.altTitles.join(' · ')) + '</span>' : '') +
       '</span>';
   }
-  var MERGE_WHY = { link: 'cat.reason.link', titleAuthor: 'cat.reason.titleAuthor', titleAlt: 'cat.reason.titleAlt' };
+  var MERGE_WHY = { link: 'cat.reason.link', titleAuthor: 'cat.reason.titleAuthor', titleAlt: 'cat.reason.titleAlt', similar: 'cat.reason.similar' };
   function mergeWhyText(why) {
     var d = (why && why.detail) || {};
-    return t(MERGE_WHY[why && why.reason] || 'files.reason.title', { title: d.title || '', author: d.author || '', alt: d.alt || '' });
+    return t(MERGE_WHY[why && why.reason] || 'files.reason.title', { title: d.title || '', author: d.author || '', alt: d.alt || '', other: d.other || '' });
   }
   function catalogMerge() {
     var st = catMergeState();
@@ -1663,7 +1717,7 @@
         '<button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button>' +
         '<button class="btn btn--outline btn--pill" data-lib="cat-merge-auto"' + (st.loading ? ' disabled' : '') + ' title="' + esc(t('cat.autoMergeHelp')) + '">' + icon('collections') + esc(t('cat.autoMerge')) + '</button>' +
       '</div></div>';
-    // Text that's never part of a title (a site's tag, "Exclusive"â€¦): removed from every catalog title, so the same
+    // Text that's never part of a title (a site's tag, "Exclusive"…): removed from every catalog title, so the same
     // work on different sites gets the same title and can be merged
     var cl = st.cleanup;
     if (cl) head += '<details class="card card--wide cat-cleanup"' + (cl.remove.length ? '' : ' open') + '><summary class="card__title">' + icon('edit') + esc(t('cat.cleanupTitle', { count: cl.remove.length })) + '</summary>' +
@@ -1699,7 +1753,17 @@
         '<div class="merge-actions"><button class="btn btn--text btn--danger" data-lib="cat-unmerge-group" data-id="' + esc(g.id) + '">' + esc(t('cat.unmerge')) + '</button></div>' +
       '</section>';
     }).join('') : '';
-    return head + suggestions + merged;
+    // Manual corrections besides merges: kept apart (separated / split off) and "not the same" — each with Undo
+    var co = st.corrections, pairRow = function (x, act, attr) {
+      return '<li class="cat-correction"><span>' + x.works.map(function (w) { return '<strong>' + esc(w.title) + '</strong> <span class="muted small">(' + esc(w.source || '') + ')</span>'; }).join(' ≠ ') + '</span>' +
+        '<button class="btn btn--text btn--small" data-lib="' + act + '" ' + attr + '>' + icon('undo') + esc(t('cat.undo')) + '</button></li>';
+    };
+    var corr = co && (co.apart.length || co.dismissed.length) ? '<details class="card card--wide cat-corrections"><summary class="card__title">' + esc(t('cat.corrections', { count: co.apart.length + co.dismissed.length })) + '</summary>' +
+      '<p class="muted small">' + esc(t('cat.correctionsHelp')) + '</p>' +
+      (co.apart.length ? '<h3 class="small">' + esc(t('cat.keptApart')) + '</h3><ul class="cat-corrections__list">' + co.apart.map(function (x) { return pairRow(x, 'cat-undo-apart', 'data-key="' + esc(x.pair) + '"'); }).join('') + '</ul>' : '') +
+      (co.dismissed.length ? '<h3 class="small">' + esc(t('cat.notSameList')) + '</h3><ul class="cat-corrections__list">' + co.dismissed.map(function (x) { return pairRow(x, 'cat-undo-dismiss', 'data-key="' + esc(x.key) + '"'); }).join('') + '</ul>' : '') +
+      '</details>' : '';
+    return head + suggestions + merged + corr;
   }
 
   // Sources (admins): add/edit/delete, crawl, follow the crawl, test the settings
@@ -1735,7 +1799,7 @@
     if (!r) return '';
     var gap = function (ms) { return ((ms || 0) / 1000).toFixed(1).replace(/\.0$/, ''); };
     return '<p class="muted small crawl-requests">' + esc(t('cat.crawlRequests', { lanes: r.lanes || 1, active: r.active || 0, waiting: r.waiting || 0, parallel: r.parallel || 1, gap: gap(r.gapMs) }) +
-      (r.crawlDelay != null ? ' Â· ' + t('cat.crawlDelay', { s: r.crawlDelay }) : '')) + '</p>';
+      (r.crawlDelay != null ? ' · ' + t('cat.crawlDelay', { s: r.crawlDelay }) : '')) + '</p>';
   }
   function testReport(r) {
     if (!r) return '';
@@ -1743,10 +1807,10 @@
     if (r.error) return '<p class="notice notice--error small">' + esc(A().errMsg(r.error)) + '</p>';
     var x = r.test, w = x.work;
     return '<div class="msrc-report">' +
-      (x.errors.length ? '<p class="notice notice--error small">' + esc(x.errors.join(' Â· ')) + '</p>' : '') +
-      '<p class="small"><strong>' + esc(t('cat.testList', { count: x.firstPageCount })) + '</strong> ' + esc(x.works.map(function (s) { return s.title || s.sid; }).join(' Â· ')) + '</p>' +
-      (w ? '<p class="small">' + esc(t('cat.testWork', { title: w.title || 'â€”', chapters: w.chapterCount == null ? 'â€”' : w.chapterCount, genres: (w.genres || []).join(', ') || 'â€”', authors: (w.authors || []).join(', ') || 'â€”' })) + '</p>' +
-        (w.firstChapters && w.firstChapters.length ? '<p class="muted small">' + esc(w.firstChapters.map(function (c) { return (c.n || '?') + ' ' + (c.t || ''); }).join(' Â· ')) + '</p>' : '') : '') +
+      (x.errors.length ? '<p class="notice notice--error small">' + esc(x.errors.join(' · ')) + '</p>' : '') +
+      '<p class="small"><strong>' + esc(t('cat.testList', { count: x.firstPageCount })) + '</strong> ' + esc(x.works.map(function (s) { return s.title || s.sid; }).join(' · ')) + '</p>' +
+      (w ? '<p class="small">' + esc(t('cat.testWork', { title: w.title || '—', chapters: w.chapterCount == null ? '—' : w.chapterCount, genres: (w.genres || []).join(', ') || '—', authors: (w.authors || []).join(', ') || '—' })) + '</p>' +
+        (w.firstChapters && w.firstChapters.length ? '<p class="muted small">' + esc(w.firstChapters.map(function (c) { return (c.n || '?') + ' ' + (c.t || ''); }).join(' · ')) + '</p>' : '') : '') +
       '<p class="muted small">' + esc(t('cat.testRequests', { count: x.requests })) + '</p></div>';
   }
   function catalogSources() {
@@ -1756,14 +1820,19 @@
     if (st.error) return head + errorBanner(st.error);
     if (!st.data) return head + spinner;
     if (!st.data.sources.length) return head + emptyState('travel_explore', t('cat.noSourcesTitle'), t('cat.noSourcesAdmin'));
+    // (clearing the crawled catalog: works, chapters, merges and covers; the sources stay)
+    var danger = '<section class="card cat-danger"><h2 class="card__title">' + esc(t('cat.clearTitle')) + '</h2><p class="muted small">' + esc(t('cat.clearHelp')) + '</p>' +
+      '<button type="button" class="btn btn--outline btn--danger btn--small" data-lib="cat-clear-catalog"' + (st.data.sources.some(function (x) { return x.job; }) ? ' disabled' : '') + '>' + icon('delete') + esc(t('cat.clearButton')) + '</button></section>';
     return head + '<div class="lib-list">' + st.data.sources.map(function (s) {
       var stats = s.lastStats;
       return '<section class="card lib-card cat-src">' +
         '<div class="lib-card__head">' + sourceIconHtml(s.id, 'lib-card__icon') + '<div class="lib-card__titles">' +
-          '<h2 class="card__title">' + esc(s.name) + '</h2><p class="muted small">' + esc(s.label + ' Â· ' + s.baseUrl) + '</p></div></div>' +
-        '<p class="small">' + esc(t('cat.srcWorks', { count: s.works })) + (s.lastCrawlAt ? ' Â· ' + esc(t('cat.srcLast', { time: A().fmtDate(s.lastCompleteAt || s.lastCrawlAt) })) : ' Â· ' + esc(t('cat.srcNever'))) +
-          ' Â· ' + esc(t('cat.schedule.' + (s.schedule || 'manual'))) + '</p>' +
-        (stats ? '<p class="muted small">' + esc(t('cat.srcStats', { listed: stats.listed, added: stats.added, read: stats.read, errors: stats.errors, chapters: stats.chapters })) + (stats.partial ? ' Â· ' + esc(t('cat.srcPartial', { count: stats.partial })) : '') + '</p>' : '') +
+          '<h2 class="card__title">' + esc(s.name) + '</h2><p class="muted small">' + esc(s.label + ' · ' + s.baseUrl) + '</p></div></div>' +
+        '<p class="small">' + esc(t('cat.srcWorks', { count: s.works })) + (s.lastCrawlAt ? ' · ' + esc(t('cat.srcLast', { time: A().fmtDate(s.lastCompleteAt || s.lastCrawlAt) })) : ' · ' + esc(t('cat.srcNever'))) +
+          ' · ' + esc(s.schedule === 'hours' ? t('cat.everyHours', { count: s.scheduleHours || 1 }) : t('cat.schedule.' + (s.schedule || 'manual'))) +
+          (s.enabled === false ? ' · ' + esc(t('cat.paused')) : '') +
+          (s.blacklist ? ' · ' + esc(t('cat.blacklistHides', { count: s.hidden || 0 })) : '') + '</p>' +
+        (stats ? '<p class="muted small">' + esc(t('cat.srcStats', { listed: stats.listed, added: stats.added, read: stats.read, errors: stats.errors, chapters: stats.chapters })) + (stats.partial ? ' · ' + esc(t('cat.srcPartial', { count: stats.partial })) : '') + '</p>' : '') +
         // What detection found (automatic sources: at creation, then at every crawl)
         (s.autoDetect === true && s.detected ? '<p class="muted small cat-detected">' + icon('search') + '<span>' + esc(t('cat.detectedAt', { time: A().fmtDate(s.detected.at) }) + ' ' + detectSummary({ notes: s.detected.notes, found: s.detected.found || {}, blocked: s.detected.blocked, settings: s })) + '</span></p>' : '') +
         (s.autoDetect !== true ? '<p class="muted small">' + esc(t('cat.manualSettings')) + '</p>' : '') +
@@ -1779,7 +1848,7 @@
           '<button class="btn btn--text btn--small btn--danger" data-lib="cat-src-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('manage.delete')) + '</button>' +
         '</div>' + testReport(st.tests[s.id]) +
       '</section>';
-    }).join('') + '</div>';
+    }).join('') + '</div>' + danger;
   }
   /* ---------------- Source wizard (Add / Edit a source) ----------------
    * Step by step, everything a source needs: the site (and what Detect finds there), the kind of site, how its
@@ -1787,17 +1856,19 @@
    * don't apply are skipped (a source set up automatically needs only the first and the last ones; a site with a
    * known theme doesn't need selectors). Selectors can be typed or picked: the preview shows one of the site's
    * pages (fetched by the server, inert: no scripts, nothing loaded from the site by the browser), where hovering
-   * shows an element and clicking it picks it â€” like the browser's "select an element" tool â€” or, in Navigate
+   * shows an element and clicking it picks it — like the browser's "select an element" tool — or, in Navigate
    * mode, follows a link. */
   var WZ_SEL = {
     item: { page: 'list', kind: 'repeat' }, link: { page: 'list', kind: 'rel', rel: 'item', attr: 'href' }, title: { page: 'list', kind: 'rel', rel: 'item' }, cover: { page: 'list', kind: 'rel', rel: 'item', attr: 'src' },
     workTitle: { page: 'work', kind: 'single' }, workCover: { page: 'work', kind: 'single', attr: 'src' }, summary: { page: 'work', kind: 'single' }, genres: { page: 'work', kind: 'multi' },
     authors: { page: 'work', kind: 'multi' }, altTitles: { page: 'work', kind: 'single' }, status: { page: 'work', kind: 'single' },
+    tags: { page: 'work', kind: 'multi' }, type: { page: 'work', kind: 'single' }, year: { page: 'work', kind: 'single' },
     chapter: { page: 'work', kind: 'repeat' }, chapterLink: { page: 'work', kind: 'rel', rel: 'chapter', attr: 'href' }, chapterTitle: { page: 'work', kind: 'rel', rel: 'chapter' }, chapterDate: { page: 'work', kind: 'rel', rel: 'chapter' }
   };
+  var WZ_CLEAN = ['workTitle', 'altTitles', 'summary', 'genres', 'tags', 'authors', 'status', 'type', 'year'];
   var wz = null;
   var wzCopyAct = function (a) { return { kind: a.kind === 'scroll' ? 'scroll' : 'click', selector: a.selector || '', mode: a.mode === 'open' ? 'open' : 'add', loads: (a.loads || []).slice(0, 2) }; };
-  // A setting being picked: a selector ('item'â€¦) or a click ('act:work:0')
+  // A setting being picked: a selector ('item'…) or a click ('act:work:0')
   var WZ_CLICK = { kind: 'click' };
   var WZ_SCROLLBOX = { kind: 'scrollbox' };
   var wzSpec = function (key) {
@@ -1813,6 +1884,18 @@
     var d = Object.assign({ name: '', siteUrl: '', autoDetect: true, type: 'custom', baseUrl: '', languages: '', listPath: '', contentRating: 'safe,suggestive,erotica', listing: 'pages', sitemaps: '',
       workPattern: '', chapterPattern: '', includeChapters: true, maxWorks: '', gapMs: '', concurrency: '', schedule: 'manual', render: false, renderWait: '' }, s || {});
     d.render = Boolean(s && s.render); d.renderWait = s && s.renderWaitMs ? String(Math.round(s.renderWaitMs / 1000)) : '';
+    // Blacklist (one per line in the form), "every N hours", paused
+    var bl = (s && s.blacklist) || {};
+    d.blGenres = (bl.genres || []).join('\n'); d.blTags = (bl.tags || []).join('\n'); d.blAuthors = (bl.authors || []).join('\n');
+    d.scheduleHours = s && s.scheduleHours ? String(s.scheduleHours) : '';
+    d.paused = Boolean(s && s.enabled === false);
+    d.checkOngoing = !(s && s.checkOngoing === false);
+    d.fullChapters = !(s && s.fullChapters === false); d.chaptersUrl = (s && s.chaptersUrl) || '';
+    d.clean = JSON.parse(JSON.stringify((s && s.clean) || {}));
+    // Access (sites that answer 403): the saved cookies and headers aren't shown, only their names
+    var ac = (s && s.access) || {};
+    d.accessMode = ac.mode === 'plain' ? 'plain' : 'auto'; d.accessCookies = ''; d.accessHeaders = ''; d.removeCookies = false; d.removeHeaders = false;
+    d.savedCookieNames = ac.cookieNames || []; d.savedHeaderNames = ac.headerNames || [];
     d.sitemaps = Array.isArray(d.sitemaps) ? d.sitemaps.join('\n') : d.sitemaps || '';
     d.selectors = Object.assign({}, (s && s.selectors) || {});
     // Clicks to make before collecting, per page: { list, work, chapters: [{ selector, mode }] }
@@ -1824,7 +1907,7 @@
   // The steps that apply to this draft
   // The steps that apply. Sites read with the generic reader get the Work page and Chapters steps also with
   // automatic settings (detection finds the works, sitemaps and patterns; picks add what it can't: summary, genres,
-  // chapter rows, clicksâ€¦). The Works list step is left out when the sitemaps already list the works.
+  // chapter rows, clicks…). The Works list step is left out when the sitemaps already list the works.
   function wzSitemapWorks() {
     var d = wz.draft;
     return d.listing === 'sitemap' && Boolean(d.workPattern) && Boolean((wz.detected && wz.detected.found && wz.detected.found.works > 0) || wz.editing);
@@ -1856,6 +1939,36 @@
     wzRender();
     if (!dlg.open) dlg.showModal();
   }
+  // Templates: start from one (fills the listing and the work page's fields), or find the ones that fit the site
+  function wzTemplatesBox() {
+    var tp = wz.templates;
+    if (!tp) { wz.templates = { list: null }; api('GET', '/api/catalog/templates').then(function (r) { wz.templates.list = r.templates; if (wz.step === 'list') wzRender(); }, function () {}); tp = wz.templates; }
+    var f = wz.tplFind;
+    var groups = {};
+    (tp.list || []).forEach(function (x) { (groups[x.group] = groups[x.group] || []).push(x); });
+    return '<section class="wz-templates"><h3 class="small">' + esc(t('wz.templates')) + '</h3><p class="muted small">' + esc(t('wz.templatesHelp')) + '</p>' +
+      '<div class="wz-actions"><select class="select select--compact" id="wz-tpl"><option value="">' + esc(t('wz.templatePick')) + '</option>' +
+        Object.keys(groups).map(function (g) { return '<optgroup label="' + esc(g) + '">' + groups[g].map(function (x) { return '<option value="' + esc(x.id) + '" title="' + esc(x.description) + '">' + esc(x.name) + '</option>'; }).join('') + '</optgroup>'; }).join('') + '</select>' +
+        '<button type="button" class="btn btn--outline btn--small" data-wz-act="tpl-use">' + esc(t('wz.templateUse')) + '</button>' +
+        '<button type="button" class="btn btn--outline btn--small" data-wz-act="tpl-find"' + (f && f.loading ? ' disabled' : '') + '>' + (f && f.loading ? '<span class="spinner spinner--sm"></span>' : icon('search')) + esc(t('wz.templateFind')) + '</button></div>' +
+      (f && f.error ? '<p class="notice notice--error small">' + esc(A().errMsg(f.error)) + '</p>' : '') +
+      (f && f.results ? (f.results.length ? '<ul class="wz-tpl-results">' + f.results.map(function (r) {
+        return '<li><strong>' + esc(r.name) + '</strong>' + (r.likely ? ' <span class="badge">' + esc(t('wz.templateLikely')) + '</span>' : '') + '<br><span class="muted small">' +
+          esc(r.error ? r.error : t('wz.templateResult', { works: r.works, fields: r.fields.length ? r.fields.join(', ') : '—', sample: r.sample || '—' })) + '</span>' +
+          (r.works ? ' <button type="button" class="btn btn--text btn--small" data-wz-act="tpl-apply" data-id="' + esc(r.id) + '">' + esc(t('wz.templateUse')) + '</button>' : '') + '</li>';
+      }).join('') + '</ul>' : '<p class="muted small">' + esc(t('wz.templateNone')) + '</p>') : '') +
+    '</section>';
+  }
+  function wzApplyTemplate(id) {
+    var x = ((wz.templates && wz.templates.list) || []).filter(function (y) { return y.id === id; })[0];
+    if (!x) return;
+    var d = wz.draft;
+    d.type = 'custom'; d.listing = 'pages';
+    // (the template's settings replace those it has; the others stay)
+    Object.keys(x.selectors).forEach(function (k) { d.selectors[k] = x.selectors[k]; });
+    wz.pv.info = t('wz.templateApplied', { name: x.name });
+    wzResetPreview(); wzRender();
+  }
   function wzField(key, label, opts) {
     opts = opts || {};
     var d = wz.draft, sel = key.indexOf('sel.') === 0, k = sel ? key.slice(4) : key;
@@ -1869,7 +1982,14 @@
     // A selector that can be picked in the preview
     var pick = sel && WZ_SEL[k] ? '<button type="button" class="btn btn--outline btn--small wz-pick' + (wz.pv.target === k ? ' is-active' : '') + '" data-wz-pick="' + k + '" title="' + esc(t('wz.pickHelp')) + '" aria-pressed="' + (wz.pv.target === k ? 'true' : 'false') + '">' + icon('ads_click') + esc(t('wz.pick')) + '</button>' : '';
     var missing = sel && !v && wzFound(k) === false;
-    return '<div class="field wz-field' + (missing ? ' is-missing' : '') + '"><label for="' + id + '">' + esc(label) + (missing ? ' <span class="badge badge--danger">' + esc(t('wz.foundMissingShort')) + '</span>' : '') + '</label><div class="wz-field__row">' + input + pick + '</div>' + (opts.help ? '<small class="field__help">' + esc(opts.help) + '</small>' : '') + '</div>';
+    // Clean up the values (text fields with a selector): counts, a label before the value, only the element's own
+    // text, a regular expression to remove
+    var cleanable = sel && v && WZ_CLEAN.indexOf(k) !== -1 && !/@/.test(v);
+    var cr = (d.clean && d.clean[k]) || {};
+    var cleanBox = cleanable ? '<details class="wz-clean"' + (cr.counts || cr.label || cr.own || cr.remove ? ' open' : '') + '><summary class="small">' + esc(t('wz.clean')) + '</summary>' +
+      ['counts', 'label', 'own'].map(function (x) { return '<label class="checkbox small"><input type="checkbox" data-wz="clean.' + k + '.' + x + '"' + (cr[x] ? ' checked' : '') + ' /><span>' + esc(t('wz.clean.' + x)) + '</span></label>'; }).join('') +
+      '<label class="small wz-clean__re">' + esc(t('wz.clean.remove')) + ' <input type="text" data-wz="clean.' + k + '.remove" value="' + esc(cr.remove || '') + '" placeholder="\\(new\\)|★" autocomplete="off" /></label></details>' : '';
+    return '<div class="field wz-field' + (missing ? ' is-missing' : '') + '"><label for="' + id + '">' + esc(label) + (missing ? ' <span class="badge badge--danger">' + esc(t('wz.foundMissingShort')) + '</span>' : '') + '</label><div class="wz-field__row">' + input + pick + '</div>' + (opts.help ? '<small class="field__help">' + esc(opts.help) + '</small>' : '') + cleanBox + '</div>';
   }
   var WZ_TITLES = { site: 'wz.step.site', kind: 'wz.step.kind', list: 'wz.step.list', work: 'wz.step.work', chapters: 'wz.step.chapters', crawl: 'wz.step.crawl', review: 'wz.step.review' };
   function wzStepBody(step) {
@@ -1889,7 +2009,7 @@
         wzField('languages', t('cat.srcLanguages'), { placeholder: 'en, es', help: t('cat.srcLanguagesHelp') }) +
         (d.type === 'mangadex' ? wzField('contentRating', t('cat.srcRating'), { help: t('cat.srcRatingHelp') }) : '') +
         wzField('includeChapters', t('cat.srcChapters'), { type: 'checkbox', help: t('cat.srcChaptersHelp') }) +
-        (wzSitemapWorks() && !wz.showList ? '<p class="notice notice--info small wz-from-sitemaps">' + icon('check') + '<span>' + esc(t('wz.worksFromSitemaps', { count: (wz.detected && wz.detected.found && wz.detected.found.works) || 'â€¦', pattern: d.workPattern })) + ' ' +
+        (wzSitemapWorks() && !wz.showList ? '<p class="notice notice--info small wz-from-sitemaps">' + icon('check') + '<span>' + esc(t('wz.worksFromSitemaps', { count: (wz.detected && wz.detected.found && wz.detected.found.works) || '…', pattern: d.workPattern })) + ' ' +
           '<button type="button" class="link-button" data-wz-act="show-list">' + esc(t('wz.changeListing')) + '</button></span></p>' : '');
     }
     if (step === 'list') {
@@ -1898,40 +2018,61 @@
         out += wzField('sitemaps', t('cat.srcSitemaps'), { type: 'textarea', rows: 2, help: t('cat.srcSitemapsHelp') }) +
           wzField('workPattern', t('cat.srcWorkPattern'), { placeholder: '/manga/*/', help: t('cat.srcPatternHelp') });
         var pats = wz.detected && wz.detected.found && wz.detected.found.patterns;
-        if (pats && pats.length) out += '<p class="muted small">' + esc(t('wz.patternsSeen')) + ' ' + pats.slice(0, 6).map(function (p) { return p.pattern + ' (' + p.count + ')'; }).join(' Â· ') + '</p>';
+        if (pats && pats.length) out += '<p class="muted small">' + esc(t('wz.patternsSeen')) + ' ' + pats.slice(0, 6).map(function (p) { return p.pattern + ' (' + p.count + ')'; }).join(' · ') + '</p>';
       } else if (d.type === 'custom') {
-        out += '<p class="muted small">' + esc(t('wz.listIntro')) + '</p>' +
+        out += wzTemplatesBox() + '<p class="muted small">' + esc(t('wz.listIntro')) + '</p>' +
           wzField('sel.listUrl', t('cat.sel.listUrl'), { placeholder: 'https://site.com/manga/page/{page}/', help: t('wz.listUrlHelp') }) +
           wzField('sel.firstPage', t('wz.firstPage'), { placeholder: '1' }) +
-          wzActionsBox('list') + sel('item', '.manga-list .item') + sel('link', 'a@href') + sel('title', 'h3') + sel('cover', 'img@src');
+          wzField('sel.maxPages', t('wz.maxPages'), { placeholder: '5000', help: t('wz.maxPagesHelp') }) +
+          wzField('sel.extraListUrls', t('wz.extraListUrls'), { type: 'textarea', rows: 2, placeholder: '/manhwa?page={page}', help: t('wz.extraListUrlsHelp') }) +
+          wzActionsBox('list') + sel('item', '.manga-list .item') + sel('link', 'a@href') +
+          wzField('sel.linkPattern', t('wz.linkPattern'), { placeholder: '^/manga/([^/]+)/?$', help: t('wz.linkPatternHelp') }) +
+          sel('title', 'h3') + sel('cover', 'img@src');
       }
       if (d.type === 'madara' || d.type === 'mangareader') out += wzField('listPath', t('cat.srcListPath'), { placeholder: 'manga', help: t('cat.srcListPathHelp') });
       return out;
     }
     if (step === 'work') {
       return '<p class="muted small">' + esc(t(d.autoDetect ? 'wz.workIntroAuto' : 'wz.workIntro')) + '</p>' + wzFoundBox('work') + wzActionsBox('work') +
-        sel('workTitle', 'h1') + sel('workCover', '.cover img@src') + sel('summary', '.description') + sel('genres', '.genres a') + sel('authors', '.author a') + sel('altTitles', '.alt-names') + sel('status', '.status');
+        sel('workTitle', 'h1') + sel('workCover', '.cover img@src') + sel('summary', '.description') + sel('genres', '.genres a') + sel('tags', '.tags a') + sel('authors', '.author a') +
+        sel('altTitles', '.alt-names') + wzField('sel.altSeparator', t('cat.sel.altSeparator'), { placeholder: ', ; /', help: t('cat.sel.altSeparatorHelp') }) +
+        sel('status', '.status') + sel('type', '.type') + sel('year', '.released');
     }
     if (step === 'chapters') {
       return '<p class="muted small">' + esc(t('wz.chaptersIntro')) + '</p>' + wzFoundBox('chapters') + wzActionsBox('chapters') +
         sel('chapter', '.chapter-list li') + sel('chapterLink', 'a@href') + sel('chapterTitle', 'a') + sel('chapterDate', '.date') +
-        wzField('chapterPattern', t('cat.srcChapterPattern'), { placeholder: '/manga/*/*/', help: t('cat.srcChapterPatternHelp') });
+        wzField('chapterPattern', t('cat.srcChapterPattern'), { placeholder: '/manga/*/*/', help: t('cat.srcChapterPatternHelp') }) +
+        wzField('fullChapters', t('cat.fullChapters'), { type: 'checkbox', help: t('cat.fullChaptersHelp') }) +
+        (d.fullChapters !== false ? wzField('chaptersUrl', t('cat.chaptersUrl'), { placeholder: '{url}/chapters?page={page}', help: t('cat.chaptersUrlHelp') }) : '');
     }
     if (step === 'crawl') {
-      return wzField('schedule', t('cat.srcSchedule'), { type: 'select', options: ['manual', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) }) +
+      return wzField('schedule', t('cat.srcSchedule'), { type: 'select', options: ['manual', 'hours', 'daily', 'weekly'].map(function (x) { return { value: x, label: t('cat.schedule.' + x) }; }) }) +
+        (d.schedule === 'hours' ? wzField('scheduleHours', t('cat.scheduleHours'), { placeholder: '6' }) : '') +
+        wzField('paused', t('cat.pauseSource'), { type: 'checkbox', help: t('cat.pauseSourceHelp') }) +
+        (d.includeChapters !== false ? wzField('checkOngoing', t('cat.checkOngoing'), { type: 'checkbox', help: t('cat.checkOngoingHelp') }) : '') +
         wzField('concurrency', t('cat.srcConcurrency'), { placeholder: String((catSourcesState().data && catSourcesState().data.defaultConcurrency) || 3), help: t('cat.srcConcurrencyHelp') }) +
         wzField('render', t('wz.render'), { type: 'checkbox', help: t('wz.renderHelp') }) +
         (d.render ? wzField('renderWait', t('wz.renderWait'), { placeholder: '8', help: t('wz.renderWaitHelp') }) : '') +
+        '<fieldset class="wz-blacklist"><legend>' + esc(t('cat.access')) + '</legend><p class="muted small">' + esc(t('cat.accessHelp')) + '</p>' +
+          wzField('accessMode', t('cat.accessMode'), { type: 'select', options: [{ value: 'auto', label: t('cat.accessAuto') }, { value: 'plain', label: t('cat.accessPlain') }] }) +
+          wzField('accessCookies', t('cat.accessCookies'), { type: 'textarea', rows: 2, placeholder: d.savedCookieNames.length ? t('cat.accessSaved', { names: d.savedCookieNames.join(', ') }) : 'name=value; other=value', help: t('cat.accessCookiesHelp') }) +
+          (d.savedCookieNames.length ? wzField('removeCookies', t('cat.accessRemoveCookies'), { type: 'checkbox' }) : '') +
+          wzField('accessHeaders', t('cat.accessHeaders'), { type: 'textarea', rows: 2, placeholder: d.savedHeaderNames.length ? t('cat.accessSaved', { names: d.savedHeaderNames.join(', ') }) : 'X-Api-Key: …', help: t('cat.accessHeadersHelp') }) +
+          (d.savedHeaderNames.length ? wzField('removeHeaders', t('cat.accessRemoveHeaders'), { type: 'checkbox' }) : '') + '</fieldset>' +
+        '<fieldset class="wz-blacklist"><legend>' + esc(t('cat.blacklist')) + '</legend><p class="muted small">' + esc(t('cat.blacklistHelp')) + '</p>' +
+          wzField('blGenres', t('cat.blGenres'), { type: 'textarea', rows: 2 }) + wzField('blTags', t('cat.blTags'), { type: 'textarea', rows: 2 }) + wzField('blAuthors', t('cat.blAuthors'), { type: 'textarea', rows: 2 }) + '</fieldset>' +
         (d.autoDetect ? '' : wzField('gapMs', t('cat.srcGap'), { placeholder: '1500', help: t('cat.srcGapHelp') }) + wzField('maxWorks', t('cat.srcMax'), { placeholder: '0', help: t('cat.srcMaxHelp') }));
     }
     // review: what will be saved, and a Test with these settings
     var rows = (d.autoDetect ? [[t('cat.srcSiteUrl'), d.siteUrl], [t('cat.srcAuto'), t('common.yes')]] :
       [[t('cat.srcType'), (wz.types.filter(function (x) { return x.type === d.type; })[0] || {}).label || d.type], [t('cat.srcUrl'), d.baseUrl], [t('cat.srcListing'), t('cat.listing.' + d.listing)]])
-        .concat(['list', 'work', 'chapters'].filter(function (g) { return d.actions[g].length; }).map(function (g) { return [t('wz.clicksIn.' + g), d.actions[g].map(function (a) { return a.kind === 'scroll' ? 'â†• ' + (a.selector || a.loads[0] || '') : a.selector; }).join(' Â· ')]; }))
+        .concat(['list', 'work', 'chapters'].filter(function (g) { return d.actions[g].length; }).map(function (g) { return [t('wz.clicksIn.' + g), d.actions[g].map(function (a) { return a.kind === 'scroll' ? '↕ ' + (a.selector || a.loads[0] || '') : a.selector; }).join(' · ')]; }))
         .concat(Object.keys(d.selectors).filter(function (k) { return d.selectors[k]; }).map(function (k) { return [t('cat.sel.' + k) !== 'cat.sel.' + k ? t('cat.sel.' + k) : k, d.selectors[k]]; }));
     if (d.render) rows.push([t('wz.render'), t('common.yes')]);
+    if (d.paused) rows.push([t('cat.pauseSource'), t('common.yes')]);
+    [['blGenres', 'cat.blGenres'], ['blTags', 'cat.blTags'], ['blAuthors', 'cat.blAuthors']].forEach(function (x) { if (String(d[x[0]] || '').trim()) rows.push([t(x[1]), String(d[x[0]]).split(/\n+/).join(', ')]); });
     rows.push([t('cat.srcSchedule'), t('cat.schedule.' + d.schedule)]);
-    return '<dl class="pref-list wz-review">' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd><code>' + esc(r[1] || 'â€”') + '</code></dd>'; }).join('') + '</dl>' +
+    return '<dl class="pref-list wz-review">' + rows.map(function (r) { return '<dt>' + esc(r[0]) + '</dt><dd><code>' + esc(r[1] || '—') + '</code></dd>'; }).join('') + '</dl>' +
       (d.autoDetect ? '<p class="muted small">' + esc(t('cat.detectNote')) + '</p>' : '') +
         '<div class="wz-actions"><button type="button" class="btn btn--outline" data-wz-act="test"' + (wz.test && wz.test.loading ? ' disabled' : '') + '>' + icon('play') + esc(t('cat.test')) + '</button></div>' + testReport(wz.test);
   }
@@ -1944,7 +2085,7 @@
   function wzFoundValue(w, k) {
     var v = w && w[k];
     if (k === 'status') return v && v !== 'unknown' ? t('series.status.' + v) : '';
-    if (k === 'chapterCount') return v ? t('cat.chapters', { count: v }) + ((w.firstChapters || []).length ? ' â€” ' + w.firstChapters.slice(0, 3).map(function (c) { return c.t || c.n; }).join(' Â· ') : '') : '';
+    if (k === 'chapterCount') return v ? t('cat.chapters', { count: v }) + ((w.firstChapters || []).length ? ' — ' + w.firstChapters.slice(0, 3).map(function (c) { return c.t || c.n; }).join(' · ') : '') : '';
     if (k === 'cover') return v ? t('wz.foundYes') : '';
     if (Array.isArray(v)) return v.join(', ');
     return v ? String(v).slice(0, 90) : '';
@@ -1978,7 +2119,7 @@
   }
 
   // "Before collecting, click": the buttons or tabs to press first on this page (a tab with the chapters, "Show
-  // all"â€¦), each picked in the preview; what each did in the preview is shown under it
+  // all"…), each picked in the preview; what each did in the preview is shown under it
   var WZ_ACT_RESULTS = { scrolled: 'wz.act.scrolled', noRequest: 'wz.act.noRequest', opened: 'wz.act.opened', added: 'wz.act.added', inPage: 'wz.act.inPage', notFound: 'wz.act.notFound', failed: 'wz.act.failed', otherSite: 'wz.act.otherSite', clicked: 'wz.act.clicked', missing: 'wz.act.notFound' };
   function wzActionsBox(group) {
     var list = wz.draft.actions[group], pv = wz.pv;
@@ -1996,7 +2137,7 @@
             '<option value="add"' + (!scroll && a.mode !== 'open' ? ' selected' : '') + '>' + esc(t('wz.clickAdd')) + '</option>' +
             '<option value="open"' + (!scroll && a.mode === 'open' ? ' selected' : '') + '>' + esc(t('wz.clickOpen')) + '</option>' +
             '<option value="scroll"' + (scroll ? ' selected' : '') + '>' + esc(t('wz.scrollKind')) + '</option></select>' +
-          (scroll ? '<div class="wz-click__loads"><input type="url" data-wz="actloads:' + group + ':' + i + '" value="' + esc(a.loads[0] || '') + '" placeholder="https://â€¦" aria-label="' + esc(t('wz.scrollLoads')) + '" />' +
+          (scroll ? '<div class="wz-click__loads"><input type="url" data-wz="actloads:' + group + ':' + i + '" value="' + esc(a.loads[0] || '') + '" placeholder="https://…" aria-label="' + esc(t('wz.scrollLoads')) + '" />' +
             '<button type="button" class="btn btn--outline btn--small" data-wz-act="act-scroll" data-group="' + group + '" data-i="' + i + '" title="' + esc(t('wz.scrollTryHelp')) + '"' + (pv.scripts ? '' : ' disabled') + '>' + icon('sync') + esc(t('wz.scrollTry')) + '</button>' +
             '<small class="field__help">' + esc(t(pv.scripts ? 'wz.scrollLoadsHelp' : 'wz.scrollNeedsScripts')) + '</small></div>' : '') +
           '<button type="button" class="icon-btn" data-wz-act="act-del" data-group="' + group + '" data-i="' + i + '" aria-label="' + esc(t('wz.clickRemove')) + '">' + icon('close') + '</button>' +
@@ -2016,7 +2157,7 @@
   var wzHasPreview = function (step) { return (step === 'list' && !wz.draft.autoDetect && wz.draft.type === 'custom' && wz.draft.listing !== 'sitemap') || step === 'work' || step === 'chapters'; };
   function wzPreviewBar() {
     var pv = wz.pv;
-    return '<input type="url" id="wz-pv-url" value="' + esc(pv.typed != null ? pv.typed : pv.url) + '" placeholder="https://â€¦" aria-label="' + esc(t('wz.pageAddress')) + '" />' +
+    return '<input type="url" id="wz-pv-url" value="' + esc(pv.typed != null ? pv.typed : pv.url) + '" placeholder="https://…" aria-label="' + esc(t('wz.pageAddress')) + '" />' +
       '<button type="button" class="btn btn--outline btn--small" data-wz-act="load">' + esc(t('wz.load')) + '</button>' +
       '<button type="button" class="btn btn--text btn--small" data-wz-act="reload" title="' + esc(t('wz.reload')) + '" aria-label="' + esc(t('wz.reload')) + '">' + icon('sync') + '</button>' +
       '<div class="seg" role="group" aria-label="' + esc(t('wz.mode')) + '">' +
@@ -2093,7 +2234,7 @@
       pv.tried = true;
       if (url) return wzLoadPreview(url);
     }
-    // The clicks of this step: made by the server (as crawls make them) â€” the page is fetched again when they
+    // The clicks of this step: made by the server (as crawls make them) — the page is fetched again when they
     // change; with the site's scripts, made in the page itself (real clicks)
     var acts = JSON.stringify(wzActionsFor(wz.step).filter(function (a) { return a.selector || (a.kind === 'scroll' && a.loads.length); }));
     if (pv.page && !pv.loading && !pv.scripts && pv.page.actionsKey !== acts && pv.base) return wzLoadPreview(pv.base);
@@ -2141,7 +2282,7 @@
   // Another kind of page to show: the next render loads it
   function wzResetPreview() { var pv = wz.pv; pv.seq = (pv.seq || 0) + 1; pv.page = null; pv.loading = false; pv.error = null; pv.info = null; pv.target = null; pv.tried = false; pv.srcDoc = null; }
   // A page the site sends nearly empty (an app shell: <div id="root"></div> and scripts) and builds in the
-  // browser: the preview shows only its background (and whatever sits outside the app, a Discord buttonâ€¦), and
+  // browser: the preview shows only its background (and whatever sits outside the app, a Discord button…), and
   // crawls, which read pages as sent, find nothing in it either
   function wzShellPage(page) {
     if (page.shell != null) return page.shell;
@@ -2266,8 +2407,8 @@
       wz.draft.selectors[field] = m.selector;
       if ((field === 'link' || field === 'item') && /^https?:\/\//i.test(String(m.workUrl || ''))) wz.sampleWork = String(m.workUrl);
       var samples = (Array.isArray(m.samples) ? m.samples : []).slice(0, 3).map(function (x) { return String(x).slice(0, 80); });
-      pv.info = t('wz.picked', { field: wzFieldLabel(field), selector: m.self ? t('wz.itself') : m.selector, count: Number(m.count) || 0 }) + (samples.length ? ' â€” ' + samples.join(' | ') : '') +
-        (wzInSource(field, m.selector) ? '' : ' âš  ' + t('wz.onlyWithScripts'));
+      pv.info = t('wz.picked', { field: wzFieldLabel(field), selector: m.self ? t('wz.itself') : m.selector, count: Number(m.count) || 0 }) + (samples.length ? ' — ' + samples.join(' | ') : '') +
+        (wzInSource(field, m.selector) ? '' : ' ⚠ ' + t('wz.onlyWithScripts'));
       var input = $('#wz-sel-' + field);
       if (input) input.value = m.selector;
       wzStatus();
@@ -2420,7 +2561,7 @@
     document.addEventListener('submit', function (e) { e.preventDefault(); }, true);
     document.addEventListener('click', function (e) {
       var el = e.target;
-      // Interact: the page gets the click (tabs, "show more"â€¦); a link to another page opens it in the preview
+      // Interact: the page gets the click (tabs, "show more"…); a link to another page opens it in the preview
       if (ready && cfg.mode === 'interact') {
         var la = el.closest && el.closest('a[href]');
         if (la && /^https?:/i.test(la.href) && la.getAttribute('href').charAt(0) !== '#') { e.preventDefault(); e.stopPropagation(); return post({ type: 'navigate', href: la.href, interact: true }); }
@@ -2488,9 +2629,15 @@
       if (e.type === 'change' && wz.pv.base) wzLoadPreview(wz.pv.base);
       return;
     }
+    if (key.indexOf('clean.') === 0) {
+      var cp = key.split('.'), cd = wz.draft.clean = wz.draft.clean || {};
+      cd[cp[1]] = cd[cp[1]] || {};
+      if (cp[2] === 'remove') cd[cp[1]].remove = String(v).trim(); else cd[cp[1]][cp[2]] = Boolean(v);
+      return;
+    }
     if (key.indexOf('sel.') === 0) wz.draft.selectors[key.slice(4)] = v; else wz.draft[key] = v;
     // Settings that change which steps or fields apply: drawn again
-    if (e.type === 'change' && ['autoDetect', 'type', 'listing', 'includeChapters', 'render'].indexOf(key) !== -1) wzRender();
+    if (e.type === 'change' && ['autoDetect', 'type', 'listing', 'includeChapters', 'render', 'schedule', 'fullChapters'].indexOf(key) !== -1) wzRender();
     // A new list page address: the preview shows it
     if (e.type === 'change' && (key === 'sel.listUrl' || key === 'sel.firstPage')) { wzResetPreview(); wzRender(); }
     if (key === 'siteUrl' && !wz.draft.baseUrl) wz.draft.baseUrl = v;
@@ -2503,7 +2650,7 @@
     }
     if (step === 'kind' && !/^https?:\/\/\S+$/i.test(String(d.baseUrl || '').trim())) return { code: 'invalidUrl' };
     if (step === 'list' && d.listing === 'sitemap' && !String(d.workPattern).trim()) return { code: 'workPatternRequired' };
-    if (step === 'list' && d.listing !== 'sitemap' && d.type === 'custom' && (!d.selectors.listUrl || !d.selectors.item)) return { code: 'wzListNeeded' };
+    if (step === 'list' && d.listing !== 'sitemap' && d.type === 'custom' && (!d.selectors.listUrl || (!d.selectors.item && !d.selectors.linkPattern))) return { code: 'wzListNeeded' };
     return null;
   }
   // The settings as the server takes them
@@ -2512,7 +2659,7 @@
     if (d.autoDetect) {
       // Detection keeps finding the rest at every crawl; the picks (selectors, clicks) are kept with it
       var full = wzFullBody();
-      return { name: full.name, siteUrl: full.siteUrl, schedule: full.schedule, concurrency: full.concurrency, autoDetect: true, includeChapters: full.includeChapters, selectors: full.selectors, actions: full.actions, render: full.render, renderWaitMs: full.renderWaitMs };
+      return { name: full.name, siteUrl: full.siteUrl, schedule: full.schedule, concurrency: full.concurrency, autoDetect: true, includeChapters: full.includeChapters, selectors: full.selectors, actions: full.actions, render: full.render, renderWaitMs: full.renderWaitMs, blacklist: full.blacklist, scheduleHours: full.scheduleHours, enabled: full.enabled, checkOngoing: full.checkOngoing, fullChapters: full.fullChapters, chaptersUrl: full.chaptersUrl, clean: full.clean, access: full.access };
     }
     return wzFullBody();
   }
@@ -2525,6 +2672,15 @@
     if (Number(d.gapMs)) body.gapMs = Number(d.gapMs);
     // Pages built in a browser on the server (sites that build them with scripts)
     body.render = Boolean(d.render);
+    var lines = function (v) { return String(v || '').split(/[\n,;]+/).map(function (x) { return x.trim(); }).filter(Boolean); };
+    body.blacklist = { genres: lines(d.blGenres), tags: lines(d.blTags), authors: lines(d.blAuthors) };
+    body.scheduleHours = d.schedule === 'hours' ? Number(d.scheduleHours) || 6 : 0;
+    body.enabled = !d.paused;
+    body.checkOngoing = d.checkOngoing !== false;
+    body.fullChapters = d.fullChapters !== false; body.chaptersUrl = String(d.chaptersUrl || '').trim();
+    body.clean = d.clean || {};
+    body.access = { mode: d.accessMode === 'plain' ? 'plain' : 'auto', cookies: String(d.accessCookies || '').trim(), headers: String(d.accessHeaders || '').trim(), removeCookies: Boolean(d.removeCookies), removeHeaders: Boolean(d.removeHeaders) };
+    if (wz.editing) body.sourceId = wz.editing;
     if (d.render && Number(d.renderWait)) body.renderWaitMs = Math.round(Number(d.renderWait) * 1000);
     Object.keys(d.selectors).forEach(function (k) { if (d.selectors[k]) body.selectors[k] = d.selectors[k]; });
     body.actions = {};
@@ -2553,6 +2709,14 @@
     }
     if (act === 'load') { var u = $('#wz-pv-url').value.trim(); if (u) wzLoadPreview(u); return; }
     if (act === 'found') { wzCheckFound(); var ff = $('#wz-form'); if (ff) { ff.innerHTML = wzStepBody(wz.step); if (window.renderIcons) window.renderIcons(ff); } return; }
+    if (act === 'tpl-use') { var tv = $('#wz-tpl'); if (tv && tv.value) wzApplyTemplate(tv.value); return; }
+    if (act === 'tpl-apply') return wzApplyTemplate(b.dataset.id);
+    if (act === 'tpl-find') {
+      var tu = String(wz.draft.baseUrl || wz.draft.siteUrl || '').trim();
+      if (!/^https?:\/\/\S+$/i.test(tu)) { wz.error = { code: 'invalidUrl' }; return wzRender(); }
+      wz.tplFind = { loading: true }; wzRender();
+      return api('POST', '/api/catalog/sources/find-template', { url: tu }).then(function (r) { wz.tplFind = { results: r.results }; }, function (e2) { wz.tplFind = { error: e2 }; }).then(function () { if (wz) wzRender(); });
+    }
     if (act === 'show-list') { wz.showList = true; wz.step = 'list'; wzResetPreview(); return wzRender(); }
     if (act === 'act-scroll') {
       var sk = 'act:' + b.dataset.group + ':' + b.dataset.i, sa2 = wz.draft.actions[b.dataset.group][Number(b.dataset.i)];
@@ -2598,7 +2762,7 @@
       wz.saving = true; wz.error = null; wzRender();
       var body = wzBody(), id = wz.editing;
       var req = id ? api('PATCH', '/api/catalog/sources/' + id, body)
-        : body.autoDetect ? api('POST', '/api/catalog/sources', { name: body.name, baseUrl: body.siteUrl }).then(function (r) { return api('PATCH', '/api/catalog/sources/' + r.source.id, { schedule: body.schedule, concurrency: body.concurrency, includeChapters: body.includeChapters, selectors: body.selectors, actions: body.actions, render: body.render, renderWaitMs: body.renderWaitMs }); })
+        : body.autoDetect ? api('POST', '/api/catalog/sources', { name: body.name, baseUrl: body.siteUrl }).then(function (r) { return api('PATCH', '/api/catalog/sources/' + r.source.id, { schedule: body.schedule, concurrency: body.concurrency, includeChapters: body.includeChapters, selectors: body.selectors, actions: body.actions, render: body.render, renderWaitMs: body.renderWaitMs, blacklist: body.blacklist, scheduleHours: body.scheduleHours, enabled: body.enabled, checkOngoing: body.checkOngoing, fullChapters: body.fullChapters, chaptersUrl: body.chaptersUrl, clean: body.clean, access: body.access }); })
         : api('POST', '/api/catalog/sources', body);
       return req.then(function () {
         $('#src-wizard').close();
@@ -2624,13 +2788,13 @@
     if (d.settings && d.settings.chapterPattern) lines.push(t('cat.det.chapters', { pattern: d.settings.chapterPattern }));
     if (f.theme) lines.push(t('cat.det.theme', { theme: f.theme === 'madara' ? 'Madara' : 'MangaReader' }));
     else if (d.settings && d.settings.type === 'custom') lines.push(t('cat.det.generic'));
-    if (f.sampleWork) lines.push(t('cat.det.sample', { title: f.sampleWork.title || 'â€”', chapters: f.sampleWork.chapterLinks }));
+    if (f.sampleWork) lines.push(t('cat.det.sample', { title: f.sampleWork.title || '—', chapters: f.sampleWork.chapterLinks }));
     if (n.indexOf('robotsWorks') !== -1) lines.push(t('cat.det.robotsWorks'));
     if (n.indexOf('needsSelectors') !== -1 || n.indexOf('noWorkPattern') !== -1) lines.push(t('cat.det.needsSelectors'));
     return lines.join(' ');
   }
-  // Site files tab (admins): each source's robots.txt and sitemaps â€” the ones it uses, the ones detection found and
-  // the ones its last crawl read (content hash, date, works listed) â€” each read on demand: its text and what it lists
+  // Site files tab (admins): each source's robots.txt and sitemaps — the ones it uses, the ones detection found and
+  // the ones its last crawl read (content hash, date, works listed) — each read on demand: its text and what it lists
   function catFilesState() {
     if (!cache.catFiles) cache.catFiles = { sources: null, source: '', data: null, error: null, view: null, file: null, q: '', raw: false };
     return cache.catFiles;
@@ -2675,12 +2839,12 @@
     var list = f.kind === 'sitemap' && (f.urls || []).length ? '<h3 class="proc-sub">' + esc(t('cat.files.urls', { count: f.urlCount })) + '</h3>' +
         '<label class="search-field">' + icon('search') + '<input type="search" id="sitefile-q" placeholder="' + esc(t('cat.files.find')) + '" value="' + esc(st.q) + '" /></label>' +
         '<div class="table-wrap sitefile__urls"><table class="table"><thead><tr><th>' + esc(t('cat.files.address')) + '</th><th>' + esc(t('cat.files.lastmod')) + '</th></tr></thead><tbody>' +
-          urls.slice(0, 500).map(function (u) { return '<tr><td><a href="' + esc(u.loc) + '" target="_blank" rel="noopener noreferrer">' + esc(u.loc) + '</a></td><td class="small">' + esc(u.lastmod || 'â€”') + '</td></tr>'; }).join('') +
+          urls.slice(0, 500).map(function (u) { return '<tr><td><a href="' + esc(u.loc) + '" target="_blank" rel="noopener noreferrer">' + esc(u.loc) + '</a></td><td class="small">' + esc(u.lastmod || '—') + '</td></tr>'; }).join('') +
         '</tbody></table></div>' + (urls.length > 500 || (f.urlCount || 0) > (f.urls || []).length ? '<p class="muted small">' + esc(t('cat.files.firstOnly', { count: Math.min(urls.length, 500) })) + '</p>' : '') : '';
     var raw = f.kind === 'robots' || st.raw
       ? '<pre class="task-console__text task-console__text--tall sitefile__raw">' + esc(f.text || '') + '</pre>' + (f.truncated ? '<p class="muted small">' + esc(t('cat.files.truncated')) + '</p>' : '')
       : '<button type="button" class="btn btn--text btn--small" data-lib="cat-file-raw">' + icon('description') + esc(t('cat.files.showText')) + '</button>';
-    return '<section class="card card--wide sitefile">' + head + '<p class="muted small">' + esc(facts.join(' Â· ')) + '</p>' +
+    return '<section class="card card--wide sitefile">' + head + '<p class="muted small">' + esc(facts.join(' · ')) + '</p>' +
       (f.kind === 'robots' && (f.sitemaps || []).length ? '<h3 class="proc-sub">' + esc(t('cat.files.robotsSitemaps')) + '</h3><ul class="sitefile__list">' + f.sitemaps.map(function (s) { return '<li>' + siteFileLink(s.loc) + '</li>'; }).join('') + '</ul>' : '') +
       children + list + raw + '</section>';
   }
@@ -2699,7 +2863,7 @@
       '<ul class="sitefile__list"><li>' + siteFileLink(d.robots, 'robots.txt') + '</li>' +
       d.sitemaps.map(function (s) {
         return '<li>' + siteFileLink(s.loc) + ' <span class="muted small">' + esc(s.from.map(function (x) { return t(FILE_FROM[x]); }).join(', ') +
-          (s.works != null ? ' Â· ' + t('cat.files.worksListed', { count: s.works }) : '') + (s.hash ? ' Â· ' + t('cat.files.hash', { hash: s.hash.slice(0, 12) }) : '') + (s.lastmod ? ' Â· ' + s.lastmod : '')) + '</span></li>';
+          (s.works != null ? ' · ' + t('cat.files.worksListed', { count: s.works }) : '') + (s.hash ? ' · ' + t('cat.files.hash', { hash: s.hash.slice(0, 12) }) : '') + (s.lastmod ? ' · ' + s.lastmod : '')) + '</span></li>';
       }).join('') + '</ul>' +
       (d.sitemaps.length ? '' : '<p class="muted small">' + esc(t('cat.files.noSitemaps')) + '</p>') +
       (d.crawledAt ? '<p class="muted small">' + esc(t('cat.files.crawledAt', { time: A().fmtDate(d.crawledAt) })) + '</p>' : '') + '</section>';
@@ -2773,14 +2937,14 @@
       return '<li><strong>' + esc(l.name) + '</strong>: ' + esc(t('msrc.matchedLine', { works: l.works, worksTotal: l.worksTotal, books: l.books, booksTotal: l.booksTotal })) +
         (l.enabled ? '' : ' <span class="badge">' + esc(t('msrc.offHere')) + '</span>') +
         (l.examples.length ? '<ul class="msrc-examples">' + l.examples.map(function (x) {
-          return '<li><code>' + esc(x.file) + '</code> â†’ <code>' + esc(x.what) + '</code></li>';
+          return '<li><code>' + esc(x.file) + '</code> → <code>' + esc(x.what) + '</code></li>';
         }).join('') + '</ul>' : '') + '</li>';
     }).join('') + '</ul>';
     if (r.ambiguous.length) html += '<p class="notice">' + esc(t('msrc.ambiguous', { names: r.ambiguous.join(', ') })) + '</p>';
     if (r.errors.length) html += '<p class="notice notice--error">' + esc(t('msrc.unreadable')) + '</p><ul class="msrc-examples">' +
-      r.errors.map(function (e) { return '<li><code>' + esc(e.file) + '</code> â€” ' + esc(e.error) + '</li>'; }).join('') + '</ul>';
+      r.errors.map(function (e) { return '<li><code>' + esc(e.file) + '</code> — ' + esc(e.error) + '</li>'; }).join('') + '</ul>';
     if (r.unusedCount) html += '<p class="muted small">' + esc(t('msrc.unused', { count: r.unusedCount })) + '</p><ul class="msrc-examples">' +
-      r.unused.map(function (f) { return '<li><code>' + esc(f) + '</code></li>'; }).join('') + (r.unusedCount > r.unused.length ? '<li>â€¦</li>' : '') + '</ul>';
+      r.unused.map(function (f) { return '<li><code>' + esc(f) + '</code></li>'; }).join('') + (r.unusedCount > r.unused.length ? '<li>…</li>' : '') + '</ul>';
     return html + '</div>';
   }
   function searchReport(r) {
@@ -2790,7 +2954,7 @@
     if (!r.items.length) return '<p class="muted small">' + esc(t('meta.noResults')) + '</p>';
     return '<p class="muted small">' + esc(t('msrc.answeredIn', { ms: r.ms })) + '</p><ul class="msrc-results">' + r.items.map(function (x) {
       return '<li>' + (x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + esc(x.title) + '</a>' : esc(x.title)) +
-        ' <span class="muted small">' + esc([x.type ? t('type.' + x.type) : '', x.year || '', Math.round((x.score || 0) * 100) + '%'].filter(Boolean).join(' Â· ')) + '</span></li>';
+        ' <span class="muted small">' + esc([x.type ? t('type.' + x.type) : '', x.year || '', Math.round((x.score || 0) * 100) + '%'].filter(Boolean).join(' · ')) + '</span></li>';
     }).join('') + '</ul>';
   }
   var metadataSources = {
@@ -2820,11 +2984,11 @@
       }).join('') + '</div>' : emptyState('description', t('msrc.noneTitle'), t('msrc.none'), '<button class="btn btn--outline" data-lib="msrc-add">' + icon('add') + esc(t('msrc.add')) + '</button>');
       var how = '<details class="card card--wide msrc-how"><summary class="card__title">' + esc(t('msrc.howTitle')) + '</summary>' +
         '<p class="small">' + esc(t('msrc.howPath')) + '</p>' +
-        '<pre class="msrc-pre">metadata/One Piece.json        â†’ library/One Piece/      (work)\nmetadata/One Piece/11.json     â†’ library/One Piece/11.cbz (chapter)\nmetadata/One Piece.jpg         â†’ cover of One Piece</pre>' +
+        '<pre class="msrc-pre">metadata/One Piece.json        → library/One Piece/      (work)\nmetadata/One Piece/11.json     → library/One Piece/11.cbz (chapter)\nmetadata/One Piece.jpg         → cover of One Piece</pre>' +
         '<p class="small">' + esc(t('msrc.howName')) + '</p>' +
-        '<pre class="msrc-pre">metadata/11.json â†’ every book named 11.cbz / 11.pdf</pre>' +
+        '<pre class="msrc-pre">metadata/11.json → every book named 11.cbz / 11.pdf</pre>' +
         '<p class="small">' + esc(t('msrc.howJson')) + '</p>' +
-        '<pre class="msrc-pre">{\n  "title": "Romance Dawn",          â† books\n  "number": "1", "date": "1997-07-22",\n  "summary": "â€¦", "genres": ["Adventure"], "tags": ["Pirates"],\n  "status": "ongoing", "type": "manga", "year": 1997, "rating": 9.1,\n  "writer": "Eiichiro Oda", "readingDirection": "rtl", "cover": "op.jpg"\n}</pre>' +
+        '<pre class="msrc-pre">{\n  "title": "Romance Dawn",          ← books\n  "number": "1", "date": "1997-07-22",\n  "summary": "…", "genres": ["Adventure"], "tags": ["Pirates"],\n  "status": "ongoing", "type": "manga", "year": 1997, "rating": 9.1,\n  "writer": "Eiichiro Oda", "readingDirection": "rtl", "cover": "op.jpg"\n}</pre>' +
         '<p class="small muted">' + esc(t('msrc.howOrder')) + '</p></details>';
       var online = '<div class="lib-list msrc-grid">' + d.online.map(function (p) {
         var key = p.needsKey ? (p.keySet ? '<span class="badge badge--ok">' + esc(t('cfg.keySet')) + '</span>' : '<span class="badge badge--danger">' + esc(t('meta.needsKey')) + '</span>')
@@ -2898,16 +3062,16 @@
 
   /* ================= PROCESSES (admins) ================= */
   var procTimer = null;
-  function fmtBytes(b) { return b ? fmtSize(b) : 'â€”'; }
+  function fmtBytes(b) { return b ? fmtSize(b) : '—'; }
   function fmtDuration(fromIso) {
-    if (!fromIso) return 'â€”';
+    if (!fromIso) return '—';
     var s = Math.max(0, Math.floor((Date.now() - Date.parse(fromIso)) / 1000));
     var d = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60);
     return d ? d + 'd ' + h + 'h' : h ? h + 'h ' + m + 'm' : m ? m + 'm ' + (s % 60) + 's' : s + 's';
   }
-  function fmtCpu(ms) { return ms == null ? 'â€”' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
+  function fmtCpu(ms) { return ms == null ? '—' : ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'; }
   /* A process card is described as data and drawn by procCard:
-   *   { id, icon, title, badge: { text, cls }, wide, parts: [html, â€¦] }  (null/empty parts are skipped)
+   *   { id, icon, title, badge: { text, cls }, wide, parts: [html, …] }  (null/empty parts are skipped)
    * The helpers below make the usual parts. To show a new process, write a function that takes the
    * /api/processes answer and returns such a card (or null to hide it), and add it to PROC_SECTIONS. */
   function facts(rows) {
@@ -2981,7 +3145,7 @@
         sc.mode === 'inline' ? proc.notice(t('proc.mode.inline')) : '',
         sc.lastError && sc.state !== 'running' ? proc.notice(t('proc.lastError') + ': ' + sc.lastError, 'error') : '',
         facts([
-          ['proc.uptime', esc(sc.state === 'running' ? fmtDuration(sc.startedAt) : 'â€”')],
+          ['proc.uptime', esc(sc.state === 'running' ? fmtDuration(sc.startedAt) : '—')],
           sc.mode === 'process' ? ['proc.processes', esc(sc.processes)] : null,
           ['proc.concurrency', esc(sc.concurrency)],
           sc.mode === 'process' ? ['proc.priority', esc(t('proc.priorityLow'))] : null,
@@ -2995,9 +3159,12 @@
           return [esc(w.pid), esc(fmtBytes(s2.rss)), esc(fmtCpu(s2.cpuMs)), '<span class="badge' + (w.busy ? ' badge--primary' : '') + '">' + esc(t(w.busy ? 'proc.busy' : 'proc.idle')) + '</span>'];
         })) : sc.idle ? proc.muted(t('proc.onDemand')) : '',
         proc.sub(t('proc.current')),
-        cur && cur.progress ? '<p class="proc-current"><strong>' + esc(cur.name) + '</strong></p>' + scanProgressBar(cur.progress, cur)
-          : cur ? '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(cur.name) + '</strong> Â· ' + esc(scanModeLabel(cur)) + ' Â· ' +
-              esc(cur.toAnalyze ? t('proc.progress', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0, total: cur.toAnalyze }) : t('manage.scanningNow', { seen: cur.filesSeen || 0, analyzed: cur.analyzed || 0 })) + '</span></p>'
+        // (several libraries at once: one per scan process)
+        (sc.running || (cur ? [cur] : [])).length ? (sc.running || [cur]).map(function (c) {
+          return c.progress ? '<p class="proc-current"><strong>' + esc(c.name) + '</strong></p>' + scanProgressBar(c.progress, c)
+            : '<p class="notice notice--info"><span class="spinner spinner--sm"></span><span><strong>' + esc(c.name) + '</strong> · ' + esc(scanModeLabel(c)) + ' · ' +
+              esc(c.toAnalyze ? t('proc.progress', { seen: c.filesSeen || 0, analyzed: c.analyzed || 0, total: c.toAnalyze }) : t('manage.scanningNow', { seen: c.filesSeen || 0, analyzed: c.analyzed || 0 })) + '</span></p>';
+        }).join('')
           : proc.muted(t('proc.idle')),
         proc.sub(t('proc.queue')),
         sc.queue.length ? '<ol class="proc-queue">' + sc.queue.map(function (q) { return '<li>' + esc(q.name) + ' <span class="muted small">(' + esc(scanModeLabel(q)) + ')</span></li>'; }).join('') + '</ol>'
@@ -3097,10 +3264,10 @@
         cells: [
           '<strong>' + esc(t('proc.cache.' + c.kind)) + '</strong>',
           c.pid ? esc(c.pid) : '<span class="muted">' + esc(t(c.mode === 'inline' ? 'proc.cache.inline' : 'proc.cache.closed')) + '</span>',
-          // (what it's doing besides answering â€” search index size, covers read ahead â€” in the same row)
-          esc(open ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' Â· ' + size : '') : 'â€”') + (under ? '<span class="proc-cell-note">' + esc(under) + '</span>' : ''),
+          // (what it's doing besides answering — search index size, covers read ahead — in the same row)
+          esc(open ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—') + (under ? '<span class="proc-cell-note">' + esc(under) + '</span>' : ''),
           esc(open ? t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 }) : t('proc.cache.requests', { count: c.requests })),
-          esc(s.rss ? fmtBytes(s.rss) : 'â€”')
+          esc(s.rss ? fmtBytes(s.rss) : '—')
         ]
       };
     };
@@ -3169,7 +3336,7 @@
     }
   };
 
-  /* ================= TASKS (Processes â†’ Tasks) and LOGS (admins) ================= */
+  /* ================= TASKS (Processes → Tasks) and LOGS (admins) ================= */
   // Everything long-running as one list: running tasks with their progress and live output (the end of their
   // log file), and the ones that ended lately. Each task's log is on the Logs page.
   function procTabs(active, running) {
@@ -3184,13 +3351,13 @@
   var TASK_ICON = { scan: 'sync', metadata: 'download', files: 'folder_open', crawl: 'travel_explore', covers: 'collections', other: 'memory' };
   var TASK_BADGE = { running: 'badge--primary', done: 'badge--ok', failed: 'badge--danger', stopped: '' };
   function tasksState() { if (!cache.tasks) cache.tasks = { data: null, error: null, open: {}, output: {}, follow: true }; return cache.tasks; }
-  function fmtSpan(ms) { return ms == null ? 'â€”' : fmtTime(Math.max(0, ms)); }
+  function fmtSpan(ms) { return ms == null ? '—' : fmtTime(Math.max(0, ms)); }
   function taskProgressHtml(tk) {
     var p = tk.progress || {};
     var bar = { percent: p.percent != null ? p.percent : null, etaMs: p.etaMs != null ? p.etaMs : null, elapsedMs: Date.now() - Date.parse(tk.startedAt) };
     var detail = p.total ? t('proc.task.doneOf', { done: p.done || 0, total: p.total }) : p.done ? t('proc.task.done', { count: p.done }) : '';
-    if (p.detail) detail += (detail ? ' Â· ' : '') + p.detail;
-    if (p.errors) detail += (detail ? ' Â· ' : '') + t('proc.task.errors', { count: p.errors });
+    if (p.detail) detail += (detail ? ' · ' : '') + p.detail;
+    if (p.errors) detail += (detail ? ' · ' : '') + t('proc.task.errors', { count: p.errors });
     var phase = p.phase ? (t('proc.task.phase.' + p.phase) !== 'proc.task.phase.' + p.phase ? t('proc.task.phase.' + p.phase) : p.phase) : t('proc.task.working');
     return progressBar(bar, phase, detail) + requestsLine(p.requestsNow);
   }
@@ -3255,7 +3422,7 @@
     Array.prototype.forEach.call(document.querySelectorAll('.task-console__text'), function (pre) { pre.scrollTop = pre.scrollHeight; });
   }
 
-  // Logs page: every task's log file (kept Server settings â†’ logRetentionDays days), shown or downloaded
+  // Logs page: every task's log file (kept Server settings → logRetentionDays days), shown or downloaded
   function logsState() { if (!cache.logs) cache.logs = { data: null, error: null, kind: '', q: '', view: null }; return cache.logs; }
   function fmtLogSize(n) { return n < 1024 ? n + ' B' : fmtSize(n); }
   function logsList(st) {
@@ -3280,7 +3447,7 @@
     var item = st.data && st.data.logs.filter(function (l) { return l.name === name; })[0];
     return '<p><a href="#logs">' + icon('arrow_back') + esc(t('logs.back')) + '</a></p>' +
       '<section class="card card--wide"><div class="proc-card__head"><span class="lib-card__icon">' + icon('description') + '</span><div><h2 class="card__title">' + esc((item && item.title) || name) + '</h2>' +
-        '<span class="muted small">' + esc(name) + (v ? ' Â· ' + fmtLogSize(v.size) : '') + '</span></div></div>' +
+        '<span class="muted small">' + esc(name) + (v ? ' · ' + fmtLogSize(v.size) : '') + '</span></div></div>' +
         '<div class="lib-card__actions"><a class="btn btn--primary btn--pill" href="/api/logs/' + encodeURIComponent(name) + '?download=1" download="' + esc(name) + '">' + icon('download') + esc(t('logs.download')) + '</a></div>' +
         (v && v.error ? errorBanner(v.error) : '<pre class="task-console__text task-console__text--tall" tabindex="0">' + esc(v ? v.lines.join('\n') : t('common.loading')) + '</pre>') +
         (v && v.lines.length >= 2000 ? '<p class="muted small">' + esc(t('logs.lastLines', { count: 2000 })) + '</p>' : '') +
@@ -3558,7 +3725,7 @@
     return (l && l.defaults) || {};
   }
   function libraryLayoutOf(s) { return libraryDefaultsOf(s).bookLayout || 'tiles'; }
-  // "From AniList", "From the files (ComicInfo.xml)", "Your edit", â€¦ for a field of the work's Edit dialog
+  // "From AniList", "From the files (ComicInfo.xml)", "Your edit", … for a field of the work's Edit dialog
   function sourceHint(s, k) {
     var f = s.fieldSources && s.fieldSources[k];
     if (!f) return '';
@@ -3578,7 +3745,7 @@
       year: s.year ? String(s.year) : '', genres: (s.genres || []).join(', '), tags: (s.tags || []).join(', '),
       altTitles: (s.altTitles || []).join('\n'), authors: names.join(', '), links: (s.links || []).map(function (l) { return l.url; }).join('\n')
     };
-    var withHint = function (k, help) { var h = sourceHint(s, k); return [h, help].filter(Boolean).join(' Â· '); };
+    var withHint = function (k, help) { var h = sourceHint(s, k); return [h, help].filter(Boolean).join(' · '); };
     var autoLabel = function (shown) { return t('edit.auto') + (shown ? ' (' + shown + ')' : ''); };
     openForm({
       title: t('edit.seriesTitle'),
@@ -3641,7 +3808,7 @@
     return c.kind === 'auto' ? t('cover.auto') : c.kind === 'file' ? t('cover.firstPage')
       : c.kind === 'downloaded' ? (c.provider ? t('cover.downloaded', { name: providerName(c.provider) }) : t('cover.downloadedPlain'))
       : c.kind === 'online' ? (/^web:/.test(c.provider) ? c.provider.slice(4) : providerName(c.provider))
-      : c.kind === 'local' ? c.sourceName + ' Â· ' + c.rel : c.kind === 'custom' ? t('cover.custom') : t('cover.uploaded');
+      : c.kind === 'local' ? c.sourceName + ' · ' + c.rel : c.kind === 'custom' ? t('cover.custom') : t('cover.uploaded');
   }
   function renderCoverPicker(s, list, selected) {
     var box = $('#cover-picker');
@@ -3806,8 +3973,8 @@
           return '<li class="identify__item">' +
             '<div class="identify__cover">' + (x.cover ? '<img alt="" loading="lazy" referrerpolicy="no-referrer" src="' + esc(x.cover) + '" />' : '') + '</div>' +
             '<div class="identify__text"><strong>' + esc(x.title) + '</strong>' +
-              '<span class="muted small">' + esc([x.providerName, x.type ? t('type.' + x.type) : '', x.year || ''].filter(Boolean).join(' Â· ')) + '</span>' +
-              (x.altTitles && x.altTitles.length ? '<span class="muted small identify__alt">' + esc(x.altTitles.slice(0, 3).join(' Â· ')) + '</span>' : '') +
+              '<span class="muted small">' + esc([x.providerName, x.type ? t('type.' + x.type) : '', x.year || ''].filter(Boolean).join(' · ')) + '</span>' +
+              (x.altTitles && x.altTitles.length ? '<span class="muted small identify__alt">' + esc(x.altTitles.slice(0, 3).join(' · ')) + '</span>' : '') +
               (x.url ? '<a class="small" href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + esc(t('meta.openSite')) + '</a>' : '') +
             '</div>' +
             '<button type="button" class="btn btn--outline btn--small identify__pick" data-identify="' + esc(x.provider) + '" data-mid="' + esc(x.id) + '" data-title="' + esc(x.title) + '" aria-pressed="false">' + esc(t('meta.select')) + '</button>' +
@@ -4000,6 +4167,27 @@
       }
       // ---- External catalog ----
       case 'cat-more': btn.disabled = true; return fetchCatalog(true);
+      case 'cat-undo-apart': case 'cat-undo-dismiss':
+        btn.disabled = true;
+        return api('DELETE', '/api/catalog/corrections/' + (action === 'cat-undo-apart' ? 'apart?pair=' : 'dismissed?key=') + encodeURIComponent(btn.dataset.key)).then(function () { A().toast(t('cat.undone')); loadCatMerge(); }, fail);
+      case 'cat-more-filters': { var cs = catState(); cs.more = !cs.more; return A().renderPage(); }
+      case 'cat-view': {
+        var cv = catState(); cv.view = btn.dataset.view === 'list' ? 'list' : 'grid';
+        try { localStorage.setItem('thoth.catView', cv.view); } catch (e) { /* no storage */ }
+        return A().renderPage();
+      }
+      case 'cat-clear-filters': { var cf = catState(); CAT_ADV.forEach(function (k) { cf[k] = ''; }); A().renderPage(); return fetchCatalog(); }
+      case 'cat-clear-catalog': {
+        var typed = prompt(t('cat.clearConfirm'));
+        if (typed === null) return;
+        if (typed.trim() !== 'CLEAR') return A().toast(t('cat.clearTypeIt'));
+        btn.disabled = true;
+        return api('POST', '/api/catalog/clear', { confirm: 'CLEAR' }).then(function (r) {
+          A().toast(t('cat.cleared', { count: r.removed }));
+          cache.catalog = null; cache.catWork = null; catSourcesState().data = null;
+          A().renderPage();
+        }, function (e) { btn.disabled = false; A().toast(A().errMsg(e)); });
+      }
       case 'cat-all-chapters': {
         var cw = catWorkState(btn.dataset.work);
         if (cw) { cw.showAll = cw.showAll || {}; cw.showAll[btn.dataset.key] = true; A().renderPage(); }
@@ -4271,7 +4459,7 @@
       var btn = e.target.closest('[data-lib]');
       if (btn && !btn.disabled && $('#content').contains(btn)) { e.preventDefault(); handleAction(btn); }
     });
-    // Broken cover image â†’ show the placeholder underneath
+    // Broken cover image → show the placeholder underneath
     document.addEventListener('error', function (e) {
       if (e.target.classList && e.target.classList.contains('cover__img')) e.target.classList.add('is-broken');
     }, true);
