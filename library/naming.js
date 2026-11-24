@@ -62,12 +62,27 @@ const NOISE = [
   new RegExp(`\\b\\d{1,2}(?:st|nd|rd|th)?\\s+(?:de\\s+)?(?:${MONTHS})\\.?,?\\s+(?:de\\s+)?\\d{4}\\b`, 'gi'), // 4 Jan 2025
   /\b\d{4}[-/.]\d{1,2}[-/.]\d{1,2}(?:[ T]\d{1,2}:\d{2}(?::\d{2})?)?\b/g,                         // 2025-01-04
   /\b\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}\b/g,                                                       // 04/01/2025
-  /\b(?:\d+|an?|one)\s+(?:sec(?:ond)?|min(?:ute)?|hour|hr|day|week|month|year)s?\s+ago\b/gi,     // 3 days ago
+  /\b(?:\d+|an?|one)\s*(?:s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|wks?|weeks?|mo|mos|months?|y|yrs?|years?)\s+ago\b/gi, // 3 days ago, 6h ago
   /\bhace\s+\d+\s+\w+/gi, /\bil y a\s+\d+\s+\w+/gi, /\bvor\s+\d+\s+\w+/gi, /\b(?:yesterday|today|just now)\b/gi,
   /\b\d+(?:[.,]\d+)*\s*[kmb]?\s*(?:views?|reads?|likes?|comments?|vistas|lecturas|vues|aufrufe)\b/gi, // 1.2k views
   /(?:👁|❤|♥|★)\s*\d+(?:[.,]\d+)*\s*[kmb]?/g,
+  // Labels of reading buttons and links shown with (or glued to) a chapter's name: "Start ReadingChapter 1"
+  /(?:start|continue|begin|keep)\s*reading|\bread\s*(?:first|last|latest|now|more|online)(?=\b|chapter|episode|ch\b|ep\b|[A-Z])|\b(?:first|latest|last|newest|new)\s+(?:chapter|episode)\b(?!\s*\.?\s*\d)|\bcoming\s+soon\b|\bnow\s+free\b|\bfree\s+now\b|\bearly\s+access\b/gi,
   /\b(?:new|hot|free|locked|coins?|premium|up|updated|nuevo|neu|nouveau)\b\s*$/gi                 // badges at the end
 ];
+// At the end of a name, when the chapter's number comes before it: an age without "ago" ("9 Months", "2 wks",
+// "a month") or a date without a year ("Jan 4") — what the site shows of when the chapter was posted
+const TRAILING_AGE = new RegExp(`(?:^|[\\s\\-–—|·,])((?:\\d+|an?|one)\\s*(?:s|secs?|seconds?|m|mins?|minutes?|h|hrs?|hours?|d|days?|w|wks?|weeks?|mo|mos|months?|y|yrs?|years?)|(?:${MONTHS})\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?|\\d{1,2}(?:st|nd|rd|th)?\\s+(?:${MONTHS})\\.?)\\s*$`, 'i');
+function dropTrailingAge(s) {
+  for (let i = 0; i < 3; i++) {
+    const m = TRAILING_AGE.exec(s);
+    if (!m) break;
+    const before = s.slice(0, m.index + (m[0].length - m[1].length - (m[0].match(/\s*$/) || [''])[0].length));
+    if (!/\d/.test(before)) break; // (the number left must be the chapter's: "3 Days" alone is a name)
+    s = before.replace(/[\s\-–—|·,]+$/, '').trim();
+  }
+  return s;
+}
 const WORD = /(?<![a-z])(?:chapter|chap|ch|c|episode|ep|e|issue|iss|cap(?:[ií]tulo)?|chapitre|kapitel|#)\.?\s*(\d+(?:[.,x]\d+)?)(?![\d])/i;
 const SEP = /^[\s:.,;|\-–—~·•()[\]]+|[\s:.,;|\-–—~·•([]+$/g;
 const wordFor = s => (/^(?:episode|ep|e)\b/i.test(s) ? 'Episode' : /^(?:issue|iss)\b/i.test(s) ? 'Issue' : 'Chapter');
@@ -81,9 +96,11 @@ const leadingNumber = (s, n) => new RegExp(`^(?:(?:chapter|chap|ch|c|episode|ep|
 //   "The Beginning" (the site gave number 1)           → Chapter 1 - The Beginning
 // A name without any number (and none given) is only cleaned.
 function chapterTitle(raw, givenNumber) {
-  let s = String(raw || '').replace(/\s+/g, ' ').trim();
+  // (a label glued to the chapter word gets its space back: "ReadingChapter 1" → "Reading Chapter 1")
+  let s = String(raw || '').replace(/([a-z])(?=(?:Chapter|Episode|Ch\.|Ep\.)\s*\d)/g, '$1 ').replace(/\s+/g, ' ').trim();
   for (const re of NOISE) s = s.replace(re, ' ');
-  s = s.replace(/\s+/g, ' ').replace(SEP, '').trim();
+  s = dropTrailingAge(s.replace(/\s+/g, ' ').replace(SEP, '').trim());
+  s = s.replace(SEP, '').trim();
   let v = null;
   const vol = /\b(?:volume|vol|v)\.?\s*(\d+)\b/i.exec(s);
   if (vol) { v = cleanNumber(vol[1]); s = (s.slice(0, vol.index) + ' ' + s.slice(vol.index + vol[0].length)).replace(/\s+/g, ' ').replace(SEP, '').trim(); }

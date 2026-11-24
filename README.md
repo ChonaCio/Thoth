@@ -579,7 +579,8 @@ sites added as **sources**, with its metadata and chapter list.
   doesn't try to get around it. Only crawl sites whose terms allow it.
 - An interrupted full crawl continues where it stopped; a complete full crawl drops works a site no longer lists.
 - **Chapter names are standardized** the way File management renames files: *Chapter 44 - The End*. Dates,
-  *3 days ago*, view counts and badges next to the name are dropped, and the number said twice (*Chapter 44 - 44*,
+  *3 days ago* (also without "ago" at the end: *9 Months*, *6h*, *Jan 4*), view counts, badges and reading-button labels
+  glued to the name (*Start Reading*, *Read First*, *Now Free*) are dropped, and the number said twice (*Chapter 44 - 44*,
   *Ch. 44 - Ch. 44*) once; the name as the site shows it is kept. Chapter lists that show only the last chapters
   until *Show more* / *Load all* is pressed, or that come in pages, are followed to the end (other-site and Madara
   sources). Covers and alternative titles also come from the page's standard tags (Open Graph, schema.org) and

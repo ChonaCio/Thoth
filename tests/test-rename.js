@@ -56,7 +56,10 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   // The same rules for chapter names read on sites (external catalog)
   const { chapterTitle } = require(path.join(APP, 'library', 'naming.js'));
   const siteNames = [['Chapter 44 - 44', 'Chapter 44'], ['Chapter 44 - Ch. 44', 'Chapter 44'], ['Ch. 044 - Ch. 44  Jan 4, 2025  1.2k views', 'Chapter 44'], ['Vol.2 Ch.15 - Escape 3 days ago', 'Chapter 15 - Escape'],
-    ['Episode 7 · 12.3k views', 'Episode 7'], ['Solo Leveling Chapter 12', 'Chapter 12'], ['12 - the end', 'Chapter 12 - The End'], ['Chapter 10.5 NEW', 'Chapter 10.5'], ['Chapter 44: Chapter 44 The End', 'Chapter 44 - The End'], ['Prologue', 'Prologue']];
+    ['Episode 7 · 12.3k views', 'Episode 7'], ['Solo Leveling Chapter 12', 'Chapter 12'], ['12 - the end', 'Chapter 12 - The End'], ['Chapter 10.5 NEW', 'Chapter 10.5'], ['Chapter 44: Chapter 44 The End', 'Chapter 44 - The End'], ['Prologue', 'Prologue'],
+    // when it was posted, without "ago", and reading-button labels glued to the name
+    ['Chapter 18 - 9 Months', 'Chapter 18'], ['Chapter 18 9 Months', 'Chapter 18'], ['Start ReadingChapter 1', 'Chapter 1'], ['Read FirstChapter 1', 'Chapter 1'], ['Chapter 164 6h ago Now Free', 'Chapter 164'],
+    ['Chapter 7 a month', 'Chapter 7'], ['Chapter 12 Jan 4', 'Chapter 12'], ['Chapter 10 - 100 Years Later', 'Chapter 10 - 100 Years Later'], ['Latest Chapter 9', 'Chapter 9']];
   const bad = siteNames.filter(([raw, want]) => chapterTitle(raw).name !== want).map(([raw]) => `${raw} → ${chapterTitle(raw).name}`);
   ok(!bad.length && chapterTitle('The Beginning', '1').name === 'Chapter 1 - The Beginning' && chapterTitle('Vol.2 Ch.15').v === '2', `chapter names from sites: dates, views and repeated numbers dropped${bad.length ? ' (' + bad.join('; ') + ')' : ''}`);
 

@@ -11,6 +11,7 @@ const store = require('../db');
 const cstore = require('./store');
 const tasks = require('../tasks');
 const { preferEnglish, parseTitle, EDITION_ORDER } = require('../titles');
+const { chapterTitle } = require('../naming');
 const { ADAPTERS, TYPES } = require('./adapters');
 const { publicUrl, UA } = require('./fetcher');
 const { normTitle, fromUrl } = require('../metadata/providers');
@@ -577,7 +578,9 @@ function detail(key) {
   const sources = it.sources.map(s => {
     const w = workByKey(s.key) || {};
     const ch = chaptersOf(s.key);
-    const chapters = (ch.chapters || []).slice().sort((a, b) => (parseFloat(b.n) || 0) - (parseFloat(a.n) || 0));
+    // (names cleaned again as shown: chapters crawled before the cleaning rules improved get them too)
+    const chapters = (ch.chapters || []).map(c => { const std = chapterTitle(c.raw || c.t, c.n); return Object.assign({}, c, { t: std.name, n: std.n != null ? std.n : c.n }); })
+      .sort((a, b) => (parseFloat(b.n) || 0) - (parseFloat(a.n) || 0));
     return Object.assign({}, s, { title: w.title, altTitles: w.altTitles || [], summary: w.summary || '', authors: w.authors || [], genres: w.genres || [], status: w.status || 'unknown',
       error: w.error || null, detailAt: w.detailAt || null, chapterList: chapters, partial: Boolean(ch.partial) });
   });
