@@ -854,6 +854,14 @@ body.is-reading { overflow: hidden; }
 .merge-row__what { overflow-wrap: anywhere; }
 .merge-found li { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; border-top: 1px solid var(--border); }
 .merge-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+/* A suggestion split into several merges: each work's merge number shows (hidden while it's one merge) */
+.merge-row__part { flex: none; width: auto; min-width: 7.5em; }
+.merge-group:not(.is-split) .merge-row__part { display: none; }
+.merge-group.is-split .merge-row { border-left: 3px solid var(--border); }
+.merge-group.is-split .merge-row.is-target { border-left-color: var(--primary); }
+.merge-row.is-out { opacity: .55; }
+.merge-group > .merge-list { align-self: stretch; }
+.merge-actions [data-lib="merge-split"] svg { width: 18px; height: 18px; fill: currentColor; }
 
 /* ---- External catalog ---- */
 .cat-card .cover { position: relative; }
@@ -1081,6 +1089,22 @@ body.is-reading { overflow: hidden; }
 .wz-click__loads .field__help { flex-basis: 100%; }
 .wz-preview__note { display: flex; gap: 8px; align-items: flex-start; margin: 0 12px 8px; padding: 8px 10px; border-radius: 8px; background: var(--surface-2, rgba(127,127,127,.12)); color: var(--text); }
 .wz-preview__note svg { flex: none; width: 18px; height: 18px; margin-top: 1px; }
+
+/* ================= Selecting works to merge (Library page, external catalog) ================= */
+.is-selecting .media-card, .is-selecting .cat-row { position: relative; cursor: pointer; }
+.is-selecting .media-card__link, .is-selecting .cat-row a { pointer-events: none; } /* (a click picks the card) */
+.sel-check { position: absolute; top: 8px; left: 8px; z-index: 3; width: 26px; height: 26px; border-radius: 50%; display: grid; place-items: center;
+  background: rgba(0, 0, 0, .45); border: 2px solid #fff; color: transparent; box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+.sel-check svg { width: 16px; height: 16px; fill: currentColor; }
+.is-selected .sel-check { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
+.is-selecting .is-selected .cover, .is-selecting .cat-row.is-selected { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: 8px; }
+.is-selecting .cat-row .sel-check { position: static; flex: none; align-self: center; margin-right: 4px; }
+.select-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
+  width: min(720px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); }
+.select-bar[hidden] { display: none; }
+.select-bar__count { font-weight: 600; }
+.select-bar__gap { flex: 1; }
+.select-bar svg { width: 18px; height: 18px; fill: currentColor; }
 
 /* ================= Downloads ================= */
 .dl-job.is-paused .lib-card__head, .dl-job.is-paused > p { opacity: .6; }

@@ -751,7 +751,7 @@ function makeItem(primary, members, groupId) {
   const title = preferEnglish([primary.title].concat(members.map(m => m.title), primary.altTitles || [], ...members.map(m => m.altTitles || []))) || primary.title || '';
   const genres = terms.unify(...members.map(m => (m.genres || []).concat(m.tags || [])));
   return {
-    key: groupId ? 'g:' + groupId : primary.key, groupId, title, altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== title))].slice(0, 20),
+    key: groupId ? 'g:' + groupId : primary.key, groupId, primaryKey: primary.key, title, altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== title))].slice(0, 20),
     editions: primary.editions || [], edition: editionKey(primary.editions),
     cover: Boolean(members.find(m => m.cover)), coverKey: (members.find(m => m.key === primary.key && m.cover) || members.find(m => m.cover) || primary).key,
     summary: primary.summary || (members.find(m => m.summary) || {}).summary || '', authors: [...new Set(members.flatMap(m => m.authors || []))].slice(0, 12), genres,
@@ -977,6 +977,26 @@ function merge(keys, primary, { auto = null } = {}) {
   catalogVersion++;
   return { groupId: id, keys: groups[id].keys };
 }
+// Several merges made out of one suggestion (it grouped two works or more that are different): each group merged,
+// and the groups kept apart from each other (never suggested or merged automatically together again)
+function mergePlan(merges) {
+  const plan = (Array.isArray(merges) ? merges : []).slice(0, 50).map(x => ({ keys: [...new Set(((x && x.keys) || []).filter(k => typeof k === 'string'))], primary: x && x.primary }));
+  const all = new Set(allWorks().map(w => w.key)), seen = new Set();
+  if (!plan.length) throw err(400, 'invalid');
+  for (const x of plan) {
+    if (x.keys.length < 2 || x.keys.some(k => !all.has(k) || seen.has(k))) throw err(400, 'invalid'); // (a work in one merge only)
+    x.keys.forEach(k => seen.add(k));
+  }
+  const groups = plan.map(x => merge(x.keys, x.keys.includes(x.primary) ? x.primary : x.keys[0]));
+  if (plan.length > 1) {
+    const s = apartSet();
+    for (let i = 0; i < plan.length; i++) for (let j = i + 1; j < plan.length; j++) for (const a of plan[i].keys) for (const b of plan[j].keys) s.add(pairKey(a, b));
+    db.catalogMerges.apart = [...s].slice(-20000);
+    store.saveLibrary();
+    catalogVersion++;
+  }
+  return { groups };
+}
 // Separating a whole group, or taking one work out of it ("split"); either way they stay apart from then on
 function unmerge(groupId) {
   const g = db.catalogMerges.groups[groupId];
@@ -1182,4 +1202,4 @@ require('../../config').onChange(changed => {
 });
 
 module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, siteTemplates, saveSiteTemplate, removeSiteTemplate, exportSiteTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
-  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
+  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, mergeSuggestions, merge, mergePlan, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

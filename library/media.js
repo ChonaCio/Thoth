@@ -6,7 +6,8 @@ const path = require('path');
 const store = require('./db');
 const { cacheService } = require('./cache/client');
 
-const pages = cacheService('pages', { label: 'Pages', idleMs: 10 * 60 * 1000 });
+// (pages kept on disk too: their keys carry the book and its file's date, so no fingerprint is needed)
+const pages = cacheService('pages', { label: 'Pages', idleMs: 10 * 60 * 1000, persist: { save: () => ({}), restore: () => ({}) } });
 const covers = cacheService('covers', { label: 'Covers', idleMs: 10 * 60 * 1000 });
 const THUMB_DIR = path.join(store.DATA_DIR, 'cache', 'thumbs');
 

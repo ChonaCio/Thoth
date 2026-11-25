@@ -314,7 +314,7 @@ async function runScan(job) {
     const byRel = new Map(listing.files.map(f => [f.rel, Object.assign({}, f, analysis.has(f.rel) ? Object.assign({ changed: true }, analysis.get(f.rel)) : {})]));
     const now = new Date().toISOString();
     const seenBooks = new Set(), seenSeries = new Set();
-    let added = 0, updated = 0;
+    let added = 0, updated = 0, anyChange = false; // (anyChange: a work or book changed, appeared or went)
 
     // Group book files by folder → series. Files directly in the library folder (and in the optional
     // one-shots folder) each become their own work instead.
@@ -371,6 +371,7 @@ async function runScan(job) {
       }
 
       if (seriesChanged) {
+        anyChange = true;
         // Series-level metadata from the first book's ComicInfo (admin overrides still win)
         const list = files.map(rel => store.db.books[store.stableId(libraryId, 'book', rel)]).filter(Boolean);
         const first = list.find(b => b.meta && Object.keys(b.meta).length);
@@ -393,12 +394,15 @@ async function runScan(job) {
       if (b.libraryId === libraryId && !seenBooks.has(b.id)) { delete store.db.books[b.id]; removed++; }
     }
     for (const s of Object.values(store.db.series)) {
-      if (s.libraryId === libraryId && !seenSeries.has(s.id)) { metadata.forgetSeries(s); delete store.db.series[s.id]; }
+      if (s.libraryId === libraryId && !seenSeries.has(s.id)) { metadata.forgetSeries(s); delete store.db.series[s.id]; anyChange = true; }
     }
     for (const c of Object.values(store.db.collections)) c.seriesIds = c.seriesIds.filter(id => store.db.series[id]);
     for (const r of Object.values(store.db.readlists)) r.bookIds = r.bookIds.filter(id => store.db.books[id]);
+    if (added || updated || removed) anyChange = true;
 
-    store.reindex();
+    // (a scan that found nothing new leaves the data's generation as it was: answers cached for it — also the
+    // ones saved to disk and restored after a restart — stay good)
+    if (anyChange) store.reindex();
     const cfg = config.get();
     if (listing.index) saveIndex(libraryId, listing.index); // the next quick scan starts from here
     const ls = listing.stats || {};
@@ -414,7 +418,7 @@ async function runScan(job) {
       failedBooks: Object.values(store.db.books).filter(b => b.libraryId === libraryId && b.error).length
     };
     delete lib.scanError;
-    store.saveLibrary();
+    store.saveLibrary(anyChange ? undefined : { quiet: true });
     console.log(`[library] ${job.mode} scan of "${lib.name}" (${job.reason || 'manual'}): ${seenSeries.size} series, ${seenBooks.size} books (+${added} new, ${updated} changed, ${removed} removed; read ${toRead.length} files` +
       (job.mode === 'quick' && ls.quick ? `; ${ls.dirsReused} of ${ls.dirs} folders unchanged` : '') + `) in ${Date.now() - started} ms`);
     // Online metadata for works that don't have it yet (in the background, if the library fetches it automatically)

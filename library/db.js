@@ -60,6 +60,8 @@ const seriesMemo = new WeakMap(), bookMemo = new WeakMap(), viewMemo = new WeakM
 const seriesVersion = new WeakMap();
 const touch = () => { gen++; version++; };
 const saveLibrary = (scope) => {
+  // { quiet: true }: saved without a new version (only something no view shows changed: a scan's report)
+  if (scope && scope.quiet) return scheduleSave('library');
   if (scope && scope.series) for (const s of [].concat(scope.series)) seriesVersion.set(s, (seriesVersion.get(s) || 0) + 1);
   else gen++;
   version++;
@@ -73,6 +75,15 @@ function memoGet(map, key, deps) {
   return c.v;
 }
 function memoSet(map, key, deps, v) { map.set(key, { gen, deps, v }); return v; }
+// A fingerprint of the data as it is now (the library, reading progress, settings and users): cached answers
+// saved to disk (cache snapshots) are only taken back while it's the same — the generation counters above start
+// again at 0 with every server start, so they can't tell.
+function dataSig() {
+  const h = crypto.createHash('sha1');
+  h.update(JSON.stringify(db)); h.update('\0'); h.update(JSON.stringify(progress));
+  for (const f of ['config.json', 'users.json']) { h.update('\0'); try { h.update(fs.readFileSync(path.join(DATA_DIR, f))); } catch { /* none yet */ } }
+  return h.digest('hex');
+}
 // Reading progress has its own version (cached responses that show progress depend on it)
 let progressVer = 0;
 const saveProgress = () => { progressVer++; scheduleSave('progress'); };
@@ -444,7 +455,7 @@ function coverFromMetadata(s) {
 
 module.exports = {
   titleKey, workOwnerId,
-  DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex, touch, generation: () => version, progressVersion: () => progressVer,
+  DATA_DIR, db, progress, saveLibrary, saveProgress, flushAll, reindex, dataSig, touch, generation: () => version, progressVersion: () => progressVer,
   booksOf: seriesId => booksBySeries.get(seriesId) || [],
   newId, stableId, collator, seriesMeta, bookMeta, compareBooks, EDITIONS, splitEdition,
   userKey, canAccessLibrary, accessibleLibraries, progressOf, setProgress, clearProgress, removeUser,

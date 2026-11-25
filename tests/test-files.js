@@ -192,6 +192,23 @@ const scanned = async id => until(async () => { const l = (await call('GET', '/a
   ok(j.moved === 1 && titled.title === 'Attack on Titan' && titled.altTitles.includes('Shingeki no Kyojin') && titled.altTitles.includes('AoT') && titled.altTitles.filter(x => x === 'Shingeki no Kyojin').length === 1,
     `merging: the other work's titles become alternative titles, and the English title is kept as the title (${titled.title}; ${titled.altTitles.join(', ')})`);
 
+  // One suggestion that's really two works (two sites each): two merges from it, kept apart afterwards
+  book(path.join(A, 'Echo', 'Chapter 1.cbz')); book(path.join(B, 'Echo', 'Chapter 2.cbz'));
+  book(path.join(A, 'Echo Two', 'Chapter 1.cbz')); book(path.join(B, 'Echo Two', 'Chapter 3.cbz'));
+  await call('POST', `/api/libraries/${LA}/scan`, {}); await call('POST', `/api/libraries/${LB}/scan`, {});
+  const echoes = await until(async () => { const w = (await call('GET', '/api/files/works?q=echo')).data.works; return w.length === 4 && w; });
+  for (const w of echoes.filter(x => /Two/.test(x.path))) await call('PATCH', `/api/series/${w.id}`, { altTitles: ['Echo'] });
+  const eg = await until(async () => (await call('GET', '/api/files/merge-suggestions')).data.groups.find(g => g.works.filter(w => /Echo/.test(w.path)).length === 4));
+  ok(eg, 'four works suggested as one (two of them share a title with the other two)');
+  const ew = (lib, p) => echoes.find(w => w.libraryId === lib && w.path === p).id;
+  ok((await call('POST', '/api/files/merge-plan', { merges: [{ target: ew(LA, 'Echo'), sources: [ew(LB, 'Echo')] }, { target: ew(LA, 'Echo'), sources: [ew(LB, 'Echo Two')] }] })).status === 400, 'a plan can’t use a work in two merges');
+  const pl = (await call('POST', '/api/files/merge-plan?wait=1', { merges: [{ target: ew(LA, 'Echo'), sources: [ew(LB, 'Echo')] }, { target: ew(LA, 'Echo Two'), sources: [ew(LB, 'Echo Two')] }], apart: true })).data;
+  ok(pl.jobs.length === 2 && pl.jobs.every(x => x.status === 'done' && x.moved === 1) && fs.readdirSync(path.join(A, 'Echo')).length === 2 && fs.readdirSync(path.join(A, 'Echo Two')).length === 2,
+    'split into two merges: each pair merged into its own kept work');
+  await wait(500);
+  ok(!(await call('GET', '/api/files/merge-suggestions')).data.groups.some(g => g.works.some(w => w.id === ew(LA, 'Echo')) && g.works.some(w => w.id === ew(LA, 'Echo Two'))),
+    'the two merged works are kept apart: not suggested together again');
+
   // Versions share the work's title and metadata; only their chapters differ
   book(path.join(A, 'Berserk', 'Chapter 1.cbz')); book(path.join(A, 'Berserk', 'Chapter 2.cbz')); book(path.join(A, 'Berserk (Colored)', 'Chapter 1.cbz'));
   await call('POST', `/api/libraries/${LA}/scan`, {});

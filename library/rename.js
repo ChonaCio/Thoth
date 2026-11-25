@@ -590,6 +590,10 @@ function mergeSuggestions({ library = 'all', limit = 200 } = {}) {
   const parent = new Map(list.map(s => [s.id, s.id]));
   const find = id => { while (parent.get(id) !== id) { parent.set(id, parent.get(parent.get(id))); id = parent.get(id); } return id; };
   const why = new Map(); // root → { reason, detail }
+  // Works kept apart (merged separately from one suggestion): never put in the same suggestion again
+  const apart = new Set((db.settings && db.settings.mergeApart) || []);
+  const members = new Map(list.map(s => [s.id, [s.id]])); // root → its works
+  const separated = (ra, rb) => apart.size && members.get(ra).some(x => members.get(rb).some(y => apart.has(x < y ? x + '|' + y : y + '|' + x)));
   const keys = new Map(); // `${reason}\0${key}` → [series ids]
   const add = (reason, key, id, detail) => { if (!key) return; const k = reason + '\0' + key; if (!keys.has(k)) keys.set(k, { ids: [], detail }); const e = keys.get(k); if (!e.ids.includes(id)) e.ids.push(id); };
   for (const s of list) {
@@ -605,8 +609,9 @@ function mergeSuggestions({ library = 'all', limit = 200 } = {}) {
       const a = e.ids[0], b = e.ids[i];
       if (meta.get(a).edition !== meta.get(b).edition) continue; // versions of one work, not duplicates
       const ra = find(a), rb = find(b);
+      if (ra !== rb && separated(ra, rb)) continue;
       const best = [why.get(ra), why.get(rb), { reason, detail: e.detail }].filter(Boolean).sort((x, y) => REASONS.indexOf(x.reason) - REASONS.indexOf(y.reason))[0];
-      if (ra !== rb) parent.set(rb, ra);
+      if (ra !== rb) { parent.set(rb, ra); members.set(ra, members.get(ra).concat(members.get(rb))); }
       why.set(find(a), best);
     }
   }
@@ -628,6 +633,13 @@ function mergeSuggestions({ library = 'all', limit = 200 } = {}) {
   }
   out.sort((a, b) => REASONS.indexOf(a.reason) - REASONS.indexOf(b.reason) || store.collator.compare(a.works[0].title, b.works[0].title));
   return { total: out.length, groups: out.slice(0, limit) };
+}
+// Works merged separately out of one suggestion (each merge's kept work): kept apart from then on
+function keepApart(ids) {
+  const s = new Set((db.settings && db.settings.mergeApart) || []);
+  for (let i = 0; i < ids.length; i++) for (let j = i + 1; j < ids.length; j++) s.add(ids[i] < ids[j] ? ids[i] + '|' + ids[j] : ids[j] + '|' + ids[i]);
+  db.settings.mergeApart = [...s].slice(-20000);
+  store.saveLibrary();
 }
 function dismissSuggestion(key) {
   db.settings.mergeDismissed = [...new Set(((db.settings.mergeDismissed) || []).concat(String(key)))].slice(-5000);
@@ -669,4 +681,4 @@ const EXAMPLES = ['chapter-0.cbz', 'chapter-1.1.cbz', 'chapter-1x1.cbz', 'Chapte
   'chapter-83-the-end.cbz', 'Chapter 5 - Spider-Man.cbz', 'ch_12_the_end.cbz', 'vol.3.cbz', 'ep-04.pdf', 'Saga 001.cbz'];
 function examples() { return EXAMPLES.map(f => ({ from: f, to: proposedName(f) })); }
 
-module.exports = { sequenceGuesses, preview, enqueue, waitFor, getJob, proposedName, parse, info, examples, mergeSuggestions, dismissSuggestion };
+module.exports = { sequenceGuesses, preview, enqueue, waitFor, getJob, proposedName, parse, info, examples, mergeSuggestions, dismissSuggestion, keepApart };

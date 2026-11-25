@@ -8,11 +8,17 @@ const mod = require(`./${kind}`);
 
 const send = m => { try { process.send(m); } catch { /* the server is gone */ } };
 process.on('disconnect', () => process.exit(0));
+// (while what was saved is being taken back, other requests wait for it: the first request after a restart is
+// answered from it, not built again next to it)
+let restoring = null;
 process.on('message', async m => {
   if (!m || !m.reqId) return;
+  if (m.op === 'ping') return send({ type: 'result', reqId: m.reqId, result: true }); // (started ahead: what it saved is being taken back)
   const fn = mod.handlers[m.op];
   if (!fn) return send({ type: 'error', reqId: m.reqId, code: 'unknownOp', message: `Unknown ${kind} operation ${m.op}` });
-  try { send({ type: 'result', reqId: m.reqId, result: await fn(m.args || {}) }); }
+  if (m.op === 'restore') { restoring = Promise.resolve().then(() => fn(m.args || {})); restoring.catch(() => {}).then(() => { restoring = null; }); }
+  else if (restoring) await restoring.catch(() => {});
+  try { send({ type: 'result', reqId: m.reqId, result: m.op === 'restore' ? await restoring : await fn(m.args || {}) }); }
   catch (e) { send({ type: 'error', reqId: m.reqId, code: e.code || null, status: e.status || null, message: e.message }); }
 });
 const stats = () => {

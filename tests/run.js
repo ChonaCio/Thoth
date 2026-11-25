@@ -27,6 +27,7 @@ const SUITES = {
   files: { file: 'test-files.js', quick: true },       // file management: deleting duplicates, merging works, works cache, covers ahead
   filelocks: { file: 'test-file-locks.js', quick: true }, // file jobs: locked files, a disk that stops answering, job phases
   catalog: { file: 'test-catalog.js', quick: true },   // external catalog: crawling fake sites (several works at once), catalog, merges, covers
+  cachedisk: { file: 'test-cache-disk.js', quick: true }, // caches saved to disk and taken back after a restart (only while the data is the same)
   downloads: { file: 'test-downloads.js', quick: true }, // download jobs: chapters from fake sites into a library as CBZ, broken/premium copies, best quality
   render: { file: 'test-render.js', quick: true },
   crawlrules: { file: 'test-crawl-rules.js', quick: true }, // catalog rules: title keys, page charsets, robots.txt errors, 429 slow-down, metadata links     // pages built in a headless browser: the address guard; building (skipped without Chrome/Edge/Chromium)

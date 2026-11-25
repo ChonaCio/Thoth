@@ -463,6 +463,18 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   await call('DELETE', `/api/catalog/corrections/apart?pair=${encodeURIComponent(pair.pair)}`);
   corr = (await call('GET', '/api/catalog/corrections')).data;
   ok(!corr.apart.some(x => x.pair === pair.pair) && (await call('GET', '/api/catalog/merge-suggestions')).data.groups.some(x => x.works.some(w => w.title === 'Blue Moon')), 'undo: they can be suggested again');
+  {
+    // Several merges out of one suggestion: each group merged, the groups kept apart (then everything undone)
+    const all = (await call('GET', '/api/catalog?limit=50')).data.items.flatMap(it => it.sources.map(s => ({ key: s.key, title: it.title, src: s.sourceId })));
+    const k = (title, src) => all.find(x => x.title === title && x.src === src).key;
+    const before = new Set((await call('GET', '/api/catalog/corrections')).data.apart.map(x => x.pair));
+    ok((await call('POST', '/api/catalog/merge-plan', { merges: [{ keys: [k('Blue Moon', madara.id), k('Blue Moon', custom.id)] }, { keys: [k('Blue Moon', madara.id), k('Red Sun', madara.id)] }] })).status === 400, 'a plan can’t use a work in two merges');
+    const plan = (await call('POST', '/api/catalog/merge-plan', { merges: [{ keys: [k('Blue Moon', madara.id), k('Blue Moon', custom.id)], primary: k('Blue Moon', madara.id) }, { keys: [k('Red Sun', madara.id), k('Green Field', madara.id)] }] })).data;
+    const after = (await call('GET', '/api/catalog/corrections')).data.apart.map(x => x.pair).filter(p => !before.has(p));
+    ok(plan.groups.length === 2 && plan.groups.every(x => x.keys.length === 2) && after.length === 4, `two merges from one plan, and the groups kept apart from each other (${after.length} pairs)`);
+    for (const gr of plan.groups) await call('DELETE', `/api/catalog/merge/${gr.groupId}`);
+    for (const p of (await call('GET', '/api/catalog/corrections')).data.apart.map(x => x.pair).filter(x => !before.has(x))) await call('DELETE', `/api/catalog/corrections/apart?pair=${encodeURIComponent(p)}`);
+  }
 
   // ---- more filters, exports ----
   const tot = (await call('GET', '/api/catalog')).data.total;

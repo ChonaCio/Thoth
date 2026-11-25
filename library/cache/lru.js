@@ -25,6 +25,8 @@ function createLru({ maxBytes = 64 * 1024 * 1024, sizeOf = v => (v && v.buf ? v.
     },
     delete(key) { if (map.has(key)) { bytes -= sizeOf(map.get(key)); map.delete(key); } },
     clear() { map.clear(); bytes = 0; },
+    // Every entry, least recently used first (saving a snapshot; loading them in this order keeps the order)
+    entries: () => map.entries(),
     info: () => ({ entries: map.size, bytes, maxBytes, hits: stats.hits, misses: stats.misses, evicted: stats.evicted })
   };
 }

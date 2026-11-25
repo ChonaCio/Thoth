@@ -6,6 +6,7 @@
 //   query({ q, libs, limit }) → [id]                  (title first, then other matches)
 //   terms({ field, q, libs, limit }) → [{ name, count }] (field: genre | tag | person | type)
 const { createLru } = require('./lru');
+const persist = require('./persist');
 
 const FIELDS = { genre: 'genres', tag: 'tags', person: 'people', type: 'type' };
 const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
@@ -79,8 +80,28 @@ const handlers = {
       return out.slice(0, limit).map(({ name, count }) => ({ name, count }));
     });
   },
-  clear() { answers.clear(); return true; }
+  clear() { answers.clear(); return true; },
+  // The index's works saved with the data's fingerprint; taken back (as the current generation) when the data is
+  // the same, so searching after a restart doesn't wait for the index to be sent and built again
+  async save({ sig, gen }) {
+    if (state.gen == null || state.gen !== gen) return null; // (an index older than the data: not saved with its fingerprint)
+    const docs = state.docs.map(d => { const o = Object.assign({}, d); delete o._t; delete o._title; return o; });
+    const r = await persist.write('search', { sig }, [{ key: 'docs', data: JSON.stringify(docs) }]);
+    if (r) Object.assign(snap, { savedAt: new Date().toISOString(), saved: docs.length, bytes: r.bytes });
+    return r;
+  },
+  async restore({ sig, gen }) {
+    const s = await persist.read('search');
+    if (!s || !s.entries.length) return { restored: 0 };
+    if (s.header.sig !== sig) { snap.skipped = 'the library changed since'; return { restored: 0, changed: true }; }
+    if (state.gen != null) return { restored: 0 }; // (already loaded meanwhile)
+    const docs = JSON.parse(s.entries[0].data.toString('utf8'));
+    load({ gen, docs });
+    Object.assign(snap, { restored: docs.length, restoredAt: new Date().toISOString(), skipped: null });
+    return { restored: docs.length };
+  }
 };
-const info = () => Object.assign({ gen: state.gen, docs: state.docs.length, loadedAt: state.loadedAt,
+const snap = { savedAt: null, saved: 0, bytes: 0, restored: 0, restoredAt: null, skipped: null };
+const info = () => Object.assign({ snapshot: snap, gen: state.gen, docs: state.docs.length, loadedAt: state.loadedAt,
   terms: Object.fromEntries(Object.entries(state.terms).map(([f, l]) => [f, l.length])) }, answers.info(), stats, { hits: stats.answered, misses: stats.queries + stats.termLookups - stats.answered });
 module.exports = { handlers, info };

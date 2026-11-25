@@ -349,6 +349,15 @@ all accounts) and start it again to get the *Create the first user* screen back.
 copied into the container image, and never touched by updates. Sessions are HttpOnly cookies that last
 30 days. After 10 failed sign-ins from one address, sign-in is blocked for that address for 15 minutes.
 
+`data/cache/` holds caches that can always be rebuilt (deleting it is safe): work covers (`thumbs/`), catalog
+covers (`catalog-covers/`) and **snapshots** (`snapshots/`) of the caches that otherwise live in memory: Pages,
+Works, Search and Catalog works. Each saves what it keeps every 5 minutes while it's used, before its process closes
+when idle, and when the server stops; when it starts again it takes it back at once, so after a restart the first
+pages, lists and searches are answered without being built again. Saved answers are only used while the data is
+exactly what they were built from (a fingerprint of the library, reading progress, settings and users — and the
+catalog's crawled files); otherwise they're ignored and built again. The Processes page shows, per cache, what it
+saved and what it took back. (`THOTH_CACHE_SNAPSHOTS=0` turns snapshots off.)
+
 ## Run in a container (recommended for headless servers)
 
 Needs Docker with the Compose plugin. Docker restarts the container on server boot
@@ -500,9 +509,16 @@ sites added as **sources**, with its metadata and chapter list.
   asking**, after every crawl: the same MangaDex entry, or the same title *and* an author or another title in
   common (never two works of different kinds). Other likely matches (same title or alternative title) are
   **suggestions**, shown with each work's cover, other titles, authors, source and chapters to compare;
-  *Not the same* hides one. The tab also lists the **merged works** (marked *merged automatically* and why), where
-  one source's entry can be **split off** (also from the work's page) or the whole group separated; works split
-  apart are never merged automatically again. Both lists can be **filtered by source**.
+  *Not the same* hides one. A suggestion that grouped two works or more can be **split into several merges**
+  (each work given its merge number, each merge its own main entry; the merges are then kept apart). Picking
+  works never redraws the page; what to do is worked out when *Merge* is pressed.
+- **Saved merges tab:** the **merged works** (marked *merged automatically* and why), searchable, where one source's
+  entry can be **split off** (also from the work's page) or the whole group separated, and the other corrections
+  (works kept apart, suggestions marked *not the same*) with *Undo*; works split apart are never merged
+  automatically again. Both tabs can be **filtered by source** and by chapters.
+- **Merging by hand from the catalog:** *Select* on the Catalog tab turns the cards into checkboxes; pick works,
+  then *Merge…* asks which one is the main entry and merges them. (The Library page has the same *Select*: its
+  *Merge…* opens File management → Merge works with the picked works ready, to choose the one to keep.)
 - **Adding a source: a name and the site's address, nothing else.** Thoth works out the rest, when the source is
   added and again at **every crawl** (so new sitemaps and changed addresses are picked up): it reads the site's
   **robots.txt** (its rules and the sitemaps it names) and looks for **every sitemap** at the usual places too

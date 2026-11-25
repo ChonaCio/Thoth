@@ -289,6 +289,7 @@ server.listen(PORT, HOST, () => {
 media.scheduleWarm(15000); // work covers into the cover cache (also after every scan)
 require('./library/catalog').startSchedule(); // external catalog: scheduled crawls
 require('./library/downloads').start(); // download jobs: runs still going, scheduled runs
+require('./library/cache/client').warmAll(); // caches saved to disk: back before the first request
 tasks.startCleanup(); // task log files older than Server settings → logRetentionDays
 
   scanner.startSchedule();
@@ -310,9 +311,12 @@ let shuttingDown = false;
 function shutdown(code = 0) {
   if (shuttingDown) return;
   shuttingDown = true;
-  server.close(() => process.exit(code));
-  if (server.closeIdleConnections) server.closeIdleConnections();
-  setTimeout(() => process.exit(code), 5000).unref();
+  // (the caches' memory saved to disk first, at most 4 s: they come back at once on the next start)
+  require('./library/cache/client').saveAll(4000).catch(() => {}).then(() => {
+    server.close(() => process.exit(code));
+    if (server.closeIdleConnections) server.closeIdleConnections();
+  });
+  setTimeout(() => process.exit(code), 6000).unref();
 }
 // Restart: the built-in supervisor (exit code 75) or systemd/Docker (exit 0, they restart it) starts the new code
 function restartServer() {

@@ -351,8 +351,121 @@
     if (st.loading && st.items) el.insertAdjacentHTML('afterbegin', '<div class="grid-loading" role="status"><span class="spinner spinner--sm"></span>' + esc(t('lib.updating')) + '</div>');
     el.setAttribute('aria-busy', st.loading ? 'true' : 'false');
     renderIcons(el);
+    markSelection();
     A().restoreScroll(); // coming back: scroll to where the user was once the works are on screen
   }
+  /* ---- Selecting works to merge (Library page and the external catalog, administrators) ----
+   * "Select" turns the grid's cards into checkboxes; a bar at the bottom counts them and has Merge…:
+   *   library works → File management → Merge, with them in "Merge works by hand" (choose the one to keep there)
+   *   catalog works → which one is the main entry, then merged at once */
+  var sel = { scope: null, items: {} };
+  function selScope() { var r = A().parseRoute(); return r.name === 'library' && !libDeleted(r) ? 'lib' : r.name === 'catalog' && !r.param ? 'cat' : null; }
+  function selButton(scope) {
+    var on = sel.scope === scope;
+    return '<button type="button" class="btn ' + (on ? 'btn--primary' : 'btn--outline') + ' btn--small" data-lib="sel-toggle" data-scope="' + scope + '" aria-pressed="' + on + '" title="' + esc(t('sel.help')) + '">' + icon('done_all') + esc(t(on ? 'sel.done' : 'sel.select')) + '</button>';
+  }
+  // A card's (or list row's) work: its id (library) or catalog key, from its link
+  function selIdOf(card) {
+    var a = card.matches('a') ? card : $('a[href]', card);
+    var href = a ? a.getAttribute('href') || '' : '';
+    var m = /^#series\/([^?]+)/.exec(href) || /[?&]key=([^&]+)/.exec(href);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+  var SEL_CARDS = '#lib-grid .media-card, #cat-grid .cat-card, #cat-grid .cat-row';
+  function markSelection() {
+    var on = Boolean(sel.scope && sel.scope === selScope());
+    $$('#lib-grid, #cat-grid').forEach(function (g) { g.classList.toggle('is-selecting', on); });
+    $$(SEL_CARDS).forEach(function (c) {
+      var id = selIdOf(c), picked = on && id && Boolean(sel.items[id]);
+      c.classList.toggle('is-selected', picked);
+      var mark = $('.sel-check', c);
+      if (on && !mark) { c.insertAdjacentHTML('afterbegin', '<span class="sel-check" aria-hidden="true">' + icon('check') + '</span>'); renderIcons(c); }
+      if (!on && mark) mark.remove();
+    });
+    drawSelectBar();
+  }
+  function drawSelectBar() {
+    var bar = $('#select-bar');
+    var on = Boolean(sel.scope && sel.scope === selScope());
+    if (!on) { if (bar) bar.hidden = true; return; }
+    if (!bar) { document.body.insertAdjacentHTML('beforeend', '<div class="select-bar" id="select-bar" role="region"></div>'); bar = $('#select-bar'); }
+    var n = Object.keys(sel.items).length;
+    bar.setAttribute('aria-label', t('sel.title'));
+    bar.innerHTML = '<span class="select-bar__count">' + esc(t('sel.count', { count: n })) + '</span>' +
+      '<button type="button" class="btn btn--text btn--small" data-lib="sel-all">' + esc(t('sel.all')) + '</button>' +
+      (n ? '<button type="button" class="btn btn--text btn--small" data-lib="sel-clear">' + esc(t('sel.clear')) + '</button>' : '') +
+      '<span class="select-bar__gap"></span>' +
+      '<button type="button" class="btn btn--primary btn--small" data-lib="sel-merge"' + (n < 2 ? ' disabled title="' + esc(t('sel.pickTwo')) + '"' : '') + '>' + icon('collections') + esc(t('sel.merge')) + '</button>' +
+      '<button type="button" class="btn btn--outline btn--small" data-lib="sel-toggle" data-scope="' + sel.scope + '">' + esc(t('sel.done')) + '</button>';
+    bar.hidden = false;
+    renderIcons(bar);
+  }
+  function selToggle(scope) {
+    sel = sel.scope === scope ? { scope: null, items: {} } : { scope: scope, items: {} };
+    $$('[data-lib="sel-toggle"]:not(#select-bar *)').forEach(function (b) { b.outerHTML = selButton(b.dataset.scope); });
+    renderIcons($('#content'));
+    markSelection();
+  }
+  function selPick(card) {
+    var id = selIdOf(card);
+    if (!id) return;
+    if (sel.items[id]) delete sel.items[id];
+    else if (sel.scope === 'cat') { var it = (catState().items || []).filter(function (x) { return x.key === id; })[0]; if (it) sel.items[id] = it; }
+    else sel.items[id] = { id: id, title: ($('.media-card__title', card) || card).textContent.trim() };
+    markSelection();
+  }
+  function selMerge() {
+    var keys = Object.keys(sel.items);
+    if (keys.length < 2) return;
+    if (sel.scope === 'lib') {
+      // To File management → Merge, the works in "Merge works by hand" (the one to keep chosen there)
+      return api('GET', '/api/files/works?' + Store.qs({ ids: keys.join(',') })).then(function (r) {
+        var ms = mergeState();
+        ms.manual = r.works;
+        var keep = r.works.filter(function (w) { return !w.oneshot; }).sort(function (a, b) { return b.books - a.books; })[0];
+        ms.manualTarget = keep ? keep.id : null; ms.q = ''; ms.found = null;
+        sel = { scope: null, items: {} }; drawSelectBar();
+        location.hash = '#files/merge';
+        A().toast(t('sel.toMerge', { count: r.works.length }));
+      }, function (e) { A().toast(A().errMsg(e)); });
+    }
+    // Catalog: which one is the main entry (its title, cover and metadata), then merged
+    var items = keys.map(function (k) { return sel.items[k]; });
+    openForm({
+      title: t('sel.mergeTitle', { count: items.length }), submitLabel: t('sel.merge'),
+      fields: [{ type: 'select', name: 'primary', label: t('cat.primary'), value: items[0].key, help: t('sel.primaryHelp'),
+        options: items.map(function (it) { return { value: it.key, label: it.title + ' — ' + it.sources.map(function (s) { return s.name; }).join(', ') }; }) }],
+      note: t('sel.catNote'),
+      onSubmit: function (v) {
+        var main = items.filter(function (it) { return it.key === v.primary; })[0] || items[0];
+        var all = [];
+        items.forEach(function (it) { it.sources.forEach(function (s) { if (all.indexOf(s.key) === -1) all.push(s.key); }); });
+        return api('POST', '/api/catalog/merge', { keys: all, primary: main.primaryKey || main.sources[0].key }).then(function () {
+          A().toast(t('sel.merged', { count: items.length }));
+          sel = { scope: null, items: {} };
+          cache.catMerge = null;
+          var st = catState(); st.items = null;
+          fetchCatalog();
+          A().renderPage();
+        });
+      }
+    });
+  }
+  // Clicks on cards while selecting pick them (and don't open them); leaving the page ends selecting
+  var selBound = false;
+  function bindSelection() {
+    if (selBound) return;
+    selBound = true;
+    document.addEventListener('click', function (e) {
+      if (!sel.scope || sel.scope !== selScope()) return;
+      var card = e.target.closest && e.target.closest(SEL_CARDS);
+      if (!card) return;
+      e.preventDefault(); e.stopPropagation();
+      selPick(card);
+    }, true);
+    window.addEventListener('hashchange', function () { if (sel.scope && sel.scope !== selScope()) { sel = { scope: null, items: {} }; } drawSelectBar(); });
+  }
+
   var filterTimer;
   var library = {
     title: function (route) { return (libDeleted(route) ? t('del.hiddenTitle') + ' · ' : '') + libraryName(libId(route)); },
@@ -379,6 +492,7 @@
               opt('title', 'lib.sortTitle', st.sort) + opt('added', 'lib.sortAdded', st.sort) + opt('updated', 'lib.sortUpdated', st.sort) + opt('rating', 'lib.sortRating', st.sort) + '</select>' +
             '<select class="select select--compact" id="lib-read" aria-label="' + esc(t('lib.read')) + '">' +
               opt('', 'lib.readAll', st.read) + opt('unread', 'lib.readUnread', st.read) + opt('inProgress', 'lib.readInProgress', st.read) + opt('read', 'lib.readRead', st.read) + '</select>' +
+            (isAdmin() && !deleted ? selButton('lib') : '') +
           '</div>' +
         '</div>' +
         '<div id="lib-filters">' + filtersHtml(route) + '</div>' +
@@ -1069,6 +1183,7 @@
   var RENAME_ERRORS = { changed: 'ren.err.changed', exists: 'ren.status.exists', conflict: 'ren.status.conflict', 'read-only': 'ren.err.readOnly', 'no permission': 'ren.err.noPermission', locked: 'ren.err.locked', stalled: 'ren.err.stalled',notEmpty: 'files.err.notEmpty', notDeletable: 'files.err.notDeletable', otherDisk: 'files.err.otherDisk' };
   // Selection: mode 'all' = every valid proposal (also those not listed: the list shows the first 2000)
   // except `excluded`; mode 'some' = only the ticked ones (`selected`)
+  var renameBound = false, tasksBound = false, msrcBound = false;
   function renameState() {
     if (!cache.rename) cache.rename = { library: 'all', data: null, mode: 'all', selected: {}, excluded: {}, guessPicked: {}, renameJson: true, loading: false, result: null, error: null, job: null, rules: null };
     return cache.rename;
@@ -1255,8 +1370,13 @@
       var st = renameState();
       var lib = $('#ren-library', el);
       if (lib) lib.addEventListener('change', function () { st.library = lib.value; st.data = null; st.result = null; runRenamePreview(); });
-      el.addEventListener('change', function (e) {
-        var tg = e.target;
+      // (bound once: #content stays between drawings; one listener per drawing would make each click draw the page
+      // as many times as it was drawn before)
+      if (renameBound) return;
+      renameBound = true;
+      document.addEventListener('change', function (e) {
+        var tg = e.target, st = renameState();
+        if (!isFilesRoute() || A().parseRoute().param === 'merge' || !tg.closest('#content')) return;
         if (tg.id === 'ren-json') { st.renameJson = tg.checked; return; }
         if (tg.id === 'ren-all') {
           st.mode = tg.checked ? 'all' : 'some'; st.selected = {}; st.excluded = {};
@@ -1339,6 +1459,91 @@
         ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span>' +
         (w.oneshot ? ' <span class="badge">' + esc(t('lib.oneshot')) + '</span>' : '') + '</span></label></li>';
   }
+  /* ---- A merge suggestion as a board (File management and the external catalog) ----
+   * Picking the work to keep, ticking works and putting them in separate merges only changes the suggestion's own
+   * rows (nothing is stored, the page isn't drawn again): what to do is worked out from the rows when Merge is
+   * pressed (boardPlan). "Split into several merges": each work gets a merge number, each merge its own kept work. */
+  function boardRow(key, id, o) {
+    var parts = Math.min(o.count, 6), opts = '';
+    for (var i = 1; i <= parts; i++) opts += '<option value="' + i + '">' + esc(t('files.mergePart', { n: i })) + '</option>';
+    return '<li class="merge-row' + (o.keep ? ' is-target' : '') + '" data-id="' + esc(id) + '"' + (o.oneshot ? ' data-oneshot="1"' : '') + '>' +
+      '<select class="select select--compact merge-row__part" data-merge-part aria-label="' + esc(t('files.mergePartLabel')) + '">' + opts + '</select>' +
+      '<label class="merge-row__keep" title="' + esc(o.keepTitle) + '"><input type="radio" name="mk|' + esc(key) + '|1" value="' + esc(id) + '" data-merge-keep' + (o.keep ? ' checked' : '') + (o.oneshot ? ' disabled' : '') + ' /><span class="small">' + esc(o.keepLabel) + '</span></label>' +
+      '<label class="checkbox merge-row__pick"><input type="checkbox" data-merge-inc value="' + esc(id) + '"' + (o.include || o.keep ? ' checked' : '') + (o.keep ? ' disabled' : '') + ' />' + o.html + '</label></li>';
+  }
+  // The merges the rows say: [{ keep, ids (kept one included) }], each with 2 works or more; invalid: a merge
+  // without a work that can be kept (only one-shots)
+  function boardPlan(sec) {
+    var split = sec.classList.contains('is-split'), parts = {}, order = [];
+    $$('.merge-row', sec).forEach(function (r) {
+      if (!$('[data-merge-inc]', r).checked) return;
+      var p = split ? $('[data-merge-part]', r).value : '1';
+      if (!parts[p]) { parts[p] = []; order.push(p); }
+      parts[p].push(r);
+    });
+    var plan = [], invalid = false;
+    order.sort().forEach(function (p) {
+      var rows = parts[p];
+      if (rows.length < 2) return;
+      var keep = rows.filter(function (r) { return $('[data-merge-keep]', r).checked; })[0] || rows.filter(function (r) { return !r.dataset.oneshot; })[0];
+      if (!keep) { invalid = true; return; }
+      plan.push({ keep: keep.dataset.id, ids: rows.map(function (r) { return r.dataset.id; }) });
+    });
+    plan.invalid = invalid;
+    return plan;
+  }
+  // After a change in a suggestion: radio groups per merge, one kept work per merge, its row marked; the button
+  function boardSync(sec, changedRow) {
+    var split = sec.classList.contains('is-split'), key = sec.dataset.key, rows = $$('.merge-row', sec), parts = {};
+    rows.forEach(function (r) {
+      var p = split ? $('[data-merge-part]', r).value : '1';
+      $('[data-merge-keep]', r).name = 'mk|' + key + '|' + p;
+      (parts[p] = parts[p] || []).push(r);
+    });
+    Object.keys(parts).forEach(function (p) {
+      var on = parts[p].filter(function (r) { return $('[data-merge-keep]', r).checked; });
+      if (on.length > 1) { var stay = on.indexOf(changedRow) !== -1 ? changedRow : on[0]; on.forEach(function (r) { if (r !== stay) $('[data-merge-keep]', r).checked = false; }); }
+      // (a merge without a kept work: its first work that can be kept)
+      if (!on.length) { var first = parts[p].filter(function (r) { return !r.dataset.oneshot; })[0]; if (first) $('[data-merge-keep]', first).checked = true; }
+    });
+    rows.forEach(function (r) {
+      var k = $('[data-merge-keep]', r).checked, inc = $('[data-merge-inc]', r);
+      r.classList.toggle('is-target', k);
+      if (k) inc.checked = true;
+      inc.disabled = k;
+      r.classList.toggle('is-out', !inc.checked);
+    });
+    var plan = boardPlan(sec), btn = $('[data-board-go]', sec);
+    if (!btn) return;
+    // (one merge: how many works it joins — the ticked ones; several: how many merges)
+    var n = split ? (plan.length ? plan[0].ids.length : 0) : $$('[data-merge-inc]', sec).filter(function (x) { return x.checked; }).length;
+    btn.lastChild.textContent = split && plan.length > 1 ? t('files.mergeParts', { count: plan.length }) : t(sec.dataset.board === 'cat' ? 'cat.mergeN' : 'files.mergeN', { count: n });
+    btn.disabled = !plan.length || plan.invalid || (sec.dataset.board === 'lib' && Boolean(mergeState().job));
+  }
+  // Starting to split: works with the same title (ignoring case, punctuation, a site's "(Official)"…) in the same
+  // merge — a first proposal to correct; with one title only, the first half and the second half. Back to one
+  // merge: all in merge 1.
+  function boardProposeParts(sec, on) {
+    var sels = $$('[data-merge-part]', sec);
+    if (!on) { sels.forEach(function (s) { s.value = '1'; }); return; }
+    var norm = function (r) { var a = $('.merge-row__what a', r); return (a ? a.textContent : '').toLowerCase().replace(/\([^)]*\)|\[[^\]]*\]/g, ' ').replace(/[\s!-\/:-@\[-`{-~‐-‧]+/g, ' ').trim(); }; // (ES5: ASCII punctuation, dashes and quotes)
+    var seen = {}, next = 1;
+    var parts = sels.map(function (s) { var k = norm(s.closest('.merge-row')); if (!seen[k]) seen[k] = Math.min(s.options.length, next++); return seen[k]; });
+    if (Object.keys(seen).length < 2) parts = sels.map(function (s, i) { return i < Math.ceil(sels.length / 2) ? 1 : 2; });
+    sels.forEach(function (s, i) { s.value = String(parts[i]); });
+  }
+  function boardSplitButton() { return '<button type="button" class="btn btn--text" data-lib="merge-split" title="' + esc(t('files.mergeSplitHelp')) + '">' + icon('call_split') + '<span>' + esc(t('files.mergeSplit')) + '</span></button>'; }
+  // Change events of the boards (bound once: the page is drawn again often, its container stays)
+  var boardsBound = false;
+  function bindBoards() {
+    if (boardsBound) return;
+    boardsBound = true;
+    document.addEventListener('change', function (e) {
+      var tg = e.target, sec = tg.closest && tg.closest('.merge-group[data-board]');
+      if (!sec || !(tg.hasAttribute('data-merge-keep') || tg.hasAttribute('data-merge-inc') || tg.hasAttribute('data-merge-part'))) return;
+      boardSync(sec, tg.closest('.merge-row'));
+    });
+  }
   // "Delete the other folders when done": per suggestion / for the manual merge
   function mergeDeleteBox(st, key) {
     return '<label class="checkbox merge-delete"><input type="checkbox" data-merge-delete="' + esc(key) + '"' + (st.deleteSources[key] ? ' checked' : '') + ' />' +
@@ -1374,13 +1579,17 @@
     else if (st.loading || !st.data) body = spinner;
     else if (!st.data.groups.length) body = emptyState('check', t('files.noSuggestionsTitle'), t('files.noSuggestions'));
     else body = '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
-      var ch = st.choice[g.key] || { target: g.target, include: {} };
-      var n = g.works.filter(function (w) { return ch.include[w.id] || w.id === ch.target; }).length;
-      return '<section class="card card--wide merge-group" data-key="' + esc(g.key) + '">' +
+      return '<section class="card card--wide merge-group" data-key="' + esc(g.key) + '" data-board="lib">' +
         '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(reasonText(g)) + '</span></p>' +
-        '<ul class="merge-list">' + g.works.map(function (w) { return mergeRow(g.key, w, ch.target, ch.include[w.id]); }).join('') + '</ul>' +
+        '<ul class="merge-list">' + g.works.map(function (w) {
+          return boardRow(g.key, w.id, { count: g.works.length, keep: w.id === g.target, include: true, oneshot: w.oneshot, keepLabel: t('files.keep'), keepTitle: t('files.keepTitle'),
+            html: '<span class="merge-row__what"><a href="#series/' + w.id + '">' + esc(w.title) + '</a>' +
+              ' <span class="muted small">' + esc([w.library, w.path, t(w.books === 1 ? 'lib.bookCount1' : 'lib.booksCount', { count: w.books })].filter(Boolean).join(' · ')) + '</span>' +
+              (w.oneshot ? ' <span class="badge">' + esc(t('lib.oneshot')) + '</span>' : '') + '</span>' });
+        }).join('') + '</ul>' +
         '<div class="merge-actions">' + mergeDeleteBox(st, g.key) +
-          '<button class="btn btn--primary" data-lib="merge-go" data-key="' + esc(g.key) + '"' + (n < 2 || !ch.target || st.job ? ' disabled' : '') + '>' + icon('collections') + esc(t('files.mergeN', { count: n })) + '</button>' +
+          '<button class="btn btn--primary" data-lib="merge-go" data-board-go data-key="' + esc(g.key) + '"' + (!g.target || st.job ? ' disabled' : '') + '>' + icon('collections') + '<span>' + esc(t('files.mergeN', { count: g.works.length })) + '</span></button>' +
+          boardSplitButton() +
           '<button class="btn btn--text" data-lib="merge-dismiss" data-key="' + esc(g.key) + '">' + esc(t('files.notSame')) + '</button>' +
         '</div></section>';
     }).join('');
@@ -1404,20 +1613,38 @@
         }, function () {});
       }, 300);
     });
-    el.addEventListener('change', function (e) {
+    bindBoards();
+    // (bound once: #content stays between drawings, so a listener added at every drawing would run many times)
+    if (mergeBound) return;
+    mergeBound = true;
+    document.addEventListener('change', function (e) {
       var tg = e.target, key;
-      if ((key = tg.dataset.mergeTarget)) {
-        if (key === 'manual') st.manualTarget = tg.value;
-        else { st.choice[key].target = tg.value; st.choice[key].include[tg.value] = true; }
-        return A().renderPage();
-      }
-      if ((key = tg.dataset.mergeDelete)) { st.deleteSources[key] = tg.checked; return; }
-      if ((key = tg.dataset.mergeInclude)) {
-        if (key === 'manual') { if (!tg.checked) st.manual = st.manual.filter(function (w) { return w.id !== tg.value; }); }
-        else st.choice[key].include[tg.value] = tg.checked;
-        return A().renderPage();
-      }
+      if (!isFilesRoute() || !tg.closest('.merge-manual, .merge-group')) return;
+      if ((key = tg.dataset.mergeTarget) === 'manual') { mergeState().manualTarget = tg.value; return A().renderPage(); }
+      if ((key = tg.dataset.mergeDelete)) { mergeState().deleteSources[key] = tg.checked; return; }
+      if ((key = tg.dataset.mergeInclude) === 'manual' && !tg.checked) { var ms0 = mergeState(); ms0.manual = ms0.manual.filter(function (w) { return w.id !== tg.value; }); return A().renderPage(); }
     });
+  }
+  var mergeBound = false;
+  // A suggestion's Merge: the merges its rows say (one, or several when split), confirmed, then queued
+  function startBoardMerge(key, btn) {
+    var st = mergeState(), sec = btn.closest('.merge-group'), g = st.data.groups.filter(function (x) { return x.key === key; })[0];
+    if (!sec || !g) return;
+    var plan = boardPlan(sec);
+    if (!plan.length || plan.invalid) return A().toast(t(plan.invalid ? 'files.mergeNoKeep' : 'files.mergeNothing'));
+    var byId = {}; g.works.forEach(function (w) { byId[w.id] = w; });
+    var del = Boolean(st.deleteSources[key]);
+    var lines = plan.map(function (x) { var tw = byId[x.keep]; return t('files.mergePlanLine', { count: x.ids.length - 1, title: tw.title, path: tw.path }); });
+    var msg = plan.length === 1 ? t(del ? 'files.mergeConfirmDelete' : 'files.mergeConfirm', { count: plan[0].ids.length - 1, title: byId[plan[0].keep].title, path: byId[plan[0].keep].path })
+      : t('files.mergePlanConfirm', { count: plan.length }) + '\n\n' + lines.join('\n') + (del ? '\n\n' + t('files.mergePlanDelete') : '') + '\n\n' + t('files.mergePlanApart');
+    if (!confirm(msg)) return;
+    btn.disabled = true;
+    return api('POST', '/api/files/merge-plan', { merges: plan.map(function (x) { return { target: x.keep, sources: x.ids.filter(function (id) { return id !== x.keep; }) }; }), deleteSources: del, apart: plan.length > 1 }).then(function (r) {
+      st.job = r.jobs[r.jobs.length - 1]; st.result = null; // (queued in order: the last one ends last)
+      A().toast(t(plan.length > 1 ? 'files.mergesStarted' : 'files.mergeStarted', { count: plan.length }));
+      A().renderPage();
+      pollMergeJob();
+    }, function (e) { btn.disabled = false; A().toast(A().errMsg(e)); });
   }
   function mergeEnter() {
     var st = mergeState();
@@ -1459,7 +1686,8 @@
     return '<h1 class="page-title">' + esc(t('nav.catalog')) + '</h1>' +
       '<nav class="tabs files-tabs" aria-label="' + esc(t('nav.catalog')) + '">' +
         tab('browse', '#catalog', 'travel_explore', 'cat.tabBrowse') +
-        tab('merge', '#catalog/merge', 'collections', 'cat.tabMerge') + tab('sources', '#catalog/sources', 'dataset', 'cat.tabSources') +
+        tab('merge', '#catalog/merge', 'collections', 'cat.tabSuggestions') + tab('merged', '#catalog/merged', 'done_all', 'cat.tabSaved') +
+        tab('sources', '#catalog/sources', 'dataset', 'cat.tabSources') +
         tab('files', '#catalog/files', 'description', 'cat.tabFiles') +
       '</nav>';
   }
@@ -1523,6 +1751,7 @@
     el.innerHTML = html;
     el.classList.toggle('is-loading', false);
     renderIcons(el);
+    markSelection();
     A().restoreScroll();
   }
   // Works with or without chapters found (Browse and Merge)
@@ -1550,7 +1779,7 @@
           '<div class="seg" role="group" aria-label="' + esc(t('cat.view')) + '">' +
             '<button type="button" class="icon-btn' + (st.view !== 'list' ? ' is-active' : '') + '" data-lib="cat-view" data-view="grid" aria-pressed="' + (st.view !== 'list') + '" title="' + esc(t('cat.viewGrid')) + '" aria-label="' + esc(t('cat.viewGrid')) + '">' + icon('grid_view') + '</button>' +
             '<button type="button" class="icon-btn' + (st.view === 'list' ? ' is-active' : '') + '" data-lib="cat-view" data-view="list" aria-pressed="' + (st.view === 'list') + '" title="' + esc(t('cat.viewList')) + '" aria-label="' + esc(t('cat.viewList')) + '">' + icon('view_list') + '</button>' +
-          '</div>' +
+          '</div>' + selButton('cat') +
         '</div>' +
       '</div>' +
       (st.more ? catAdvancedPanel() : '') +
@@ -1681,6 +1910,7 @@
 
   // Merge tab (admins): the same work on several sites. Suggestions to confirm, and the works merged already
   // (by hand or automatically, when it was certain) with a way to split them. Filter: one source's works.
+  var catMergeBound = false;
   function catMergeState() {
     if (!cache.catMerge) cache.catMerge = { data: null, merged: null, sources: null, source: '', chapters: '', loading: false, error: null, choice: {} };
     return cache.catMerge;
@@ -1713,18 +1943,21 @@
     var d = (why && why.detail) || {};
     return t(MERGE_WHY[why && why.reason] || 'files.reason.title', { title: d.title || '', author: d.author || '', alt: d.alt || '', other: d.other || '' });
   }
-  function catalogMerge() {
+  // Merge suggestions (#catalog/merge) and Saved merges (#catalog/merged): two tabs over the same data
+  function catalogMerge(view) {
     var st = catMergeState();
     var sources = st.sources || [];
-    var head = catalogTabs('merge') + '<p class="page-lead">' + esc(t('cat.mergeIntro')) + '</p>' +
-      '<div class="toolbar"><div class="toolbar__group">' +
-        '<select class="select select--compact" data-lib-change="cat-merge-source" aria-label="' + esc(t('cat.filterSource')) + '">' +
+    var saved = view === 'merged';
+    var sourceSel = '<select class="select select--compact" data-lib-change="cat-merge-source" aria-label="' + esc(t('cat.filterSource')) + '">' +
           '<option value="">' + esc(t('cat.allSources')) + '</option>' +
           sources.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === st.source ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') +
-        '</select>' +
-        catChaptersSelect('cat-merge-chapters', st.chapters, ' data-lib-change="cat-merge-chapters"') +
+        '</select>' + catChaptersSelect('cat-merge-chapters', st.chapters, ' data-lib-change="cat-merge-chapters"');
+    if (saved) return catalogSavedMerges(st, sourceSel);
+    var head = catalogTabs('merge') + '<p class="page-lead">' + esc(t('cat.mergeIntro')) + '</p>' +
+      '<div class="toolbar"><div class="toolbar__group">' + sourceSel +
         '<button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button>' +
         '<button class="btn btn--outline btn--pill" data-lib="cat-merge-auto"' + (st.loading ? ' disabled' : '') + ' title="' + esc(t('cat.autoMergeHelp')) + '">' + icon('collections') + esc(t('cat.autoMerge')) + '</button>' +
+        '<a class="btn btn--text btn--small" href="#catalog/merged">' + icon('done_all') + esc(t('cat.savedLink', { count: st.merged ? st.merged.total : '…' })) + '</a>' +
       '</div></div>';
     // Text that's never part of a title (a site's tag, "Exclusive"…): removed from every catalog title, so the same
     // work on different sites gets the same title and can be merged
@@ -1737,22 +1970,30 @@
     if (st.error) return head + errorBanner(st.error);
     if (st.loading || !st.data) return head + spinner;
     var suggestions = st.data.groups.length ? '<h2 class="section-title">' + esc(t('files.suggestions', { count: st.data.total })) + '</h2>' + st.data.groups.map(function (g) {
-      var ch = st.choice[g.key];
-      var n = g.works.filter(function (w) { return ch.include[w.key]; }).length;
-      return '<section class="card card--wide merge-group">' +
+      return '<section class="card card--wide merge-group" data-key="' + esc(g.key) + '" data-board="cat">' +
         '<p class="merge-group__why">' + icon('dataset') + '<span>' + esc(mergeWhyText(g)) + '</span>' +
           (g.inLibrary ? ' <a class="badge badge--ok" href="#series/' + g.inLibrary.seriesId + '">' + esc(t('cat.inLibrary')) + '</a>' : '') + '</p>' +
         '<ul class="merge-list">' + g.works.map(function (w) {
-          var main = w.key === ch.primary;
-          return '<li class="merge-row' + (main ? ' is-target' : '') + '">' +
-            '<label class="merge-row__keep" title="' + esc(t('cat.primaryTitle')) + '"><input type="radio" name="p-' + esc(g.key) + '" value="' + esc(w.key) + '" data-cat-primary="' + esc(g.key) + '"' + (main ? ' checked' : '') + ' /><span class="small">' + esc(t('cat.primary')) + '</span></label>' +
-            '<label class="checkbox merge-row__pick"><input type="checkbox" data-cat-include="' + esc(g.key) + '" value="' + esc(w.key) + '"' + (ch.include[w.key] || main ? ' checked' : '') + (main ? ' disabled' : '') + ' />' + mergeWorkHtml(w) + '</label></li>';
+          return boardRow(g.key, w.key, { count: g.works.length, keep: w.key === g.primary, include: true, keepLabel: t('cat.primary'), keepTitle: t('cat.primaryTitle'), html: mergeWorkHtml(w) });
         }).join('') + '</ul>' +
-        '<div class="merge-actions"><button class="btn btn--primary" data-lib="cat-merge-go" data-key="' + esc(g.key) + '"' + (n < 2 ? ' disabled' : '') + '>' + icon('collections') + esc(t('cat.mergeN', { count: n })) + '</button>' +
+        '<div class="merge-actions"><button class="btn btn--primary" data-lib="cat-merge-go" data-board-go data-key="' + esc(g.key) + '">' + icon('collections') + '<span>' + esc(t('cat.mergeN', { count: g.works.length })) + '</span></button>' +
+          boardSplitButton() +
           '<button class="btn btn--text" data-lib="cat-merge-dismiss" data-key="' + esc(g.key) + '">' + esc(t('files.notSame')) + '</button></div>' +
       '</section>';
     }).join('') : emptyState('check', t('files.noSuggestionsTitle'), t('cat.noSuggestions'));
-    var merged = st.merged && st.merged.groups.length ? '<h2 class="section-title">' + esc(t('cat.mergedTitle', { count: st.merged.total })) + '</h2>' + st.merged.groups.map(function (g) {
+    return head + suggestions;
+  }
+  // Saved merges: the works merged (by hand or automatically) with Split / Separate, a search over them, and the
+  // other corrections (kept apart, "not the same") with Undo
+  function catalogSavedMerges(st, sourceSel) {
+    var head = catalogTabs('merged') + '<p class="page-lead">' + esc(t('cat.savedIntro')) + '</p>' +
+      '<div class="toolbar"><label class="search-field">' + icon('search') + '<input type="search" id="cat-merged-q" placeholder="' + esc(t('cat.savedSearch')) + '" value="' + esc(st.mergedQ || '') + '" autocomplete="off" /></label>' +
+      '<div class="toolbar__group">' + sourceSel + '</div></div>';
+    if (st.error) return head + errorBanner(st.error);
+    if (st.loading || !st.data) return head + spinner;
+    var q = String(st.mergedQ || '').toLowerCase().trim();
+    var groups = (st.merged ? st.merged.groups : []).filter(function (g) { return !q || g.works.some(function (w) { return [w.title].concat(w.altTitles || [], w.source || '').join('\n').toLowerCase().indexOf(q) !== -1; }); });
+    var merged = groups.length ? '<h2 class="section-title">' + esc(t('cat.mergedTitle', { count: q ? groups.length : st.merged.total })) + '</h2>' + groups.map(function (g) {
       return '<section class="card card--wide merge-group">' +
         '<p class="merge-group__why">' + icon('collections') + '<span>' + esc(g.auto ? t('cat.mergedAuto', { why: mergeWhyText(g.auto) }) : t('cat.mergedByHand')) + '</span></p>' +
         '<ul class="merge-list">' + g.works.map(function (w) {
@@ -1761,7 +2002,7 @@
         }).join('') + '</ul>' +
         '<div class="merge-actions"><button class="btn btn--text btn--danger" data-lib="cat-unmerge-group" data-id="' + esc(g.id) + '">' + esc(t('cat.unmerge')) + '</button></div>' +
       '</section>';
-    }).join('') : '';
+    }).join('') : emptyState('collections', t('cat.savedNoneTitle'), t(q ? 'lib.noMatch' : 'cat.savedNone'));
     // Manual corrections besides merges: kept apart (separated / split off) and "not the same" — each with Undo
     var co = st.corrections, pairRow = function (x, act, attr) {
       return '<li class="cat-correction"><span>' + x.works.map(function (w) { return '<strong>' + esc(w.title) + '</strong> <span class="muted small">(' + esc(w.source || '') + ')</span>'; }).join(' ≠ ') + '</span>' +
@@ -1772,7 +2013,7 @@
       (co.apart.length ? '<h3 class="small">' + esc(t('cat.keptApart')) + '</h3><ul class="cat-corrections__list">' + co.apart.map(function (x) { return pairRow(x, 'cat-undo-apart', 'data-key="' + esc(x.pair) + '"'); }).join('') + '</ul>' : '') +
       (co.dismissed.length ? '<h3 class="small">' + esc(t('cat.notSameList')) + '</h3><ul class="cat-corrections__list">' + co.dismissed.map(function (x) { return pairRow(x, 'cat-undo-dismiss', 'data-key="' + esc(x.key) + '"'); }).join('') + '</ul>' : '') +
       '</details>' : '';
-    return head + suggestions + merged + corr;
+    return head + merged + corr;
   }
 
   // Sources (admins): add/edit/delete, crawl, follow the crawl, test the settings
@@ -3278,7 +3519,7 @@
     },
     render: function (route) {
       if (route.param === 'work') return catalogWork(route);
-      if (route.param === 'merge' && isAdmin()) return catalogMerge();
+      if ((route.param === 'merge' || route.param === 'merged') && isAdmin()) return catalogMerge(route.param);
       if (route.param === 'sources' && isAdmin()) return catalogSources();
       if (route.param === 'files' && isAdmin()) return catalogFiles();
       return catalogBrowse();
@@ -3286,12 +3527,29 @@
     mount: function (el, route) {
       if (!route.param) return catalogBrowseMount(el);
       if (route.param === 'files') return catalogFilesMount(el);
-      if (route.param === 'merge') el.addEventListener('change', function (e) {
-        var tg = e.target, st = catMergeState(), k;
-        if ((k = tg.dataset.catPrimary)) { st.choice[k].primary = tg.value; st.choice[k].include[tg.value] = true; return A().renderPage(); }
-        if ((k = tg.dataset.catInclude)) { st.choice[k].include[tg.value] = tg.checked; return A().renderPage(); }
+      if (route.param !== 'merge' && route.param !== 'merged') return;
+      bindBoards();
+      // (bound once: a listener added at every drawing of the page would run once per drawing so far)
+      if (catMergeBound) return;
+      catMergeBound = true;
+      var mergeTab = function () { var r = A().parseRoute(); return r.name === 'catalog' && (r.param === 'merge' || r.param === 'merged'); };
+      document.addEventListener('change', function (e) {
+        var tg = e.target, st = catMergeState();
+        if (!mergeTab()) return;
         if (tg.dataset.libChange === 'cat-merge-source') { st.source = tg.value; return loadCatMerge(); }
         if (tg.dataset.libChange === 'cat-merge-chapters') { st.chapters = tg.value; return loadCatMerge(); }
+      });
+      // Saved merges: the search filters what's loaded (drawn again after a pause, the cursor kept)
+      var qTimer = null;
+      document.addEventListener('input', function (e) {
+        if (e.target.id !== 'cat-merged-q' || !mergeTab()) return;
+        catMergeState().mergedQ = e.target.value;
+        clearTimeout(qTimer);
+        qTimer = setTimeout(function () {
+          var pos = e.target.selectionStart;
+          A().renderPage();
+          var again = $('#cat-merged-q'); if (again) { again.focus(); try { again.setSelectionRange(pos, pos); } catch (x) { /* not a text field */ } }
+        }, 250);
       });
     },
     enter: function (route) {
@@ -3301,7 +3559,7 @@
         return api('GET', '/api/catalog/work?' + Store.qs({ key: key })).then(function (r) { cache.catWork[key] = { work: r.work }; }, function (e) { cache.catWork[key] = { error: e }; })
           .then(function () { if (isCatalogRoute()) A().renderPage(); });
       }
-      if (route.param === 'merge') { var ms = catMergeState(); if (!ms.data && !ms.loading) loadCatMerge(); return; }
+      if (route.param === 'merge' || route.param === 'merged') { var ms = catMergeState(); if (!ms.data && !ms.loading) loadCatMerge(); return; }
       if (route.param === 'sources') return loadCatSources();
       if (route.param === 'files') return loadCatFiles();
       var st = catState();
@@ -3398,12 +3656,14 @@
         '<h2 class="section-title">' + esc(t('msrc.folderTitle')) + '</h2>' + folders + how +
         '<h2 class="section-title">' + esc(t('msrc.onlineTitle')) + '</h2><p class="muted small">' + esc(t('msrc.onlineIntro')) + '</p>' + online;
     },
-    mount: function (el) {
-      // Enter in a search box = Try
-      el.addEventListener('keydown', function (e) {
-        if (e.key !== 'Enter' || !e.target.dataset.msrcQ) return;
+    mount: function () {
+      // Enter in a search box = Try (bound once: the page's container stays between drawings)
+      if (msrcBound) return;
+      msrcBound = true;
+      document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Enter' || !e.target.dataset || !e.target.dataset.msrcQ) return;
         e.preventDefault();
-        var b = el.querySelector('[data-lib="msrc-search"][data-id="' + e.target.dataset.msrcQ + '"]');
+        var b = document.querySelector('[data-lib="msrc-search"][data-id="' + e.target.dataset.msrcQ + '"]');
         if (b) b.click();
       });
     },
@@ -3661,6 +3921,15 @@
       var under = c.kind === 'search' && s.docs != null ? t('proc.cache.searchDocs', { docs: s.docs, tags: (s.terms || {}).tag || 0, people: (s.terms || {}).person || 0 })
         : c.kind === 'covers' && s.warm && (s.warm.running || s.warm.finishedAt) ? (s.warm.running ? t('proc.media.warmRunning', { done: s.warm.done, total: s.warm.total }) : t('proc.media.warmDone', { total: s.warm.total, added: s.warm.added }))
         : c.kind === 'catthumbs' && (c.pid || c.mode === 'inline') ? catThumbsNote(s) : '';
+      // (caches kept on disk: what was taken back at start, and the last save)
+      var sn = s.snapshot;
+      if (sn && (c.pid || c.mode === 'inline')) {
+        var parts = [];
+        if (sn.restored) parts.push(t('proc.cache.snapRestored', { count: sn.restored }));
+        else if (sn.skipped) parts.push(t('proc.cache.snapSkipped'));
+        if (sn.savedAt) parts.push(t('proc.cache.snapSaved', { count: sn.saved, size: fmtBytes(sn.bytes || 0), time: A().fmtDate(sn.savedAt) }));
+        if (parts.length) under = (under ? under + ' · ' : '') + parts.join(' · ');
+      }
       return {
         cells: [
           '<strong>' + esc(t('proc.cache.' + c.kind)) + '</strong>',
@@ -3681,7 +3950,7 @@
       parts: [
         proc.table([t('proc.cache.name'), t('proc.pid'), t('proc.cache.content'), t('proc.cache.answered'), t('proc.memory')], caches.map(row)),
         caches.filter(function (c) { return c.lastError; }).map(function (c) { return '<p class="notice notice--error small">' + esc(c.lastError) + '</p>'; }).join(''),
-        proc.help(t('proc.cache.help') + ' ' + t('proc.cache.helpCatalog'))
+        proc.help(t('proc.cache.help') + ' ' + t('proc.cache.helpCatalog') + ' ' + t('proc.cache.helpDisk'))
       ]
     };
   }
@@ -3711,7 +3980,9 @@
     mount: function (el, route) {
       if (!route || route.param !== 'tasks') return;
       scrollTaskOutputs();
-      el.addEventListener('change', function (e) { if (e.target.hasAttribute('data-task-follow')) { tasksState().follow = e.target.checked; scrollTaskOutputs(); } });
+      if (tasksBound) return; // (bound once: the tab is drawn again every 2 seconds)
+      tasksBound = true;
+      document.addEventListener('change', function (e) { if (e.target.hasAttribute && e.target.hasAttribute('data-task-follow')) { tasksState().follow = e.target.checked; scrollTaskOutputs(); } });
     },
     enter: function (route) {
       clearTimeout(procTimer);
@@ -4656,7 +4927,7 @@
       case 'cat-split':
         return api('POST', '/api/catalog/merge/' + encodeURIComponent(id) + '/split', { key: btn.dataset.key }).then(function (r) {
           A().toast(t('cat.splitDone')); cache.catalog = null; cache.catWork = null;
-          if (A().parseRoute().param === 'merge') return loadCatMerge();
+          if (A().parseRoute().param === 'merge' || A().parseRoute().param === 'merged') return loadCatMerge();
           // On the work's page: what's left of it (the group, or the one work left)
           var next = '#catalog/work?key=' + encodeURIComponent(r.groupId ? 'g:' + r.groupId : r.keys[0]);
           if (location.hash === next) refreshCurrent(); else location.hash = next;
@@ -4665,15 +4936,21 @@
         if (!confirm(t('cat.unmerge') + '?')) return;
         return api('DELETE', '/api/catalog/merge/' + encodeURIComponent(id)).then(function () { cache.catalog = null; loadCatMerge(); }, fail);
       case 'cat-merge-go': {
-        var cm = catMergeState(), gk = btn.dataset.key, ch = cm.choice[gk];
-        var keys = Object.keys(ch.include).filter(function (k) { return ch.include[k]; });
-        if (keys.indexOf(ch.primary) === -1) keys.push(ch.primary);
+        var cm = catMergeState(), gk = btn.dataset.key, csec = btn.closest('.merge-group');
+        var cplan = csec ? boardPlan(csec) : [];
+        if (!cplan.length) return A().toast(t('files.mergeNothing'));
+        var cg = cm.data.groups.filter(function (x) { return x.key === gk; })[0], ctitle = {};
+        (cg ? cg.works : []).forEach(function (w) { ctitle[w.key] = w.title + ' (' + w.source + ')'; });
+        // (several merges: what will be done, confirmed first)
+        if (cplan.length > 1 && !confirm(t('files.mergePlanConfirm', { count: cplan.length }) + '\n\n' + cplan.map(function (x) { return t('cat.mergePlanLine', { count: x.ids.length, title: ctitle[x.keep] || x.keep }); }).join('\n') + '\n\n' + t('files.mergePlanApart'))) return;
         btn.disabled = true;
-        return api('POST', '/api/catalog/merge', { keys: keys, primary: ch.primary }).then(function () {
-          A().toast(t('common.saved'));
+        return api('POST', '/api/catalog/merge-plan', { merges: cplan.map(function (x) { return { keys: x.ids, primary: x.keep }; }) }).then(function () {
+          A().toast(t(cplan.length > 1 ? 'cat.mergesDone' : 'common.saved', { count: cplan.length }));
           cm.data.groups = cm.data.groups.filter(function (g) { return g.key !== gk; }); cm.data.total--;
           cache.catalog = null;
           A().renderPage();
+          // (Saved merges: the new ones there too)
+          api('GET', '/api/catalog/merged?' + Store.qs({ source: cm.source || undefined, chapters: cm.chapters || undefined })).then(function (r) { cm.merged = r; if (isCatalogRoute()) A().renderPage(); }, function () {});
         }, function (e) { btn.disabled = false; fail(e); });
       }
       case 'cat-merge-dismiss': {
@@ -4788,7 +5065,21 @@
         }, function (e) { btn.disabled = false; fail(e); });
       }
       case 'merge-check': mergeState().result = null; return loadMergeSuggestions();
-      case 'merge-go': return startMerge(btn.dataset.key);
+      case 'merge-go': return btn.dataset.key === 'manual' ? startMerge('manual') : startBoardMerge(btn.dataset.key, btn);
+      case 'sel-toggle': return selToggle(btn.dataset.scope);
+      case 'sel-clear': sel.items = {}; return markSelection();
+      case 'sel-all': $$(SEL_CARDS).forEach(function (c) { var sid = selIdOf(c); if (sid && !sel.items[sid]) selPick(c); }); return markSelection();
+      case 'sel-merge': return selMerge();
+      case 'merge-split': {
+        var sp = btn.closest('.merge-group');
+        if (!sp) return;
+        var on = !sp.classList.contains('is-split');
+        sp.classList.toggle('is-split', on);
+        btn.lastChild.textContent = t(on ? 'files.mergeOne' : 'files.mergeSplit');
+        btn.setAttribute('aria-pressed', on);
+        boardProposeParts(sp, on);
+        return boardSync(sp, null);
+      }
       case 'merge-dismiss': {
         var ms = mergeState(), key = btn.dataset.key;
         return api('POST', '/api/files/merge-suggestions/dismiss', { key: key }).then(function () {
@@ -4948,9 +5239,10 @@
   }
 
   function bind() {
+    bindSelection();
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-lib]');
-      if (btn && !btn.disabled && $('#content').contains(btn)) { e.preventDefault(); handleAction(btn); }
+      if (btn && !btn.disabled && ($('#content').contains(btn) || btn.closest('#select-bar'))) { e.preventDefault(); handleAction(btn); }
     });
     // Broken cover image → show the placeholder underneath
     document.addEventListener('error', function (e) {

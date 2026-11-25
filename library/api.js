@@ -487,7 +487,9 @@ async function sendFile(req, res, book, download) {
  * an answer counts only for the data version it was built for (the data generation — any save/reindex — and
  * the reading-progress version). If that process can't answer, the request is simply built here. */
 const RESPONSE_ROUTES = /^\/api\/(series|series\/facets|series\/[\w-]+|home)$/;
-const worksCache = cacheService('works', { label: 'Works', idleMs: 30 * 60 * 1000 });
+// (saved to disk with the data's fingerprint; taken back when its process starts, for the version current then)
+const worksCache = cacheService('works', { label: 'Works', idleMs: 30 * 60 * 1000,
+  persist: { save: () => ({ sig: store.dataSig(), ver: responseVersion() }), restore: () => ({ sig: store.dataSig(), ver: responseVersion() }) } });
 function responseVersion() { return store.generation() + ':' + store.progressVersion(); }
 function responseKey(user, p, q) {
   const sorted = [...q.entries()].sort((a, b) => (a[0] + '=' + a[1]).localeCompare(b[0] + '=' + b[1]));
@@ -498,7 +500,10 @@ function cacheInfo() { const i = worksCache.info(); return Object.assign({ pid: 
  * Catalog works cache (cache/catworks.js) while the catalog's data version is the same: the crawled files on disk,
  * merges and settings, the library (catalog.dataVersion). Administrators only, like the routes themselves. */
 const CATALOG_ROUTES = /^\/api\/catalog(\/facets|\/work)?$/;
-const catalogCache = cacheService('catworks', { label: 'Catalog works', idleMs: 30 * 60 * 1000 });
+// (its fingerprint: the library's and each source's crawled file — the durable part of catalog.dataVersion)
+const catalogSig = () => store.dataSig() + '|' + String(catalog.dataVersion()).split(':').slice(1).join(':');
+const catalogCache = cacheService('catworks', { label: 'Catalog works', idleMs: 30 * 60 * 1000,
+  persist: { save: () => ({ sig: catalogSig(), ver: catalog.dataVersion() }), restore: () => ({ sig: catalogSig(), ver: catalog.dataVersion(), memMb: catalogCacheMb() }) } });
 const catalogCacheMb = () => Number(require('../config').get().catalogWorksCacheMb) || 32;
 function catalogKey(p, q) {
   const sorted = [...q.entries()].filter(([k]) => k !== '_').sort((a, b) => (a[0] + '=' + a[1]).localeCompare(b[0] + '=' + b[1]));
@@ -509,7 +514,8 @@ function catalogKey(p, q) {
  * An index of every work (titles, genres, tags, people, types, libraries) lives in the Search cache process
  * (cache/search.js). It's sent again when the data changed (checked on each search: its loaded generation
  * against the current one), and answers only count works in the libraries the asker may see. */
-const searchCache = cacheService('search', { label: 'Search', idleMs: 30 * 60 * 1000 });
+const searchCache = cacheService('search', { label: 'Search', idleMs: 30 * 60 * 1000,
+  persist: { save: () => ({ sig: store.dataSig(), gen: store.generation() }), restore: () => ({ sig: store.dataSig(), gen: store.generation() }) } });
 const SEARCH_USER = { username: '\0search', role: 'admin' }; // sees every library (answers are filtered per user)
 let searchLoading = null;
 async function ensureSearch() {
@@ -895,6 +901,8 @@ async function handle(ctx) {
       return send(200, { ok: true });
     }
     if (p === '/api/catalog/merge' && method === 'POST') return send(200, catalog.merge(body.keys, body.primary));
+    // POST /api/catalog/merge-plan { merges: [{ keys, primary }] }: several merges out of one suggestion, kept apart
+    if (p === '/api/catalog/merge-plan' && method === 'POST') return send(200, catalog.mergePlan(body.merges));
     if ((m = /^\/api\/catalog\/merge\/([\w-]+)$/.exec(p)) && method === 'DELETE') { catalog.unmerge(m[1]); return send(200, { ok: true }); }
   }
 
@@ -918,14 +926,17 @@ async function handle(ctx) {
   if (p === '/api/files/works' && method === 'GET') {
     requireAdmin();
     const term = searchable(q.get('q'));
+    // ?ids=a,b,…: these works (picked on the Library page to merge), else a search
+    const ids = String(q.get('ids') || '').split(',').filter(Boolean).slice(0, 200);
     const works = [];
-    if (term) for (const s of Object.values(db.series)) {
-      if (s.hidden) continue;
+    const pool = ids.length ? ids.map(id => db.series[id]).filter(Boolean) : term ? Object.values(db.series) : [];
+    for (const s of pool) {
+      if (s.hidden && !ids.length) continue;
       const m = store.seriesMeta(s);
-      if (!searchable(m.title).includes(term) && !searchable(s.relPath).includes(term) && !m.altTitles.some(x => searchable(x).includes(term))) continue;
+      if (!ids.length && !searchable(m.title).includes(term) && !searchable(s.relPath).includes(term) && !m.altTitles.some(x => searchable(x).includes(term))) continue;
       works.push({ id: s.id, title: m.title, edition: m.edition, library: (db.libraries[s.libraryId] || {}).name || '', libraryId: s.libraryId,
         path: String(s.relPath || '').split(/[\\/]/).join('/'), books: store.booksOf(s.id).length, oneshot: Boolean(s.oneshot) });
-      if (works.length >= 30) break;
+      if (!ids.length && works.length >= 30) break;
     }
     works.sort((a, b) => store.collator.compare(a.title, b.title) || store.collator.compare(a.path, b.path));
     return send(200, { works });
@@ -953,6 +964,28 @@ async function handle(ctx) {
     const job = rename.enqueue({ target: t.id, sources, deleteSources: body.deleteSources === true }, { kind: 'merge', metadata, by: user.username, onDone: fileJobDone(user.username, `merged ${sources.length} work(s) into "${store.seriesMeta(t).title}"`) });
     if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
     return send(202, { job });
+  }
+  // POST /api/files/merge-plan { merges: [{ target, sources }], deleteSources, apart } — several merges made out of
+  // one suggestion (works that looked like one but are two or more): each its own job; with apart, the kept works
+  // aren't suggested together again → { jobs }
+  if (p === '/api/files/merge-plan' && method === 'POST') {
+    requireAdmin();
+    const plan = (Array.isArray(body.merges) ? body.merges : []).slice(0, 50).map(x => ({
+      target: String((x && x.target) || ''), sources: [...new Set((Array.isArray(x && x.sources) ? x.sources : []).filter(id => typeof id === 'string' && id !== x.target))] }));
+    const seen = new Set();
+    for (const x of plan) {
+      const t = db.series[x.target];
+      if (!t) throw httpError(404, 'notFound');
+      if (t.oneshot) throw httpError(400, 'mergeTarget');
+      if (!x.sources.length || x.sources.some(id => !db.series[id])) throw httpError(400, 'invalid');
+      for (const id of [x.target].concat(x.sources)) { if (seen.has(id)) throw httpError(400, 'invalid'); seen.add(id); } // (a work in one merge only)
+    }
+    if (!plan.length) throw httpError(400, 'invalid');
+    const jobs = plan.map(x => rename.enqueue({ target: x.target, sources: x.sources, deleteSources: body.deleteSources === true }, { kind: 'merge', metadata, by: user.username,
+      onDone: fileJobDone(user.username, `merged ${x.sources.length} work(s) into "${store.seriesMeta(db.series[x.target]).title}"`) }));
+    if (body.apart === true && plan.length > 1) rename.keepApart(plan.map(x => x.target));
+    if (q.get('wait') === '1') { const done = []; for (const j of jobs) done.push(await rename.waitFor(j.id)); return send(200, { jobs: done }); }
+    return send(202, { jobs });
   }
   if ((p === '/api/files/jobs' || p === '/api/rename/jobs') && method === 'GET') { requireAdmin(); return send(200, { jobs: rename.info().jobs }); }
   // GET /api/rename/jobs → { jobs: [...] } (queued, running, last finished); /api/rename/jobs/:id → { job }
