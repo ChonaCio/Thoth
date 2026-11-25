@@ -11,7 +11,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { createLru } = require('./lru');
-const { publicUrl, UA } = require('../catalog/fetcher');
+const { publicUrl, refererFor, UA } = require('../catalog/fetcher');
 
 const DATA_DIR = path.resolve(process.env.THOTH_DATA_DIR || path.join(__dirname, '..', '..', 'data'));
 const DIR = path.join(DATA_DIR, 'cache', 'catalog-covers');
@@ -100,6 +100,18 @@ async function slot(host) {
   h.active++;
   return () => { h.active--; const next = h.waiting.shift(); if (next) next(); else if (!h.active) hosts.delete(host); };
 }
+// (the Referer: what a browser sends for an image shown on the work's page — refererFor in catalog/fetcher.js)
+// What an image's first bytes say it is (some image servers send "application/octet-stream" or no type at all)
+function sniff(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) return 'image/png';
+  if (buf.slice(0, 4).toString('latin1') === 'GIF8') return 'image/gif';
+  if (buf.slice(0, 4).toString('latin1') === 'RIFF' && buf.slice(8, 12).toString('latin1') === 'WEBP') return 'image/webp';
+  if (buf.slice(4, 8).toString('latin1') === 'ftyp' && /^(avif|avis)$/.test(buf.slice(8, 12).toString('latin1'))) return 'image/avif';
+  if (buf[0] === 0 && buf[1] === 0 && buf[2] === 1 && buf[3] === 0) return 'image/x-icon';
+  return null;
+}
 async function download(url, referer) {
   let u = url;
   for (let hop = 0; hop < 4; hop++) {
@@ -107,14 +119,20 @@ async function download(url, referer) {
     const release = await slot(new URL(u).host);
     let res;
     try {
-      res = await fetch(u, { headers: { 'User-Agent': UA, Accept: 'image/*', Referer: referer || '' }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
+      const headers = { 'User-Agent': UA, Accept: 'image/avif,image/webp,image/*,*/*;q=0.8' };
+      const ref = refererFor(referer, u);
+      if (ref) headers.Referer = ref;
+      res = await fetch(u, { headers, redirect: 'manual', signal: AbortSignal.timeout(15000) });
       if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { u = new URL(res.headers.get('location'), u).href; continue; }
-      let type = (res.headers.get('content-type') || '').split(';')[0].trim();
-      if (/\.ico(\?|$)/i.test(u) && !/^image\//.test(type)) type = 'image/x-icon'; // (icons sent as octet-stream)
-      if (!res.ok || !/^image\//.test(type)) throw err(404, 'noCover');
+      let type = (res.headers.get('content-type') || '').split(';')[0].trim().toLowerCase();
+      // (a page, an error or a bot check instead of the image: not kept)
+      if (!res.ok || /^(text\/|application\/(json|xml|xhtml))/.test(type)) throw err(404, 'noCover');
       if (Number(res.headers.get('content-length')) > MAX_IMAGE) throw err(404, 'noCover');
       const buf = Buffer.from(await res.arrayBuffer());
       if (!buf.length || buf.length > MAX_IMAGE) throw err(404, 'noCover');
+      // An image sent with another type (octet-stream, none) is taken by what its bytes are
+      if (!/^image\//.test(type)) type = sniff(buf) || (/\.ico(\?|$)/i.test(u) ? 'image/x-icon' : '');
+      if (!type) throw err(404, 'noCover'); // (an SVG is served sandboxed, its scripts never run: see sendImage)
       return { buf, type };
     } finally { release(); }
   }

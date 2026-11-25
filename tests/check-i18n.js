@@ -4,10 +4,11 @@ const APP = path.resolve(process.argv[2]);
 global.window = {};
 require(path.join(APP, 'js/i18n.js'));
 if (fs.existsSync(path.join(APP, 'js/i18n-library.js'))) require(path.join(APP, 'js/i18n-library.js'));
+if (fs.existsSync(path.join(APP, 'js/i18n-downloads.js'))) require(path.join(APP, 'js/i18n-downloads.js'));
 const T = window.TRANSLATIONS;
 const have = new Set(Object.keys(T.en));
 const keys = new Set();
-for (const f of ['js/library.js', 'js/reader.js', 'js/app.js', 'index.html']) {
+for (const f of ['js/library.js', 'js/downloads.js', 'js/reader.js', 'js/app.js', 'index.html'].filter(f => fs.existsSync(path.join(APP, f)))) {
   const src = fs.readFileSync(path.join(APP, f), 'utf8');
   for (const m of src.matchAll(/\bt\(\s*'([a-zA-Z0-9_.]+)'/g)) keys.add(m[1]);
   for (const m of src.matchAll(/data-i18n(?:-title|-placeholder)?="([a-zA-Z0-9_.]+)"/g)) keys.add(m[1]);
@@ -17,6 +18,12 @@ for (const f of ['js/library.js', 'js/reader.js', 'js/app.js', 'index.html']) {
 ['ongoing', 'ended', 'hiatus', 'abandoned', 'unknown'].forEach(s => keys.add('series.status.' + s));
 ['ltr', 'rtl', 'vertical'].forEach(s => keys.add('series.direction.' + s));
 ['writer', 'penciller', 'inker', 'colorist', 'letterer', 'coverartist', 'editor'].forEach(s => keys.add('author.' + s));
+// (Downloads: statuses, modes, orders, schedules and days built from their names)
+['done', 'pending', 'locked', 'failed', 'nosource'].forEach(s => keys.add('dl.status.' + s));
+['priority', 'quality'].forEach(s => { keys.add('dl.mode.' + s); keys.add('dl.modeHelp.' + s); });
+['title', 'added', 'updated', 'manual'].forEach(s => { keys.add('dl.order.' + s); keys.add('dl.orderNote.' + s); });
+['manual', 'interval', 'daily', 'weekly'].forEach(s => keys.add('dl.schedType.' + s));
+[0, 1, 2, 3, 4, 5, 6].forEach(d => keys.add('dl.day.' + d));
 ['folderNotFound', 'folderNoAccess', 'folderInUse', 'folderNotAllowed', 'folderRequired', 'nameRequired', 'invalidDate', 'fileMissing', 'notAnImageBook', 'pageNotFound', 'invalid'].forEach(s => keys.add('err.' + s));
 const missing = [...keys].filter(k => !have.has(k) && !/\.$/.test(k)).sort();
 console.log(`${keys.size} keys used; ${missing.length} missing in en${missing.length ? ':\n  ' + missing.join('\n  ') : ''}`);

@@ -40,6 +40,13 @@ const site = http.createServer((req, res) => {
   if (u.pathname.startsWith('/thumb/')) {
     thumbHits[u.pathname] = (thumbHits[u.pathname] || 0) + 1;
     if (u.pathname === '/thumb/missing.png') { res.writeHead(404); return res.end('no'); }
+    // (like MangaNato's image server: only the referer a browser sends — the page's origin and "/" — and the image
+    // sent as octet-stream)
+    if (u.pathname === '/thumb/guarded.webp') {
+      if (req.headers.referer !== 'http://site.example/') { res.writeHead(403, { 'Content-Type': 'text/html' }); return res.end('<!DOCTYPE html>forbidden'); }
+      res.writeHead(200, { 'Content-Type': 'application/octet-stream' }); return res.end(Buffer.concat([Buffer.from('RIFF\x00\x00\x00\x00WEBPVP8 ', 'latin1'), Buffer.alloc(200, 1)]));
+    }
+    if (u.pathname === '/thumb/page.png') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<html>not an image</html>'); }
     res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(300, u.pathname.length));
   }
   if (u.pathname === '/series/priced') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Priced</h1><p class="au">Ana One, Bo Two; Cy Three</p><ul>' + [3, 2, 1].map(n => `<li class="cl"><a href="/series/priced/chapter-${n}"><span class="num">Chapter ${n}</span>${n === 3 ? '<span class="price">50</span>' : '<span class="free">Now Free</span>'}</a></li>`).join('') + '</ul>'); }
@@ -275,6 +282,11 @@ const site = http.createServer((req, res) => {
     check(e1 && e2 && e2.code === 'noCover' && thumbHits['/thumb/missing.png'] === 1 && th.info().skippedFailed === 1, 'an image that failed isn\'t asked for again for a while');
     let e3 = null; try { await H.image({ url: 'file:///etc/passwd', cfg }); } catch (e) { e3 = e; }
     check(e3 && e3.code === 'noCover', 'only web addresses');
+    const gd = await H.image({ url: T('guarded.webp'), referer: 'http://site.example/manga/some-work', cfg });
+    check(gd.fetched && gd.type === 'image/webp' && thumbHits['/thumb/guarded.webp'] === 1,
+      'an image server that wants the browser\'s referer (the page\'s origin and "/") and sends the image as octet-stream: kept as a WebP');
+    let e4 = null; try { await H.image({ url: T('page.png'), cfg }); } catch (e) { e4 = e; }
+    check(e4 && e4.code === 'noCover', 'a page where an image was expected isn\'t kept');
     const t0 = Date.now();
     const w = await H.warm({ items: [1, 2, 3, 4, 5].map(n => ({ url: T(`ok-${n}.png`), referer: BASE })).concat([{ url: T('ok-2.png') }]), cfg });
     const wi = th.info().warm;

@@ -1676,7 +1676,7 @@
           '<p class="muted small">' + esc(t('cat.foundOn', { sources: w.sources.map(function (s) { return s.name; }).join(', ') })) + '</p>' +
           (isAdmin() && w.groupId ? '<button class="btn btn--text btn--danger" data-lib="cat-unmerge" data-id="' + esc(w.groupId) + '" data-work="' + esc(key) + '">' + esc(t('cat.unmerge')) + '</button>' : '') +
         '</div>' +
-      '</div>' + missingList + versionTabs + chapterTabs + sources;
+      '</div>' + (isAdmin() && window.DownloadsPage ? window.DownloadsPage.workBox(w.key) : '') + missingList + versionTabs + chapterTabs + sources;
   }
 
   // Merge tab (admins): the same work on several sites. Suggestions to confirm, and the works merged already
@@ -3752,7 +3752,7 @@
       tab('tasks', '#processes/tasks', 'list', running ? t('proc.tabTasksN', { count: running }) : t('proc.tabTasks')) +
       tab('logs', '#logs', 'description', t('nav.logs')) + '</nav>';
   }
-  var TASK_ICON = { scan: 'sync', metadata: 'download', files: 'folder_open', crawl: 'travel_explore', covers: 'collections', other: 'memory' };
+  var TASK_ICON = { scan: 'sync', metadata: 'dataset', files: 'folder_open', crawl: 'travel_explore', download: 'download', covers: 'collections', other: 'memory' };
   var TASK_BADGE = { running: 'badge--primary', done: 'badge--ok', failed: 'badge--danger', stopped: '' };
   function tasksState() { if (!cache.tasks) cache.tasks = { data: null, error: null, open: {}, output: {}, follow: true }; return cache.tasks; }
   function fmtSpan(ms) { return ms == null ? '—' : fmtTime(Math.max(0, ms)); }
@@ -5030,6 +5030,8 @@
     });
   }
 
+  // Building blocks other page scripts use (js/downloads.js)
+  window.LibraryUI = { progressBar: progressBar, emptyState: emptyState, fmtSize: fmtSize, sourceIconHtml: sourceIconHtml };
   window.LibraryPages = {
     home: home, library: library, series: series, book: book, search: search,
     collections: collections, collection: collection, readlists: readlists, readlist: readlist,

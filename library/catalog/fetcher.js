@@ -323,4 +323,15 @@ function createFetcher({ gapMs = 1000, parallel = 1, staggerMs = 150, allowLocal
     robotsInfo: origin => robotsMeta.get(origin) || null };
 }
 
-module.exports = { cookiePairs, headerLines, createFetcher, parseRobots, robotsAllows, sitemapsIn, publicUrl, UA, MAX_BYTES, SITEMAP_BYTES };
+// The Referer a browser sends for an image shown on `page`: the page's origin with its "/" when the image is on
+// another host (image servers that check it often want exactly that: "https://www.manganato.gg/" passes where
+// "https://www.manganato.gg" is refused), the page itself on the same host
+function refererFor(page, imageUrl) {
+  if (!page) return '';
+  try {
+    const r = new URL(page), i = new URL(imageUrl);
+    return r.origin === i.origin ? r.href : r.origin + '/';
+  } catch { return ''; }
+}
+
+module.exports = { cookiePairs, headerLines, createFetcher, parseRobots, robotsAllows, sitemapsIn, publicUrl, refererFor, UA, MAX_BYTES, SITEMAP_BYTES };

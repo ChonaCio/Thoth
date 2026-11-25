@@ -441,7 +441,10 @@ function ids(list, table) {
 /* ---------------- sending files ---------------- */
 async function sendImage(req, res, buf, type, etag) {
   if (req.headers['if-none-match'] === etag) { res.writeHead(304, { ETag: etag }); return res.end(); }
-  res.writeHead(200, { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=604800', ETag: etag });
+  const h = { 'Content-Type': type, 'Content-Length': buf.length, 'Cache-Control': 'private, max-age=604800', ETag: etag, 'X-Content-Type-Options': 'nosniff' };
+  // (an SVG from another site, opened on its own: shown, its scripts and links never run)
+  if (/svg/i.test(type)) h['Content-Security-Policy'] = "default-src 'none'; style-src 'unsafe-inline'; sandbox";
+  res.writeHead(200, h);
   res.end(buf);
 }
 // Pages and covers come from the media service (key-value cache + its own process, see media.js)
@@ -771,6 +774,34 @@ async function handle(ctx) {
     });
     if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
     return send(202, { job });
+  }
+  // ---- Downloads: jobs that download catalog works into a library (administrators only) ----
+  if (p.startsWith('/api/downloads')) {
+    requireAdmin();
+    const downloads = require('./downloads');
+    const b = body || {};
+    if (p === '/api/downloads/jobs' && method === 'GET') return send(200, downloads.list());
+    if (p === '/api/downloads/jobs' && method === 'POST') return send(201, { job: downloads.createJob(b) });
+    // GET /api/downloads/for-work?key=: the jobs a catalog work is in
+    if (p === '/api/downloads/for-work' && method === 'GET') return send(200, { jobs: downloads.jobsOfWork(String(q.get('key') || '')) });
+    if ((m = /^\/api\/downloads\/jobs\/([\w-]+)$/.exec(p))) {
+      if (method === 'GET') return send(200, { job: downloads.get(m[1]) });
+      if (method === 'PATCH') return send(200, { job: downloads.updateJob(m[1], b) });
+      if (method === 'DELETE') { downloads.removeJob(m[1]); return send(200, { ok: true }); }
+    }
+    if ((m = /^\/api\/downloads\/jobs\/([\w-]+)\/(run|stop|retry|works|restore-excluded)$/.exec(p)) && method === 'POST') {
+      if (m[2] === 'run') return send(202, downloads.run(m[1], { full: Boolean(b.full) }));
+      if (m[2] === 'stop') return send(200, { stopped: downloads.stop(m[1]) });
+      if (m[2] === 'retry') return send(200, downloads.retry(m[1], b.key ? String(b.key) : null));
+      if (m[2] === 'works') return send(200, downloads.addWorks(m[1], b.keys));
+      return send(200, downloads.restoreExcluded(m[1]));
+    }
+    // GET /api/downloads/jobs/:id/work?key= (a work's chapters); DELETE …/work?key= (out of the job; files stay)
+    if ((m = /^\/api\/downloads\/jobs\/([\w-]+)\/work$/.exec(p))) {
+      if (method === 'GET') return send(200, { work: downloads.workChapters(m[1], String(q.get('key') || '')) });
+      if (method === 'DELETE') return send(200, downloads.removeWork(m[1], String(q.get('key') || '')));
+    }
+    throw httpError(404, 'notFound');
   }
   // ---- External catalog: sources (sites crawled for their works) and the works found ----
   if (p.startsWith('/api/catalog')) {

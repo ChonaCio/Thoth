@@ -757,6 +757,40 @@ sites added as **sources**, with its metadata and chapter list.
     minute*; 0 fetches them only when someone looks at them).
 - Storage: `data/catalog/<source>/` (`works.json`, chapter lists in `chapters/`, `state.json`). Removing a source
   removes them; your library is never changed by the catalog.
+
+### Downloads (catalog works into a library)
+
+**Downloads** (administrators, in the sidebar after External catalog) has **jobs** that download works of the
+external catalog into a library, one CBZ per chapter, on a schedule. Create one with *New download job*, or from
+a work's page in the catalog (its **Download** box: add it to a job, or start a new job with it).
+
+- **Works:** pick them one by one (search the catalog), or tick sites and *Download every work from the ticked
+  sites* (works that appear there later are added by themselves; a work taken out by hand stays out). Download
+  order: title, order added, newest chapters first, or your own (arrows).
+- **Sites & quality:** the sites the job may download from, in order. *Site order* takes each chapter from the
+  first site with a whole copy; *Best quality* looks at the first page on every site and takes the copy with the
+  widest pages. Each chapter is downloaded **once**, and several chapters at a time (1–6).
+- **Chapters:** versions (Regular, Colored, Raw, Uncensored, Animated — each its own work folder, `Title`,
+  `Title (Colored)`…), a chapter range, at most N chapters per run, and a blacklist of genres and tags.
+- **Schedule:** by hand, every few hours, every day, or on some days, at a time (server time).
+- **Where files go:** into the work's folder when the library already has the work (chapters it has are never
+  downloaded), else a new folder named after it. Files are named the library's way (`Chapter 12.cbz`,
+  `Chapter 12 - The Name.cbz`) with pages `001.jpg`, `002.jpg`… in reading order and a `ComicInfo.xml` (series,
+  number, title, people, genres, the chapter's address). The library is scanned after each run.
+- **What is never done:** premium or locked chapters are not unlocked — a chapter that is premium everywhere
+  **waits** (nothing is requested) and is tried again on later runs, when a site may have it for free. robots.txt
+  (also of the image servers), each site's pace and parallel requests, and bot checks are respected as when
+  crawling; the user agent is Thoth's own.
+- **Broken copies are replaced:** a page that isn't an image (an error page), is cut off, unreadable, a tiny
+  placeholder, or a chapter whose pages are all the same image, makes the job take that chapter from the next
+  site. Failed chapters are tried again once a day; *Full pass* tries them all and downloads again the files that
+  are gone from the library. Each work's **Chapters** view shows every chapter's state (downloaded — from which
+  site, pages, size, width; to download; waiting; failed and why) with *Try again*.
+- Pages are found on the chapter page (the usual reader areas, lazy-loaded images, image lists in the page's
+  scripts; a source can name its own with the `pageImages` selector) or, for MangaDex, its API.
+- Each run is **its own process**, like a crawl (it keeps going if the server restarts), shown under Processes →
+  Tasks with its log. Storage: `data/downloads/<job>/` (`state.json`: every chapter's state, `run.json`,
+  `progress.json`). Deleting a job keeps the downloaded files.
 ### Library and work settings
 
 | Setting | Library (Manage libraries → Edit) | Work (its page → Edit) |
@@ -780,7 +814,8 @@ temporary data folder, so `data/` is never touched. See [HANDOFF.md](HANDOFF.md)
 | `index.html` | Markup for sign-in/setup view, app shell, account menu, dialogs, reader |
 | `css/styles.css` | Theme tokens (light/dark), layout, components, cards, reader, responsive rules |
 | `js/store.js` | API client for the server |
-| `js/i18n.js`, `js/i18n-library.js` | Translation strings (en, es, fr, de, pt) |
+| `js/i18n.js`, `js/i18n-library.js`, `js/i18n-downloads.js` | Translation strings (en, es, fr, de, pt) |
+| `js/downloads.js` | Downloads: jobs, a job's settings, a work's chapters, the Download box on catalog works |
 | `js/icons.js` | Inline SVG icon set |
 | `js/app.js` | Routing (`#home`, `#series/<id>`, …), sidebar, account menu, profile, users, updates |
 | `js/library.js` | Home, libraries, series, books, search, collections, read lists, library management |
@@ -789,7 +824,7 @@ temporary data folder, so `data/` is never touched. See [HANDOFF.md](HANDOFF.md)
 | `auth.js` | Accounts: first-user setup, sign-in, sessions, roles, library access |
 | `supervisor.js` | Runs the server as a child process and restarts it after updates or crashes |
 | `config.js` | Server settings (`data/config.json`), including metadata API keys |
-| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `media.js` + `media-worker.js` (pages/covers: cache and media process), `rename.js` + `rename-worker.js` (renaming jobs), `db.js` (storage, versions, memoized views), `api.js` (routes), `metadata/` (online metadata: `providers.js` per site, `index.js` queue, merging, covers, Identify) |
+| `library/` | `zip.js` (CBZ reader), `scan-core.js` + `scan-worker.js` (file analysis in a separate low-priority process), `scanner.js` (scan queue, applying results), `media.js` + `media-worker.js` (pages/covers: cache and media process), `rename.js` + `rename-worker.js` (renaming jobs), `db.js` (storage, versions, memoized views), `api.js` (routes), `metadata/` (online metadata: `providers.js` per site, `index.js` queue, merging, covers, Identify), `downloads/` (download jobs: `index.js` jobs/plan/queue/schedule, `runner.js` the run's own process, `pages.js` a chapter's page images, `images.js` image checks, `cbz.js` CBZ writer) |
 | `updater.js` | Checks GitHub for releases/pushes and installs them |
 | `Dockerfile`, `docker-compose.yml` | Container setup |
 | `deploy/` | systemd service, install/uninstall scripts, nginx example |

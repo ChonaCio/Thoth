@@ -13,6 +13,7 @@
     'metadata-sources': { adminOnly: true },
     files: { adminOnly: true },
     catalog: { adminOnly: true },
+    downloads: { adminOnly: true },
     rename: { adminOnly: true }, // old address of File management
     processes: { adminOnly: true },
     logs: { adminOnly: true },
@@ -344,6 +345,7 @@
       items.push({ href: '#metadata-sources', icon: 'dataset', key: 'nav.metadataSources' });
       items.push({ href: '#files', icon: 'folder_open', key: 'nav.files', match: ['files', 'rename'] });
       items.push({ href: '#catalog', icon: 'travel_explore', key: 'nav.catalog', match: ['catalog'] });
+      items.push({ href: '#downloads', icon: 'download', key: 'nav.downloads', match: ['downloads'] });
       items.push({ href: '#processes', icon: 'memory', key: 'nav.processes', match: ['processes', 'logs'] }); // (Logs is one of its tabs)
       items.push({ href: '#server-settings', icon: 'tune', key: 'nav.serverSettings' });
       items.push({ href: '#users', icon: 'group', key: 'nav.users' });

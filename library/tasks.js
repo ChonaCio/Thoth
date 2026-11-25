@@ -17,7 +17,7 @@ const config = require('../config');
 const DATA_DIR = path.resolve(process.env.THOTH_DATA_DIR || path.join(__dirname, '..', 'data'));
 const LOG_DIR = path.join(DATA_DIR, 'logs');
 const KEEP_FINISHED = 60; // in the Tasks list (their logs stay on disk)
-const KINDS = ['scan', 'metadata', 'files', 'crawl', 'covers', 'other'];
+const KINDS = ['scan', 'metadata', 'files', 'crawl', 'download', 'covers', 'other'];
 
 const tasks = []; // running and the last finished ones (newest last)
 let seq = 0;

@@ -187,6 +187,7 @@ async function handleApi(req, res, url) {
         metadata: metadata.info(),
         rename: rename.info(),
         catalog: require('./library/catalog').info(),
+        downloads: require('./library/downloads').info(),
         caches: require('./library/cache/client').allInfo(), // Pages, Covers, Works, Search: a process each
         tasks: { running: tasks.list().running.length }
       });
@@ -287,6 +288,7 @@ server.listen(PORT, HOST, () => {
   scanner.scanAll();
 media.scheduleWarm(15000); // work covers into the cover cache (also after every scan)
 require('./library/catalog').startSchedule(); // external catalog: scheduled crawls
+require('./library/downloads').start(); // download jobs: runs still going, scheduled runs
 tasks.startCleanup(); // task log files older than Server settings → logRetentionDays
 
   scanner.startSchedule();

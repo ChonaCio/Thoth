@@ -77,7 +77,7 @@ function parseSource(body, current) {
   if ('concurrency' in b) { const n = Math.round(Number(b.concurrency) || 0); if (n) s.concurrency = Math.max(1, Math.min(8, n)); else delete s.concurrency; }
   if ('listPath' in b) s.listPath = String(b.listPath || '').trim().replace(/[^\w\-/]/g, '').slice(0, 80);
   if ('selectors' in b && b.selectors && typeof b.selectors === 'object') {
-    const keys = ['listUrl', 'firstPage', 'maxPages', 'extraListUrls', 'linkPattern', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'tags', 'authors', 'altTitles', 'altSeparator', 'status', 'type', 'year', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate', 'chapterPremium'];
+    const keys = ['listUrl', 'firstPage', 'maxPages', 'extraListUrls', 'linkPattern', 'item', 'link', 'title', 'cover', 'workTitle', 'workCover', 'summary', 'genres', 'tags', 'authors', 'altTitles', 'altSeparator', 'status', 'type', 'year', 'chapter', 'chapterLink', 'chapterTitle', 'chapterDate', 'chapterPremium', 'pageImages'];
     s.selectors = {};
     for (const k of keys) if (b.selectors[k] != null && String(b.selectors[k]).trim()) s.selectors[k] = String(b.selectors[k]).trim().slice(0, 400);
   }
@@ -840,6 +840,8 @@ function facets() {
   };
 }
 // One work in full: every source's metadata and chapters; for a work the library has, which chapters it lacks
+// The catalog entry (one version of a work; merged sites once) a key is: its own key or one of its sites' entries
+function itemByKey(key) { catalogItems(); return itemsMemo.byKey.get(String(key || '')) || null; }
 function detail(key) {
   catalogItems();
   const it = itemsMemo.byKey.get(key);
@@ -1101,11 +1103,21 @@ function dismiss(key) {
 /* ---------------- covers: the catalog thumbnails cache ---------------- */
 const thumbs = cacheService('catthumbs', { label: 'Catalog thumbnails', idleMs: 10 * 60 * 1000 });
 const thumbCfg = () => { const c = require('../../config').get(); return { memMb: c.catalogThumbMemMb, diskMb: c.catalogThumbDiskMb, perMin: c.catalogThumbsPerMin }; };
+// The page a work's cover is shown on (its own page; the referer image servers expect from a browser)
+const coverReferer = w => (w && w.url) || (db.catalogSources[w && w.sourceId] || {}).baseUrl || '';
+// A work's cover; when its site won't give it, the cover of another work merged with it (the same work elsewhere)
 async function cover(key) {
   const w = workByKey(key);
-  if (!w || !w.cover) throw err(404, 'noCover');
-  return cachedImage(w.cover, (db.catalogSources[w.sourceId] || {}).baseUrl || '');
+  if (!w) throw err(404, 'noCover');
+  const tries = [w].concat(mergedWith(key).map(workByKey).filter(o => o && o.key !== w.key));
+  let last = err(404, 'noCover');
+  for (const x of tries) {
+    if (!x.cover) continue;
+    try { return await cachedImage(x.cover, coverReferer(x)); } catch (e) { last = e; }
+  }
+  throw last;
 }
+const mergedWith = key => { const g = Object.values(db.catalogMerges.groups || {}).find(x => (x.keys || []).includes(key)); return g ? g.keys.slice() : []; };
 // A source's icon: the site's own (found by Detect, else its /favicon.ico)
 async function sourceIcon(id) {
   const s = db.catalogSources[id];
@@ -1148,8 +1160,7 @@ function warmCovers(ids) {
     const s = db.catalogSources[id];
     if (!s || s.enabled === false) continue;
     let list; try { list = sourceWorks(id); } catch { continue; }
-    const referer = s.baseUrl || '';
-    for (const w of list) if (w.cover && publicUrl(w.cover, ALLOW_LOCAL)) items.push({ url: w.cover, referer });
+    for (const w of list) if (w.cover && publicUrl(w.cover, ALLOW_LOCAL)) items.push({ url: w.cover, referer: coverReferer(Object.assign({ sourceId: id }, w)) });
   }
   if (items.length) thumbs.call('warm', { items, cfg }).catch(e => console.error('[catalog] reading covers ahead:', e.message));
   return items.length;
@@ -1171,4 +1182,4 @@ require('../../config').onChange(changed => {
 });
 
 module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, siteTemplates, saveSiteTemplate, removeSiteTemplate, exportSiteTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
-  list, facets, detail, dataVersion, warmCovers, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
+  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
