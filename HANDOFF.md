@@ -134,6 +134,12 @@ through `/api/setup`, and use the browser.
 - Not done yet: EPUB/CBR support, OPDS, per-user reading-mode defaults, metadata for individual chapters.
 
 ## Recent changes (newest first)
+- **2026-11-25** — Catalog chapters filter, wide Caches card, grouped source buttons:
+  - `chapters` filter (`yes` | `no`): `/api/catalog` (+ exports, in `catFilters`), `filtered()` uses the item's `chapters` (max over its sources). `/api/catalog/merge-suggestions?chapters=`: `yes` leaves out works without chapters (a suggestion still needs two), `no` keeps only suggestions with a work without chapters; the suggestion `key` is still the whole group's, so "not the same" covers the hidden works too. `/api/catalog/merged?chapters=`: `yes` hides groups where no work has chapters, `no` keeps groups with a work without.
+  - UI: `catChaptersSelect` next to "In library" (Browse, `#cat-chapters`, `CAT_FILTERS`) and in the Merge toolbar (`cat-merge-chapters`, `catMergeState().chapters`). i18n `cat.chaptersFilter/All/Yes/No`.
+  - Processes: the Caches card is `wide` (`.proc-card--wide`, full grid row).
+  - Source tiles: `.cat-src__actions` is a size container; each `.cat-src__group` shows its `aria-label` (Crawling / Source) as a caption. Stacked with a dashed line between them, side by side with a vertical line from 980 px wide (`@container`).
+  - Tests: catalog (filter totals; merge suggestions by chapters).
 - **2026-11-25** — Catalog titles with separators in them, and English main titles kept:
   - `library/titles.js` `splitTitles(text, {sep, known})` splits a line of other titles. Strong separators (line break, `;`, `|`, `•`, `·`, ` / ` with spaces, full-width forms) always split; commas (`,` `、` `，`) only when no strong one is present, and never inside brackets/quotes, inside a `known` title (the work's own/listing title), before a lowercase word, after an interjection/form of address (`INTERJECTION`: "Yes, My Lord"), or around a bare number. A bare `/` never splits ("Fate/stay night"). A template's `altSeparator` is honoured (a comma one keeps the comma rules).
   - Used by `adapters.js` `altOf` in madara, mangareader, custom (selectors/templates) and `enrich`'s labeled row. `splitAlt` stays for authors only.

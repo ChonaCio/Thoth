@@ -777,7 +777,7 @@ async function handle(ctx) {
     // Administrators only (the catalog is a server tool, like file management)
     requireAdmin();
     // The works list's filters (also for its exports)
-    const catFilters = () => { const o = {}; for (const k of ['q', 'source', 'lacks', 'inLibrary', 'genre', 'merged', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'sort', 'offset', 'limit']) o[k] = q.get(k); return o; };
+    const catFilters = () => { const o = {}; for (const k of ['q', 'source', 'lacks', 'inLibrary', 'genre', 'merged', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'chapters', 'sort', 'offset', 'limit']) o[k] = q.get(k); return o; };
     const sendFile = (name, type, body) => {
       res.writeHead(200, { 'Content-Type': type + '; charset=utf-8', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`, 'Cache-Control': 'no-store' });
       res.end(body); return true;
@@ -850,12 +850,12 @@ async function handle(ctx) {
     // Text never part of a title (removed from every catalog title, for merging): one per line
     if (p === '/api/catalog/title-cleanup' && method === 'GET') return send(200, catalog.titleCleanup());
     if (p === '/api/catalog/title-cleanup' && method === 'PUT') return send(200, catalog.setTitleCleanup(body.remove));
-    if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions({ source: q.get('source') || null }));
+    if (p === '/api/catalog/merge-suggestions' && method === 'GET') return send(200, catalog.mergeSuggestions({ source: q.get('source') || null, chapters: q.get('chapters') || null }));
     // Manual corrections (kept apart, "not the same") and undoing them
     if (p === '/api/catalog/corrections' && method === 'GET') return send(200, catalog.corrections());
     if (p === '/api/catalog/corrections/apart' && method === 'DELETE') { catalog.undoApart(String(q.get('pair') || '')); return send(200, { ok: true }); }
     if (p === '/api/catalog/corrections/dismissed' && method === 'DELETE') { catalog.undoDismiss(String(q.get('key') || '')); return send(200, { ok: true }); }
-    if (p === '/api/catalog/merged' && method === 'GET') return send(200, catalog.mergedGroups({ source: q.get('source') || null }));
+    if (p === '/api/catalog/merged' && method === 'GET') return send(200, catalog.mergedGroups({ source: q.get('source') || null, chapters: q.get('chapters') || null }));
     if (p === '/api/catalog/merge/auto' && method === 'POST') return send(200, { merged: catalog.autoMerge() });
     if ((m = /^\/api\/catalog\/merge\/([\w-]+)\/split$/.exec(p)) && method === 'POST') return send(200, catalog.splitOff(m[1], String(body.key || '')));
     if (p === '/api/catalog/merge-suggestions/dismiss' && method === 'POST') {

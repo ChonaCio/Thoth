@@ -1014,8 +1014,16 @@ body.is-reading { overflow: hidden; }
 .wz-preview__opts .checkbox { display: inline-flex; align-items: center; gap: 6px; width: auto; margin: 0; }
 .wz-preview__opts .checkbox input { width: auto; flex: none; min-width: 0; padding: 0; }
 /* External catalog source tiles: the same buttons in the same places (crawling | the source) */
-.cat-src__actions { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 8px 16px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
-.cat-src__group { display: flex; flex-wrap: wrap; gap: 6px; }
+.cat-src__actions { container-type: inline-size; width: 100%; align-self: stretch; box-sizing: border-box; display: flex; flex-wrap: wrap; justify-content: space-between; align-items: stretch; gap: 10px 16px; margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border); }
+/* Each group under its name (its aria-label); stacked in a narrow tile with a line between them, side by side with
+   a vertical line in a wide one */
+.cat-src__group { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; flex: 1 1 100%; }
+.cat-src__group::before { content: attr(aria-label); flex: 0 0 100%; width: 0; white-space: nowrap; font-size: 11px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; color: var(--text-muted); }
+.cat-src__group + .cat-src__group { border-top: 1px dashed var(--border); padding-top: 10px; }
+@container (min-width: 980px) {
+  .cat-src__group { flex: 0 1 auto; }
+  .cat-src__group + .cat-src__group { border-top: 0; padding-top: 0; border-left: 1px solid var(--border); padding-left: 16px; }
+}
 /* Site templates panel (Sources tab) */
 .cat-tpl { margin-bottom: 16px; }
 .cat-tpl__head { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }

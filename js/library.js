@@ -1466,7 +1466,7 @@
   function catState() {
     if (!cache.catalog) {
       var view = 'grid'; try { view = localStorage.getItem('thoth.catView') === 'list' ? 'list' : 'grid'; } catch (e) { /* no storage */ }
-      cache.catalog = { q: '', source: '', inLibrary: '', genre: '', sort: 'title', type: '', status: '', sites: '', lacks: '', updated: '', with: '', without: '', author: '', more: false, view: view,
+      cache.catalog = { q: '', source: '', inLibrary: '', chapters: '', genre: '', sort: 'title', type: '', status: '', sites: '', lacks: '', updated: '', with: '', without: '', author: '', more: false, view: view,
         items: null, total: 0, error: null, loading: false, facets: null, seq: 0 };
     }
     return cache.catalog;
@@ -1487,7 +1487,7 @@
       '</a></article>';
   }
   // The list's filters as query parameters (also for its exports)
-  var CAT_FILTERS = ['q', 'source', 'lacks', 'inLibrary', 'genre', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'sort'];
+  var CAT_FILTERS = ['q', 'source', 'lacks', 'inLibrary', 'chapters', 'genre', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'sort'];
   function catFilterParams() { var st = catState(), o = {}; CAT_FILTERS.forEach(function (k) { if (st[k]) o[k] = st[k]; }); return o; }
   // A row of the list view: cover, title, its sites (links), chapters, last update
   function catalogRow(it) {
@@ -1525,6 +1525,12 @@
     renderIcons(el);
     A().restoreScroll();
   }
+  // Works with or without chapters found (Browse and Merge)
+  function catChaptersSelect(id, cur, attrs) {
+    var opt = function (v, label) { return '<option value="' + v + '"' + (v === (cur || '') ? ' selected' : '') + '>' + esc(label) + '</option>'; };
+    return '<select class="select select--compact" id="' + id + '"' + (attrs || '') + ' aria-label="' + esc(t('cat.chaptersFilter')) + '" title="' + esc(t('cat.chaptersFilter')) + '">' +
+      opt('', t('cat.chaptersAll')) + opt('yes', t('cat.chaptersYes')) + opt('no', t('cat.chaptersNo')) + '</select>';
+  }
   function catalogBrowse() {
     var st = catState(), fc = st.facets;
     var opt = function (v, label, cur) { return '<option value="' + esc(v) + '"' + (v === cur ? ' selected' : '') + '>' + esc(label) + '</option>'; };
@@ -1536,6 +1542,7 @@
           '<select class="select select--compact" id="cat-source" aria-label="' + esc(t('cat.source')) + '">' + opt('', t('cat.allSources'), st.source) +
             ((fc && fc.sources) || []).map(function (s) { return opt(s.id, s.name + ' (' + s.works + ')', st.source); }).join('') + '</select>' +
           '<select class="select select--compact" id="cat-have" aria-label="' + esc(t('cat.inLibrary')) + '">' + opt('', t('cat.haveAll'), st.inLibrary) + opt('yes', t('cat.haveYes'), st.inLibrary) + opt('no', t('cat.haveNo'), st.inLibrary) + '</select>' +
+          catChaptersSelect('cat-chapters', st.chapters) +
           '<select class="select select--compact" id="cat-genre" aria-label="' + esc(t('filter.genre')) + '">' + opt('', t('cat.allGenres'), st.genre) +
             ((fc && fc.genres) || []).map(function (g) { return opt(g.name, g.name + ' (' + g.count + ')', st.genre); }).join('') + '</select>' +
           '<select class="select select--compact" id="cat-sort" aria-label="' + esc(t('lib.sort')) + '">' + opt('title', t('lib.sortTitle'), st.sort) + opt('updated', t('cat.sortUpdated'), st.sort) + opt('chapters', t('cat.sortChapters'), st.sort) + opt('sites', t('cat.sortSites'), st.sort) + '</select>' +
@@ -1578,7 +1585,7 @@
     var st = catState();
     renderCatalogGrid();
     $('#cat-q', el).addEventListener('input', function (e) { st.q = e.target.value; clearTimeout(catTimer); catTimer = setTimeout(function () { fetchCatalog(); }, 250); });
-    [['#cat-source', 'source'], ['#cat-have', 'inLibrary'], ['#cat-genre', 'genre'], ['#cat-sort', 'sort']].forEach(function (x) {
+    [['#cat-source', 'source'], ['#cat-have', 'inLibrary'], ['#cat-chapters', 'chapters'], ['#cat-genre', 'genre'], ['#cat-sort', 'sort']].forEach(function (x) {
       $(x[0], el).addEventListener('change', function (e) { st[x[1]] = e.target.value; fetchCatalog(); });
     });
     // More filters: selects at once, text after a pause; the page is drawn again so the exports carry them
@@ -1675,14 +1682,15 @@
   // Merge tab (admins): the same work on several sites. Suggestions to confirm, and the works merged already
   // (by hand or automatically, when it was certain) with a way to split them. Filter: one source's works.
   function catMergeState() {
-    if (!cache.catMerge) cache.catMerge = { data: null, merged: null, sources: null, source: '', loading: false, error: null, choice: {} };
+    if (!cache.catMerge) cache.catMerge = { data: null, merged: null, sources: null, source: '', chapters: '', loading: false, error: null, choice: {} };
     return cache.catMerge;
   }
   function loadCatMerge() {
     var st = catMergeState();
     st.loading = true; st.error = null;
     if (isCatalogRoute()) A().renderPage();
-    var qs = st.source ? '?source=' + encodeURIComponent(st.source) : '';
+    var qp = {}; if (st.source) qp.source = st.source; if (st.chapters) qp.chapters = st.chapters;
+    var qs = st.source || st.chapters ? '?' + Store.qs(qp) : '';
     return Promise.all([api('GET', '/api/catalog/merge-suggestions' + qs), api('GET', '/api/catalog/merged' + qs), st.sources ? Promise.resolve(null) : api('GET', '/api/catalog/facets'),
       api('GET', '/api/catalog/title-cleanup').then(null, function () { return null; }), api('GET', '/api/catalog/corrections').then(null, function () { return null; })]).then(function (r) {
       st.data = r[0]; st.merged = r[1]; if (r[2]) st.sources = r[2].sources; if (r[3]) st.cleanup = r[3]; st.corrections = r[4]; st.choice = {};
@@ -1714,6 +1722,7 @@
           '<option value="">' + esc(t('cat.allSources')) + '</option>' +
           sources.map(function (s) { return '<option value="' + esc(s.id) + '"' + (s.id === st.source ? ' selected' : '') + '>' + esc(s.name) + '</option>'; }).join('') +
         '</select>' +
+        catChaptersSelect('cat-merge-chapters', st.chapters, ' data-lib-change="cat-merge-chapters"') +
         '<button class="btn btn--primary btn--pill" data-lib="cat-merge-check"' + (st.loading ? ' disabled' : '') + '>' + icon('search') + esc(t('files.findDuplicates')) + '</button>' +
         '<button class="btn btn--outline btn--pill" data-lib="cat-merge-auto"' + (st.loading ? ' disabled' : '') + ' title="' + esc(t('cat.autoMergeHelp')) + '">' + icon('collections') + esc(t('cat.autoMerge')) + '</button>' +
       '</div></div>';
@@ -3282,6 +3291,7 @@
         if ((k = tg.dataset.catPrimary)) { st.choice[k].primary = tg.value; st.choice[k].include[tg.value] = true; return A().renderPage(); }
         if ((k = tg.dataset.catInclude)) { st.choice[k].include[tg.value] = tg.checked; return A().renderPage(); }
         if (tg.dataset.libChange === 'cat-merge-source') { st.source = tg.value; return loadCatMerge(); }
+        if (tg.dataset.libChange === 'cat-merge-chapters') { st.chapters = tg.value; return loadCatMerge(); }
       });
     },
     enter: function (route) {
@@ -3665,7 +3675,8 @@
       };
     };
     return {
-      id: 'caches', icon: 'collections', title: t('proc.caches'),
+      // (its own row, as wide as the page: six caches side by side in one table)
+      id: 'caches', icon: 'collections', title: t('proc.caches'), wide: true,
       badge: { text: t('proc.cache.running', { count: caches.filter(function (c) { return c.pid; }).length, total: caches.length }), cls: 'badge--ok' },
       parts: [
         proc.table([t('proc.cache.name'), t('proc.pid'), t('proc.cache.content'), t('proc.cache.answered'), t('proc.memory')], caches.map(row)),

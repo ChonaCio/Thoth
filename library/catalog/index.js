@@ -767,7 +767,7 @@ const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/
 // Filters (all optional): q (words in titles/authors), source, lacks (a source that doesn't have it), inLibrary
 // (yes|no), genre, merged, type, status, sites ('1' | '2' | '3' = at least 3), updated ('day' | 'week' | 'month':
 // a chapter or change within), with/without (genres or tags it must have / must not have, comma separated),
-// author (part of an author's name)
+// author (part of an author's name), chapters ('yes': only works with chapters found, 'no': only works without)
 function filtered(q) {
   let items = catalogItems();
   const term = searchable(q.q);
@@ -788,6 +788,7 @@ function filtered(q) {
   const want = keysOf(q.with), avoid = keysOf(q.without);
   if (want.length || avoid.length) items = items.filter(it => { const have = new Set(it.genres.map(g => terms.keyOf(g))); return want.every(k => have.has(k)) && !avoid.some(k => have.has(k)); });
   if (q.author) { const a = searchable(q.author); items = items.filter(it => it.authors.some(x => searchable(x).includes(a))); }
+  if (q.chapters === 'yes') items = items.filter(it => it.chapters > 0); else if (q.chapters === 'no') items = items.filter(it => !it.chapters);
   return items;
 }
 function sortItems(items, sort) {
@@ -880,7 +881,10 @@ function unifiedChapters(sources) {
 }
 
 /* ---------------- merging the same work found on several sites ---------------- */
-function mergeSuggestions({ limit = 200, source = null } = {}) {
+// chapters: 'yes' leaves out the works without chapters (a suggestion needs two that have some), 'no' shows only
+// the suggestions with a work without chapters
+const hasChapters = w => (w.chapterCount || 0) > 0;
+function mergeSuggestions({ limit = 200, source = null, chapters = null } = {}) {
   const works = allWorks();
   const dismissed = new Set(db.catalogMerges.dismissed || []);
   const apart = apartSet();
@@ -923,11 +927,14 @@ function mergeSuggestions({ limit = 200, source = null } = {}) {
   const groups = new Map();
   for (const w of works) { const r = find(w.key); if (!groups.has(r)) groups.set(r, []); groups.get(r).push(w); }
   const out = [];
-  for (const [root, members] of groups) {
+  for (const [root, all] of groups) {
+    if (chapters === 'no' && all.every(hasChapters)) continue;
+    const members = chapters === 'yes' ? all.filter(hasChapters) : all;
     // Only works not merged yet, from at least two different entries
     const open = members.filter(m => !grouped.has(m.key));
     if (members.length < 2 || open.length < 1 || members.every(m => grouped.has(m.key))) continue;
-    const key = members.map(m => m.key).sort().join(',');
+    // (the key of the whole suggestion, works hidden by the chapters filter included: "not the same" is for all)
+    const key = all.map(m => m.key).sort().join(',');
     if (dismissed.has(key)) continue;
     if (source && !members.some(m => m.sourceId === source)) continue;
     // Works an administrator separated aren't suggested together again
@@ -1049,12 +1056,14 @@ function autoMerge() {
   return merged;
 }
 // Merged works (automatically or by hand), for the Merge tab: { groups: [{ id, auto, at, primary, works }] }
-function mergedGroups({ source } = {}) {
+// chapters: 'yes' leaves out the groups where no work has chapters, 'no' shows only the groups with a work without
+function mergedGroups({ source, chapters = null } = {}) {
   const byKey = new Map(allWorks().map(w => [w.key, w]));
   const out = [];
   for (const [id, g] of Object.entries(db.catalogMerges.groups)) {
     const members = g.keys.map(k => byKey.get(k)).filter(Boolean);
     if (members.length < 2 || (source && !members.some(m => m.sourceId === source))) continue;
+    if ((chapters === 'yes' && !members.some(hasChapters)) || (chapters === 'no' && members.every(hasChapters))) continue;
     out.push({ id, auto: g.auto || null, at: g.at || null, primary: g.primary, works: members.map(workSummary) });
   }
   out.sort((a, b) => String(b.at || '').localeCompare(String(a.at || '')));

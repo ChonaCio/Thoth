@@ -407,6 +407,11 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(blue.genres.join('|') === 'Fantasy|Sci-Fi' && blue.chapters === 4 && blue.lastChapter === '4', 'metadata read (genres with one name each, chapters, last chapter)');
   ok((await call('GET', '/api/catalog?inLibrary=no')).data.items.every(it => !it.inLibrary) && (await call('GET', `/api/catalog?source=${custom.id}`)).data.total === 2 && (await call('GET', '/api/catalog?q=luna')).data.items[0].title === 'Blue Moon',
     'filters: not in library, by source, search (alternative titles too)');
+  {
+    const withCh = (await call('GET', '/api/catalog?chapters=yes&limit=50')).data, noCh = (await call('GET', '/api/catalog?chapters=no&limit=50')).data;
+    ok(withCh.total + noCh.total === cat.total && withCh.items.every(it => it.chapters > 0) && noCh.items.every(it => !it.chapters) && noCh.items.some(it => it.title === 'Secret'),
+      `filter: works with chapters (${withCh.total}) or without (${noCh.total})`);
+  }
   let det = (await call('GET', `/api/catalog/work?key=${encodeURIComponent(blue.key)}`)).data.work;
   ok(det.sources[0].chapterList.length === 4 && det.sources[0].chapterList[0].u.endsWith('/chapter-4/') && det.missing.have === 2 && det.missing.chapters.map(c => c.n).join() === '3,4',
     'a work’s page: chapter list with links; the chapters the library lacks (3, 4)');
@@ -436,6 +441,12 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(g && g.works.length === 2 && g.reason === 'title' && g.inLibrary, 'suggested: “Blue Moon” on both sites (and the library has it)');
   ok(g.works.every(w => 'cover' in w && 'authors' in w) && (await call('GET', `/api/catalog/merge-suggestions?source=${custom.id}`)).data.groups.some(x => x.key === g.key) && !(await call('GET', `/api/catalog/merge-suggestions?source=${guarded.id}`)).data.groups.length,
     'suggestions carry what helps to compare (cover, authors) and can be filtered by source');
+  {
+    const allCh = g.works.every(w => w.chapters > 0);
+    const sYes = (await call('GET', '/api/catalog/merge-suggestions?chapters=yes')).data.groups, sNo = (await call('GET', '/api/catalog/merge-suggestions?chapters=no')).data.groups;
+    ok(sYes.every(x => x.works.every(w => w.chapters > 0)) && sNo.every(x => x.works.some(w => !w.chapters)) && sYes.some(x => x.key === g.key) === allCh && sNo.some(x => x.key === g.key) === !allCh,
+      `merge suggestions filtered by chapters (with: ${sYes.length}, with a work without: ${sNo.length})`);
+  }
   const mg = (await call('POST', '/api/catalog/merge', { keys: g.works.map(w => w.key), primary: blue.key })).data;
   cat = (await call('GET', '/api/catalog?q=blue%20moon')).data;
   ok(cat.total === 1 && cat.items[0].sources.length === 2 && cat.items[0].chapters === 4, 'merged: one catalog entry with both sources');
