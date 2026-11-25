@@ -3631,7 +3631,17 @@
   }
 
   // The caches, each its own process (started when needed, closed after a long idle time)
-  var CACHE_ORDER = ['pages', 'covers', 'works', 'search'];
+  var CACHE_ORDER = ['pages', 'covers', 'works', 'search', 'catworks', 'catthumbs'];
+  // The catalog thumbnails cache: what it keeps on disk, and the covers it's fetching ahead
+  function catThumbsNote(s) {
+    var out = [];
+    if (s.disk) out.push(t('proc.cache.disk', { files: s.disk.files, size: fmtBytes(s.disk.bytes || 0), max: fmtBytes(s.disk.maxBytes) }));
+    var w = s.warm;
+    if (w && w.running) out.push(t('proc.cache.catWarmRunning', { done: w.done, total: w.total, added: w.added, perMin: w.perMin }));
+    else if (w && w.finishedAt) out.push(t('proc.cache.catWarmDone', { total: w.total, added: w.added, failed: w.failed }));
+    if (s.fetched || s.failed) out.push(t('proc.cache.catFetched', { fetched: s.fetched || 0, failed: s.failed || 0 }));
+    return out.join(' · ');
+  }
   function procCaches(p) {
     var caches = (p.caches || []).slice().sort(function (a, b) { return CACHE_ORDER.indexOf(a.kind) - CACHE_ORDER.indexOf(b.kind); });
     if (!caches.length) return null;
@@ -3639,14 +3649,17 @@
       var s = c.stats || {}, open = c.pid || c.mode === 'inline';
       var size = s.maxBytes && c.kind !== 'search' ? t('proc.cache.size', { size: s.bytes ? fmtBytes(s.bytes) : '0 MB', max: fmtBytes(s.maxBytes) }) : '';
       var under = c.kind === 'search' && s.docs != null ? t('proc.cache.searchDocs', { docs: s.docs, tags: (s.terms || {}).tag || 0, people: (s.terms || {}).person || 0 })
-        : c.kind === 'covers' && s.warm && (s.warm.running || s.warm.finishedAt) ? (s.warm.running ? t('proc.media.warmRunning', { done: s.warm.done, total: s.warm.total }) : t('proc.media.warmDone', { total: s.warm.total, added: s.warm.added })) : '';
+        : c.kind === 'covers' && s.warm && (s.warm.running || s.warm.finishedAt) ? (s.warm.running ? t('proc.media.warmRunning', { done: s.warm.done, total: s.warm.total }) : t('proc.media.warmDone', { total: s.warm.total, added: s.warm.added }))
+        : c.kind === 'catthumbs' && (c.pid || c.mode === 'inline') ? catThumbsNote(s) : '';
       return {
         cells: [
           '<strong>' + esc(t('proc.cache.' + c.kind)) + '</strong>',
           c.pid ? esc(c.pid) : '<span class="muted">' + esc(t(c.mode === 'inline' ? 'proc.cache.inline' : 'proc.cache.closed')) + '</span>',
           // (what it's doing besides answering — search index size, covers read ahead — in the same row)
           esc(open ? t('proc.cache.entries', { count: s.entries || 0 }) + (size ? ' · ' + size : '') : '—') + (under ? '<span class="proc-cell-note">' + esc(under) + '</span>' : ''),
-          esc(open ? t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 }) : t('proc.cache.requests', { count: c.requests })),
+          // (catalog thumbnails: the covers asked for, from memory or disk vs from the site — not the ones read ahead)
+          esc(open ? (c.kind === 'catthumbs' ? t('proc.cache.answers', { hits: (s.memoryHits || 0) + (s.diskHits || 0), misses: Math.max(0, (s.requests || 0) - (s.memoryHits || 0) - (s.diskHits || 0)) })
+            : t('proc.cache.answers', { hits: s.hits || 0, misses: s.misses || 0 })) : t('proc.cache.requests', { count: c.requests })),
           esc(s.rss ? fmtBytes(s.rss) : '—')
         ]
       };
@@ -3657,7 +3670,7 @@
       parts: [
         proc.table([t('proc.cache.name'), t('proc.pid'), t('proc.cache.content'), t('proc.cache.answered'), t('proc.memory')], caches.map(row)),
         caches.filter(function (c) { return c.lastError; }).map(function (c) { return '<p class="notice notice--error small">' + esc(c.lastError) + '</p>'; }).join(''),
-        proc.help(t('proc.cache.help'))
+        proc.help(t('proc.cache.help') + ' ' + t('proc.cache.helpCatalog'))
       ]
     };
   }
@@ -3872,6 +3885,10 @@
     { key: 'metadataConcurrency', label: 'cfg.metadataConcurrency', help: 'cfg.metadataConcurrencyHelp', section: 'cfg.metadata' },
     { key: 'catalogCrawls', label: 'cfg.catalogCrawls', help: 'cfg.catalogCrawlsHelp', section: 'cfg.catalog' },
     { key: 'catalogConcurrency', label: 'cfg.catalogConcurrency', help: 'cfg.catalogConcurrencyHelp' },
+    { key: 'catalogWorksCacheMb', label: 'cfg.catalogWorksCacheMb', help: 'cfg.catalogWorksCacheMbHelp' },
+    { key: 'catalogThumbMemMb', label: 'cfg.catalogThumbMemMb', help: 'cfg.catalogThumbMemMbHelp' },
+    { key: 'catalogThumbDiskMb', label: 'cfg.catalogThumbDiskMb', help: 'cfg.catalogThumbDiskMbHelp' },
+    { key: 'catalogThumbsPerMin', label: 'cfg.catalogThumbsPerMin', help: 'cfg.catalogThumbsPerMinHelp' },
     { key: 'logRetentionDays', label: 'cfg.logRetentionDays', help: 'cfg.logRetentionDaysHelp', section: 'cfg.logs' }
   ];
   var KEY_FIELDS = [

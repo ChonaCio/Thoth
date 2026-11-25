@@ -21,6 +21,13 @@ const SCHEMA = {
   // reads at the same time (a source can set its own; requests to one site still keep their pause)
   catalogCrawls: { default: 2, min: 1, max: 8 },
   catalogConcurrency: { default: 3, min: 1, max: 8 },
+  // External catalog caches: the works cache's memory (ready answers for lists and work pages, MB), the thumbnails
+  // cache's memory and disk (covers and site icons, MB), and covers fetched ahead after a crawl (a minute per
+  // site; 0 = only when someone looks at them)
+  catalogWorksCacheMb: { default: 32, min: 4, max: 1024 },
+  catalogThumbMemMb: { default: 48, min: 8, max: 1024 },
+  catalogThumbDiskMb: { default: 2048, min: 100, max: 102400 },
+  catalogThumbsPerMin: { default: 30, min: 0, max: 600 },
   // Days a task's log file is kept (data/logs/, the Logs page)
   logRetentionDays: { default: 30, min: 1, max: 365 },
   // API keys for metadata providers (secret: never sent back to the browser, only whether one is set)

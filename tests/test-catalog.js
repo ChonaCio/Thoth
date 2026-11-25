@@ -43,7 +43,7 @@ function madaraWork(slug) {
     <div class="summary__content"><p>About ${w.title}.</p></div>
     <div id="manga-chapters-holder" data-id="${slug}">${w.ajax ? '' : list}</div></body></html>`;
 }
-let m0;
+let m0, imgHits = 0;
 const site = http.createServer((req, res) => {
   const u = new URL(req.url, SITE);
   hits.push(req.method + ' ' + u.pathname + u.search);
@@ -59,6 +59,7 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/favicon.png') return send(200, png(16, 16, [10, 200, 10], 4), 'image/png');
   // A slow copy of the list (the crawl lasts long enough to restart the server meanwhile); its works are the Madara ones
   if (u.pathname.startsWith('/slow/')) { setTimeout(() => send(200, u.pathname === '/slow/manga/' ? `<div>${listed().map(madaraItem).join('')}</div>` : '<div></div>'), 400); return; }
+  if (u.pathname.startsWith('/img/')) imgHits++;
   if (u.pathname.startsWith('/img/')) return send(200, png(20, 30, [200, 20, 20], 3), 'image/png');
   // Madara: two list pages, then the last page repeats (as such sites do)
   if (u.pathname === '/madara/manga/' && u.searchParams.get('m_orderby')) return send(200, `<div class="c-page">${madaraItem('blue-moon')}${madaraItem('red-sun')}</div>`);
@@ -411,6 +412,23 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
     'a work’s page: chapter list with links; the chapters the library lacks (3, 4)');
   const cover = await fetch(`${BASE}/api/catalog/cover?key=${encodeURIComponent(blue.key)}`, { headers: { Cookie: cookie } });
   ok(cover.status === 200 && cover.headers.get('content-type') === 'image/png' && fs.readdirSync(path.join(DATA, 'cache', 'catalog-covers')).length >= 1, 'covers come through the server (cached), never straight from the site to the browser');
+  {
+    const imgBefore = imgHits;
+    const again = await fetch(`${BASE}/api/catalog/cover?key=${encodeURIComponent(blue.key)}`, { headers: { Cookie: cookie } });
+    ok(again.status === 200 && again.headers.get('etag') === cover.headers.get('etag') && imgHits === imgBefore, 'a cover asked again comes from the thumbnails cache, not the site');
+    // Ready answers: the same list again is answered from the catalog works cache; not for other users
+    const raw = (u, c = cookie) => fetch(BASE + u, { headers: { Cookie: c } });
+    const l1 = await raw('/api/catalog?sort=title&limit=50'), b1 = await l1.text();
+    const l2 = await raw('/api/catalog?limit=50&sort=title'), b2 = await l2.text();
+    ok(l2.headers.get('x-thoth-cache') === 'hit' && b1 === b2 && (await raw('/api/catalog?sort=title&limit=50', bob)).status === 403,
+      `the catalog list asked again comes from the catalog works cache (${l1.headers.get('x-thoth-cache')} → ${l2.headers.get('x-thoth-cache')}); other users still can't see it`);
+    const w1 = await raw(`/api/catalog/work?key=${encodeURIComponent(blue.key)}`); await w1.text();
+    const w2 = await raw(`/api/catalog/work?key=${encodeURIComponent(blue.key)}`);
+    ok(w2.headers.get('x-thoth-cache') === 'hit' && JSON.parse(await w2.text()).work.title === 'Blue Moon', 'a work page too');
+    const pr = (await call('GET', '/api/processes')).data;
+    const kinds = (pr.caches || []).map(c => c.kind);
+    ok(kinds.includes('catworks') && kinds.includes('catthumbs') && pr.caches.find(c => c.kind === 'catthumbs').requests >= 2, 'both catalog caches are on the Processes page');
+  }
 
   // ---- merging the same work found on two sites ----
   const sug = (await call('GET', '/api/catalog/merge-suggestions')).data;

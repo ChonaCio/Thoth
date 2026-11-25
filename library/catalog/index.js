@@ -18,6 +18,7 @@ const { normTitle, fromUrl } = require('../metadata/providers');
 const terms = require('../metadata/terms');
 const names = require('./names');
 const sites = require('./sites');
+const { cacheService } = require('../cache/client');
 // A work's metadata-site entries ("anilist:123", "mangadex:…") from its links (read from its page)
 const siteIds = w => Object.entries(w.links || {}).filter(([, id]) => id).map(([p, id]) => p + ':' + id);
 
@@ -263,7 +264,8 @@ function clearCatalog({ sources = null, keepMerges = false, crawl: recrawl = fal
     }
   }
   store.saveLibrary();
-  if (whole) fs.rmSync(COVER_DIR, { recursive: true, force: true });
+  // (every source: the thumbnails cache emptied too — its memory, what it was fetching ahead, its folder)
+  if (whole) { fs.rmSync(COVER_DIR, { recursive: true, force: true }); thumbs.call('clear', { disk: true }).catch(() => {}); }
   catalogVersion++;
   console.log(`[catalog] cleared ${whole ? 'every source' : ids.length + ' source(s)'}: ${removed} works removed (sources kept${keepMerges ? ', manual merges kept' : ''})`);
   const crawls = recrawl ? ids.filter(id => db.catalogSources[id].enabled !== false).map(id => crawl(id, { mode: 'full', reason: 'clean' })).filter(Boolean).length : 0;
@@ -379,6 +381,8 @@ function pumpCrawls() {
         p.error || `${r.listed || 0} listed, ${r.added || 0} new, ${r.read || 0} read, ${r.chapters || 0} chapters` + (r.premium ? ` (${r.premium} premium)` : '') + `, ${r.errors || 0} errors` + (r.maxActiveRequests ? `; up to ${r.maxActiveRequests} request(s) in progress at once` : ''));
       adoptDetected(id);
       if (!first) console.log(`[catalog] crawl of "${db.catalogSources[id].name}" ${p.status}${p.error ? `: ${p.error}` : ''}`);
+      // Its covers fetched ahead (the ones not in the thumbnails cache yet)
+      if (!first) warmCovers([id]);
       // New works may be the same as others: merge the certain ones (also once at startup)
       if (!first || !autoMergedAtStart) { autoMergedAtStart = true; try { autoMerge(); } catch (e) { console.error('[catalog] automatic merge:', e.message); } }
     }
@@ -539,7 +543,12 @@ function startSchedule() {
   clearInterval(scheduleTimer);
   scheduleTimer = setInterval(checkSchedule, 10 * 60 * 1000);
   scheduleTimer.unref();
+  // A while after starting: every source's covers that aren't cached yet, fetched ahead
+  clearTimeout(warmTimer);
+  warmTimer = setTimeout(() => warmCovers(Object.keys(db.catalogSources)), Math.max(0, Number(process.env.THOTH_CATALOG_WARM_DELAY_MS) || 60000));
+  warmTimer.unref();
 }
+let warmTimer = null;
 function checkSchedule() {
   for (const s of Object.values(db.catalogSources)) {
     const every = s.schedule === 'hours' ? (s.scheduleHours || 0) * 3600000 : SCHEDULES[s.schedule] || 0;
@@ -575,9 +584,21 @@ function sourceWorks(id) {
     const alt = [...new Set((w.rawAltTitles || w.altTitles || []).map(a => parseTitle(a, { sourceNames: names, remove }).title).filter(a => a && a !== p.title))];
     return Object.assign(w, { key: id + ':' + w.sid, sourceId: id, rawTitle: w.rawTitle || w.title, title: p.title, editions: p.editions, rawAltTitles: w.rawAltTitles || w.altTitles || [], altTitles: alt });
   });
-  loaded.set(id, { mtime, list });
+  loaded.set(id, { mtime, list, byKey: null });
   catalogVersion++;
   return list;
+}
+// The catalog's data version, for cached answers (the works cache process): the library's and the settings'
+// generation (merges, sources, title clean-up, blacklists: all saved with saveLibrary) and each source's crawled
+// file as it is on disk now (a crawl writes it with its chapters every 30 s and at the end). Not catalogVersion:
+// that one moves when a file is merely loaded, which would make the first answer after a load never count.
+function dataVersion() {
+  const parts = [store.generation()];
+  for (const id of Object.keys(db.catalogSources)) {
+    const st = fs.statSync(cstore.worksFile(sourceDir(id)), { throwIfNoEntry: false });
+    parts.push(id + '@' + (st ? st.mtimeMs + '/' + st.size : 0));
+  }
+  return parts.join(':');
 }
 // The text removed from titles: { remove, affected (titles it changes) }; saving it reads every source's titles again
 // and merges what's now certainly the same work
@@ -597,7 +618,16 @@ function setTitleCleanup(list) {
   return Object.assign(titleCleanup(), { merged });
 }
 function allWorks() { return Object.keys(db.catalogSources).flatMap(id => sourceWorks(id)); }
-const workByKey = key => { const i = key.indexOf(':'); return i > 0 ? sourceWorks(key.slice(0, i)).find(w => w.key === key) || null : null; };
+// (by key through an index per source: a grid asks for dozens of covers at once)
+const workByKey = key => {
+  const i = key.indexOf(':');
+  if (i <= 0 || !db.catalogSources[key.slice(0, i)]) return null;
+  const id = key.slice(0, i);
+  const list = sourceWorks(id), c = loaded.get(id);
+  if (!c || c.list !== list) return list.find(w => w.key === key) || null;
+  if (!c.byKey) c.byKey = new Map(list.map(w => [w.key, w]));
+  return c.byKey.get(key) || null;
+};
 function chaptersOf(key) {
   const i = key.indexOf(':');
   const id = key.slice(0, i), sid = key.slice(i + 1);
@@ -1059,8 +1089,9 @@ function dismiss(key) {
   store.saveLibrary();
 }
 
-/* ---------------- covers: fetched once by the server, cached on disk ---------------- */
-const coverInflight = new Map();
+/* ---------------- covers: the catalog thumbnails cache ---------------- */
+const thumbs = cacheService('catthumbs', { label: 'Catalog thumbnails', idleMs: 10 * 60 * 1000 });
+const thumbCfg = () => { const c = require('../../config').get(); return { memMb: c.catalogThumbMemMb, diskMb: c.catalogThumbDiskMb, perMin: c.catalogThumbsPerMin }; };
 async function cover(key) {
   const w = workByKey(key);
   if (!w || !w.cover) throw err(404, 'noCover');
@@ -1092,35 +1123,27 @@ async function declaredIcon(page) {
   }
   return null;
 }
+// Covers and icons come from the catalog thumbnails cache (a process of its own: memory, then disk, then the site)
 async function cachedImage(imageUrl, referer) {
   if (!publicUrl(imageUrl, ALLOW_LOCAL)) throw err(404, 'noCover');
-  const w = { cover: imageUrl };
-  const name = crypto.createHash('sha1').update(w.cover).digest('hex');
-  const file = path.join(COVER_DIR, name);
-  const hit = await fs.promises.readFile(file).catch(() => null);
-  if (hit) { const meta = await fs.promises.readFile(file + '.type', 'utf8').catch(() => 'image/jpeg'); return { buf: hit, type: meta, etag: `"cc-${name.slice(0, 16)}"` }; }
-  if (coverInflight.has(name)) return coverInflight.get(name);
-  const job = (async () => {
-    let url = w.cover;
-    for (let hop = 0; hop < 4; hop++) {
-      if (!publicUrl(url, ALLOW_LOCAL)) throw err(404, 'noCover');
-      const res = await fetch(url, { headers: { 'User-Agent': UA, Accept: 'image/*', Referer: referer || '' }, redirect: 'manual', signal: AbortSignal.timeout(15000) });
-      if (res.status >= 300 && res.status < 400 && res.headers.get('location')) { url = new URL(res.headers.get('location'), url).href; continue; }
-      let type = res.headers.get('content-type') || '';
-      if (/\.ico(\?|$)/i.test(url) && !/^image\//.test(type)) type = 'image/x-icon'; // (some servers send icons as octet-stream)
-      if (!res.ok || !/^image\//.test(type)) throw err(404, 'noCover');
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length > 5 * 1024 * 1024) throw err(404, 'noCover');
-      await fs.promises.mkdir(COVER_DIR, { recursive: true });
-      await fs.promises.writeFile(file, buf);
-      await fs.promises.writeFile(file + '.type', type.split(';')[0]);
-      return { buf, type: type.split(';')[0], etag: `"cc-${name.slice(0, 16)}"` };
-    }
-    throw err(404, 'noCover');
-  })();
-  coverInflight.set(name, job);
-  job.then(() => coverInflight.delete(name), () => coverInflight.delete(name));
-  return job;
+  const r = await thumbs.call('image', { url: imageUrl, referer: referer || '', cfg: thumbCfg() });
+  return { buf: r.buf, type: r.type, etag: r.etag };
+}
+// Covers of these sources' works fetched ahead by the thumbnails cache (the ones it doesn't have; at the pace set
+// in Server settings, one at a time per site; nothing when that's 0)
+function warmCovers(ids) {
+  const cfg = thumbCfg();
+  if (!(cfg.perMin > 0)) return 0;
+  const items = [];
+  for (const id of ids) {
+    const s = db.catalogSources[id];
+    if (!s || s.enabled === false) continue;
+    let list; try { list = sourceWorks(id); } catch { continue; }
+    const referer = s.baseUrl || '';
+    for (const w of list) if (w.cover && publicUrl(w.cover, ALLOW_LOCAL)) items.push({ url: w.cover, referer });
+  }
+  if (items.length) thumbs.call('warm', { items, cfg }).catch(e => console.error('[catalog] reading covers ahead:', e.message));
+  return items.length;
 }
 
 function info() {
@@ -1130,7 +1153,13 @@ function info() {
 function types() { return TYPES.map(t => ({ type: t, label: ADAPTERS[t].label, defaults: ADAPTERS[t].defaults })); }
 
 // More crawls allowed at once: start the waiting ones now
-require('../../config').onChange(changed => { if (changed.includes('catalogCrawls')) pumpCrawls(); });
+require('../../config').onChange(changed => {
+  if (changed.includes('catalogCrawls')) pumpCrawls();
+  // (the thumbnails cache's sizes and pace: told now if it's open; reading ahead switched on: started)
+  if (changed.some(k => /^catalogThumb/.test(k)) && thumbs.info().pid) thumbs.call('configure', { cfg: thumbCfg() }).catch(() => {});
+  if (changed.includes('catalogThumbsPerMin') && thumbCfg().perMin > 0) warmCovers(Object.keys(db.catalogSources));
+  if (changed.includes('catalogThumbsPerMin') && !(thumbCfg().perMin > 0) && thumbs.info().pid) thumbs.call('stopWarm').catch(() => {});
+});
 
 module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, siteTemplates, saveSiteTemplate, removeSiteTemplate, exportSiteTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
-  list, facets, detail, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
+  list, facets, detail, dataVersion, warmCovers, mergeSuggestions, merge, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

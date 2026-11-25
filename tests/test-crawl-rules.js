@@ -19,6 +19,7 @@ const same = (a, b) => names.matchKeys(a).some(k => names.matchKeys(b).includes(
 const PORT = 3995, BASE = `http://127.0.0.1:${PORT}`;
 
 let tooMany = 0;
+const thumbHits = {};
 const site = http.createServer((req, res) => {
   const u = new URL(req.url, BASE);
   if (u.pathname === '/robots.txt') {
@@ -35,6 +36,12 @@ const site = http.createServer((req, res) => {
   }
   // Chapter rows that are links themselves
   if (u.pathname === '/series/linkrows') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Link rows</h1><div class="chs">${[3, 2, 1].map(n => `<a class="ch" href="/series/linkrows/chapter-${n}">Chapter ${n} <span class="date">2026-01-0${n}</span></a>`).join('')}</div>`); }
+  // Thumbnails: every request counted; /thumb/missing.png answers 404
+  if (u.pathname.startsWith('/thumb/')) {
+    thumbHits[u.pathname] = (thumbHits[u.pathname] || 0) + 1;
+    if (u.pathname === '/thumb/missing.png') { res.writeHead(404); return res.end('no'); }
+    res.writeHead(200, { 'Content-Type': 'image/png' }); return res.end(Buffer.alloc(300, u.pathname.length));
+  }
   if (u.pathname === '/series/priced') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Priced</h1><p class="au">Ana One, Bo Two; Cy Three</p><ul>' + [3, 2, 1].map(n => `<li class="cl"><a href="/series/priced/chapter-${n}"><span class="num">Chapter ${n}</span>${n === 3 ? '<span class="price">50</span>' : '<span class="free">Now Free</span>'}</a></li>`).join('') + '</ul>'); }
   if (u.pathname === '/en/series/time-mage') {
     const ep = (id, ord, o) => Object.assign({ id, ord, openAt: '2026-01-0' + ord + 'T04:00:00Z', data: {}, lockData: { buyOption: { price: 374 }, state: 30 } }, o);
@@ -244,6 +251,40 @@ const site = http.createServer((req, res) => {
   check(mt.title === 'Time Mage' && mt.authors.join('|') === 'Ana Author' && mt.genres.join('|') === 'Fantasy' && mt.status === 'ended' && mt.type === 'manga' && mt.cover === 'https://img.example/c.jpg' && mt.chaptersComplete === true &&
     mt.chapters.length === 3 && !mt.chapters[0].pr && mt.chapters[1].pr && mt.chapters[2].pr && mt.chapters[1].u === BASE + '/en/series/time-mage/episodes/episode-2?episodeId=102' && mt.chapters[0].d === '2026-01-01',
     'Manta: fields and episodes from the page data (free / paid / not out yet)', JSON.stringify(mt).slice(0, 400));
+
+  console.log('Catalog thumbnails cache');
+  {
+    const fs = require('fs'), os = require('os');
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'thoth-thumbs-'));
+    process.env.THOTH_DATA_DIR = tmp; process.env.THOTH_CATALOG_ALLOW_LOCAL = '1';
+    const th = require(path.join(APP, 'library/cache/catthumbs.js'));
+    const H = th.handlers, T = p => BASE + '/thumb/' + p;
+    const cfg = { memMb: 8, diskMb: 100, perMin: 600 };
+    const a = await H.image({ url: T('ok-1.png'), cfg }), b = await H.image({ url: T('ok-1.png'), cfg });
+    check(a.fetched && !b.fetched && b.buf.length === 300 && a.etag === b.etag && thumbHits['/thumb/ok-1.png'] === 1 && fs.readdirSync(th.DIR).length === 2, 'an image is fetched from the site once, then served from memory (and kept on disk)');
+    await H.clear({});
+    const c = await H.image({ url: T('ok-1.png'), cfg });
+    check(!c.fetched && c.type === 'image/png' && thumbHits['/thumb/ok-1.png'] === 1 && th.info().diskHits === 1, 'memory emptied (a restart): served from disk, not the site');
+    let e1 = null, e2 = null;
+    try { await H.image({ url: T('missing.png'), cfg }); } catch (e) { e1 = e; }
+    try { await H.image({ url: T('missing.png'), cfg }); } catch (e) { e2 = e; }
+    check(e1 && e2 && e2.code === 'noCover' && thumbHits['/thumb/missing.png'] === 1 && th.info().skippedFailed === 1, 'an image that failed isn\'t asked for again for a while');
+    let e3 = null; try { await H.image({ url: 'file:///etc/passwd', cfg }); } catch (e) { e3 = e; }
+    check(e3 && e3.code === 'noCover', 'only web addresses');
+    const t0 = Date.now();
+    const w = await H.warm({ items: [1, 2, 3, 4, 5].map(n => ({ url: T(`ok-${n}.png`), referer: BASE })).concat([{ url: T('ok-2.png') }]), cfg });
+    const wi = th.info().warm;
+    check(w.added === 5 && wi.added === 4 && [2, 3, 4, 5].every(n => thumbHits[`/thumb/ok-${n}.png`] === 1) && thumbHits['/thumb/ok-1.png'] === 1 && Date.now() - t0 >= 300 && !wi.running,
+      `covers fetched ahead: only the missing ones, once each, paced per site (${Date.now() - t0} ms for 4 at 600 a minute)`, JSON.stringify(wi));
+    check((await H.warm({ items: [{ url: T('ok-9.png') }], cfg: Object.assign({}, cfg, { perMin: 0 }) })).off === true && !thumbHits['/thumb/ok-9.png'], 'reading ahead off (0 a minute): nothing fetched');
+    H.configure({ cfg: Object.assign({}, cfg, { diskMb: 0.0008 }) }); // (≈ 840 bytes: two images and a bit)
+    await new Promise(r => setTimeout(r, 300));
+    const left = fs.readdirSync(th.DIR).filter(n => !n.endsWith('.type')).length;
+    check(left === 2 && th.info().disk.files === 2, `past the disk limit the oldest go (${left} of 5 kept)`);
+    await H.clear({ disk: true });
+    check(!fs.existsSync(th.DIR), 'emptied with its disk folder');
+    fs.rmSync(tmp, { recursive: true, force: true });
+  }
 
   site.close();
   console.log(failed ? `\n${failed} CRAWL RULE CHECK(S) FAILED` : `\nALL ${passed} CRAWL RULE CHECKS PASSED`);

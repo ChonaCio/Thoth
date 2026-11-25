@@ -491,6 +491,16 @@ function responseKey(user, p, q) {
   return [user.username.toLowerCase(), user.role, Array.isArray(user.libraries) ? user.libraries.join(',') : '*', p, new URLSearchParams(sorted).toString()].join('\0');
 }
 function cacheInfo() { const i = worksCache.info(); return Object.assign({ pid: i.pid }, i.stats || {}); }
+/* The external catalog's answers (its list, filters and work pages: the same for every user) come from the
+ * Catalog works cache (cache/catworks.js) while the catalog's data version is the same: the crawled files on disk,
+ * merges and settings, the library (catalog.dataVersion). Administrators only, like the routes themselves. */
+const CATALOG_ROUTES = /^\/api\/catalog(\/facets|\/work)?$/;
+const catalogCache = cacheService('catworks', { label: 'Catalog works', idleMs: 30 * 60 * 1000 });
+const catalogCacheMb = () => Number(require('../config').get().catalogWorksCacheMb) || 32;
+function catalogKey(p, q) {
+  const sorted = [...q.entries()].filter(([k]) => k !== '_').sort((a, b) => (a[0] + '=' + a[1]).localeCompare(b[0] + '=' + b[1]));
+  return p + '?' + new URLSearchParams(sorted).toString();
+}
 
 /* ---------------- the Search cache process ----------------
  * An index of every work (titles, genres, tags, people, types, libraries) lives in the Search cache process
@@ -536,6 +546,22 @@ async function handle(ctx) {
       if (ver === responseVersion()) worksCache.call('put', { key, ver, body: json }).catch(() => {}); // (not if something changed while it was built)
       return sendCachedJson(res, json, false);
     };
+  } else if (method === 'GET' && CATALOG_ROUTES.test(p) && isAdmin(user)) { // (the catalog is for administrators: others get its 403 below)
+    const key = catalogKey(p, q), memMb = catalogCacheMb();
+    let ver = null;
+    try { ver = catalog.dataVersion(); } catch { /* answered without the cache */ }
+    if (ver) {
+      const hit = await catalogCache.call('get', { key, ver, memMb }).catch(() => null);
+      if (hit) return sendCachedJson(res, hit, true);
+      send = (status, data) => {
+        if (status !== 200) return ctx.send(status, data);
+        const json = JSON.stringify(data);
+        // (not if the data changed while it was built)
+        let now = null; try { now = catalog.dataVersion(); } catch { /* not kept */ }
+        if (now === ver) catalogCache.call('put', { key, ver, body: json, memMb }).catch(() => {});
+        return sendCachedJson(res, json, false);
+      };
+    }
   }
   const admin = isAdmin(user);
   const requireAdmin = () => { if (!admin) throw httpError(403, 'forbidden'); };

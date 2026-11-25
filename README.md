@@ -746,6 +746,15 @@ sites added as **sources**, with its metadata and chapter list.
 - **English titles first:** a work's title is its English one when the site gives several (tagged by language,
   or the one that reads as English), also for works merged across sources.
 - Covers are fetched by the server and cached (`data/cache/catalog-covers/`): browsers never contact the sites.
+- **Catalog caches** (each its own process, on the Processes page, sizes in Server settings → External catalog):
+  - *Catalog works* keeps ready answers for the catalog's list, filters and work pages (default 32 MB). An answer
+    counts only while the catalog's data is the same: a crawl writing new works (every 30 s and at the end), a
+    merge, a setting or a library change makes it be built again.
+  - *Catalog thumbnails* keeps the covers and source icons in memory (default 48 MB) and on disk (default 2 GB;
+    past it the oldest go). Covers are fetched from a site at most 4 at a time; one that failed isn't asked for
+    again for 30 minutes. After each crawl, and a minute after the server starts, the covers not cached yet are
+    **fetched ahead** in the background, one at a time per site, 30 a minute at most (*Covers fetched ahead per
+    minute*; 0 fetches them only when someone looks at them).
 - Storage: `data/catalog/<source>/` (`works.json`, chapter lists in `chapters/`, `state.json`). Removing a source
   removes them; your library is never changed by the catalog.
 ### Library and work settings
