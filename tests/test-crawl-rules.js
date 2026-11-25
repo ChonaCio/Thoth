@@ -62,6 +62,7 @@ const site = http.createServer((req, res) => {
   if (u.pathname === '/series/next') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Next</h1><ul class="ch">${recent('next')}</ul><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { series: { chapters: Array.from({ length: 30 }, (_, i) => ({ id: i + 1, chapter_number: i + 1, chapter_slug: 'chapter-' + (i + 1), chapter_name: '' })) } } } })}</script>`); }
   if (u.pathname === '/series/own') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Own</h1><ul class="ch">${recent('own')}</ul>`); }
   if (u.pathname === '/full/own') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(Array.from({ length: 30 }, (_, i) => `<a href="/series/own/chapter-${i + 1}">Chapter ${i + 1}</a>`).join('')); }
+  if (u.pathname === '/series/commas') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Love, Chunibyo &amp; Other Delusions</h1><p class="alt">Chuunibyou demo Koi ga Shitai!, Love, Chunibyo &amp; Other Delusions, Yes, My Lord, Kaguya-sama (Love, War), Fate/stay night</p>'); }
   if (u.pathname === '/series/fields') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end('<h1>Fields</h1><p class="alt">Uno • Dos • Tres</p><p class="st">Status: Ongoing</p><p class="ty">Type: Manhwa</p><p class="yr">Released 2019</p>' +
     '<ul class="g"><li><a>Adventure <span>999</span></a></li><li><a>Action (12)</a></li></ul><ul class="t"><li>Regression</li><li>System · 1.2k</li></ul>'); }
   // A listing per letter; links to works and other links mixed (a link pattern picks the works)
@@ -164,6 +165,9 @@ const site = http.createServer((req, res) => {
     selectors: { altTitles: '.alt', altSeparator: '•', status: '.st', type: '.ty', year: '.yr', genres: '.g a', tags: '.t li' },
     clean: { genres: { own: true, counts: true }, tags: { counts: true }, type: { label: true }, status: { label: true } } }, get: fw.get }, { sid: '/series/fields', url: BASE + '/series/fields', title: 'x' });
   check(fields.altTitles.join('|') === 'Uno|Dos|Tres', 'alternative titles split by the source\'s separator', fields.altTitles.join('|'));
+  const commas = await adapters.ADAPTERS.custom.fetchWork({ src: { type: 'custom', baseUrl: BASE, includeChapters: false, selectors: { workTitle: 'h1', altTitles: '.alt' } }, get: fw.get }, { sid: '/series/commas', url: BASE + '/series/commas', title: 'x' });
+  check(commas.title === 'Love, Chunibyo & Other Delusions' && commas.altTitles.join('|') === 'Chuunibyou demo Koi ga Shitai!|Love, Chunibyo & Other Delusions|Yes, My Lord|Kaguya-sama (Love, War)|Fate/stay night',
+    'titles with commas and slashes in them kept whole (the work\'s own title, brackets, "Yes, …", "Fate/stay night")', commas.altTitles.join('|'));
   check(fields.genres.join('|') === 'Adventure|Action' && fields.tags.join('|') === 'Regression|System', 'counts removed; only the element\'s own text', fields.genres.join('|') + ' / ' + fields.tags.join('|'));
   check(fields.type === 'Manhwa' && fields.status === 'ongoing' && fields.year === 2019, 'type, status and year (labels removed)', [fields.type, fields.status, fields.year].join(' '));
 

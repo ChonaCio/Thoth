@@ -45,6 +45,22 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   const { preferEnglish, taggedEnglish } = require(path.join(APP, 'library', 'titles.js'));
   ok(preferEnglish(['Shingeki no Kyojin', 'Attack on Titan', '進撃の巨人']) === 'Attack on Titan' && preferEnglish(['나 혼자만 레벨업', 'Solo Leveling']) === 'Solo Leveling' && preferEnglish(['One Piece', 'ワンピース']) === 'One Piece' &&
     taggedEnglish([{ 'ja-ro': 'Kimetsu no Yaiba' }, { en: 'Demon Slayer' }]) === 'Demon Slayer' && taggedEnglish([{ en_jp: 'Romaji' }]) === null, 'titles: the English one is preferred (tagged or by how it reads)');
+  ok(preferEnglish(['Jujutsu Kaisen', 'Sorcery Fight: The Story of the World']) === 'Jujutsu Kaisen' && preferEnglish(['Solo Leveling', 'The Lord of the Night']) === 'Solo Leveling' &&
+    preferEnglish(['El Rey Demonio', 'The Demon King']) === 'The Demon King', 'titles: a main title already in English is kept over an alternative one');
+  const { splitTitles } = require(path.join(APP, 'library', 'titles.js'));
+  const splitCases = [
+    ['俺だけレベルアップな件, Na Honjaman Level Up, Solo Leveling', {}, '俺だけレベルアップな件|Na Honjaman Level Up|Solo Leveling'],
+    ['Love, Chunibyo & Other Delusions, Chuunibyou demo Koi ga Shitai!', { known: ['Love, Chunibyo & Other Delusions'] }, 'Love, Chunibyo & Other Delusions|Chuunibyou demo Koi ga Shitai!'],
+    ['Kaguya-sama (Love, War), かぐや様', {}, 'Kaguya-sama (Love, War)|かぐや様'],
+    ['Yes, My Lord, Hai Shujin-sama', {}, 'Yes, My Lord|Hai Shujin-sama'],
+    ['Wait, what? / Matte, nani?', {}, 'Wait, what?|Matte, nani?'],
+    ['Fate/stay night, Fate Stay Night', {}, 'Fate/stay night|Fate Stay Night'],
+    ['A; B, with a comma; C', {}, 'A|B, with a comma|C'],
+    ['転生したらスライムだった件、That Time I Got Reincarnated as a Slime', {}, '転生したらスライムだった件|That Time I Got Reincarnated as a Slime'],
+    ['Sorry, Hero, Gomen Yuusha', { sep: ',' }, 'Sorry, Hero|Gomen Yuusha'],
+    ['A • B, C • D', { sep: '•' }, 'A|B, C|D']];
+  const badSplits = splitCases.filter(([x, o, want]) => splitTitles(x, o).join('|') !== want).map(([x, o]) => x + ' → ' + splitTitles(x, o).join('|'));
+  ok(!badSplits.length, 'titles: several in one line split without cutting titles that have commas or slashes in them' + (badSplits.length ? ' (' + badSplits.join('; ') + ')' : ''));
   // What isn't part of a title, and version markers (catalog titles; the library uses the bracketed markers)
   const { parseTitle } = require(path.join(APP, 'library', 'titles.js'));
   const pt = (x, o) => { const p = parseTitle(x, o); return p.title + (p.editions.length ? ' [' + p.editions.join('+') + ']' : ''); };

@@ -30,10 +30,17 @@ function taggedEnglish(list) {
   }
   return null;
 }
-// The best of several untagged titles: English-looking first, then the order given (the first is the default)
+// Words of other Latin-script languages that English titles don't use ("El Rey Demonio", "Le Roi des Démons")
+const FOREIGN_WORDS = /\b(el|los|las|del|una?|une|les|du|des|aux|der|das|und|ein|eine|mit|dos|das|uma|com|nas|nos|il|della|dei)\b/i;
+// A title that already reads as English: Latin letters only, no romanized Japanese, no other language's words
+const looksEnglish = t => englishScore(t) >= 2 && !ROMAJI.test(String(t)) && !FOREIGN_WORDS.test(String(t));
+// The best of several untagged titles: English-looking first, then the order given (the first is the default).
+// A first title that is already English stays, even when another one scores higher ("Jujutsu Kaisen" isn't
+// replaced by "Sorcery Fight")
 function preferEnglish(titles) {
   const list = (titles || []).filter(t => t && String(t).trim());
   if (!list.length) return '';
+  if (looksEnglish(list[0])) return list[0];
   let best = list[0], bestScore = englishScore(best);
   for (const t of list.slice(1)) { const s = englishScore(t); if (s > bestScore + 1) { best = t; bestScore = s; } } // (clearly better only)
   return best;
@@ -106,4 +113,67 @@ function parseTitle(raw, { sourceNames = [], bare = true, noise = true, remove =
   return { title: t || String(raw || '').trim(), editions: list, edition: main };
 }
 
-module.exports = { englishScore, isEnglishTag, taggedEnglish, preferEnglish, parseTitle, EDITION_ORDER };
+/* ---------------- several titles in one line ("Other names: A; B, C") ----------------
+ * Strong separators always split: a line break, ";", "|", "•", "·", a slash with spaces around it (" / ", never
+ * "Fate/stay night") and their full-width forms. Commas ("," "、" "，") split only when there's no strong one, and
+ * never:
+ *   - inside brackets or quotes                       "Kaguya-sama (Love, War)"
+ *   - inside a title already known (the work's own)   "Love, Chunibyo & Other Delusions"
+ *   - before a word in lowercase                      "Wait, what?"
+ *   - after an interjection or a form of address      "Yes, My Lord", "Sorry, Hero"
+ *   - around a piece that is only a number            "1, 2, 3 Go"
+ * sep: the separator a site template gives (a comma one keeps the comma rules). known: titles never cut. */
+const OPEN = '([{「『【〈《“', CLOSE = ')]}」』】〉》”';
+const WEAK_SEP = ',、，';
+const INTERJECTION = /^(?:yes|no|oh|ah|aah|hey|hi|hello|goodbye|bye|sorry|please|thanks|thank you|well|wait|okay|ok|so|but|now|dear|oops|wow|yo|alas|look|listen|hmm|um|uh|ugh|sir|madam|miss|mister|darling|honey|baby|master|my lord|my lady|then|still|again|however|yet|and|or|oi|ara|eh)[!?.…~]*$/i;
+function splitTitles(text, opts = {}) {
+  let s = String(text || '');
+  if (!s.trim()) return [];
+  // (known titles with a separator in them: kept whole)
+  const keep = [];
+  const known = [...new Set((opts.known || []).map(k => String(k || '').trim()).filter(k => k.length > 2 && /[,、，;；|｜•·\/／\n]/.test(k)))].sort((a, b) => b.length - a.length);
+  for (const k of known) {
+    s = s.replace(new RegExp(k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), m => { keep.push(m); return '\u0000' + (keep.length - 1) + '\u0000'; });
+  }
+  const sep = opts.sep ? String(opts.sep) : null;
+  const sepWeak = sep && sep.trim().length === 1 && WEAK_SEP.includes(sep.trim());
+  // Where it could split: { at, len, strong }, outside brackets and quotes
+  const cuts = [];
+  let depth = 0, quoted = false;
+  for (let i = 0; i < s.length; i++) {
+    const c = s[i];
+    if (OPEN.includes(c)) { depth++; continue; }
+    if (CLOSE.includes(c)) { if (depth) depth--; continue; }
+    if (c === '"') { quoted = !quoted; continue; }
+    if (depth || quoted) continue;
+    if (sep) {
+      if (s.startsWith(sep, i)) { cuts.push({ at: i, len: sep.length, strong: !sepWeak, c: sep }); i += sep.length - 1; }
+      else if (c === '\n') cuts.push({ at: i, len: 1, strong: true, c });
+      continue;
+    }
+    if (c === '\n' || ';；|｜•·'.includes(c)) cuts.push({ at: i, len: 1, strong: true, c });
+    else if ((c === '/' || c === '／') && /\s/.test(s[i - 1] || '') && /\s/.test(s[i + 1] || '')) cuts.push({ at: i, len: 1, strong: true, c });
+    else if (WEAK_SEP.includes(c)) cuts.push({ at: i, len: 1, strong: false, c });
+  }
+  const strong = cuts.some(x => x.strong);
+  const use = sep ? cuts : cuts.filter(x => x.strong === strong);
+  // Pieces, each with the separator before it
+  const pieces = [];
+  let from = 0, before = null;
+  for (const x of use) { pieces.push({ t: s.slice(from, x.at), before }); before = x.c; from = x.at + x.len; }
+  pieces.push({ t: s.slice(from), before });
+  const out = [];
+  for (const p of pieces) {
+    const t = p.t.trim();
+    if (!t) continue;
+    const prev = out.length ? out[out.length - 1] : null;
+    const weakJoin = prev != null && p.before && WEAK_SEP.includes(p.before) &&
+      (/^[a-z]/.test(t) || INTERJECTION.test(prev.trim()) || /^[\d\s.]+$/.test(prev) || /^[\d\s.]+[!?]*$/.test(t));
+    if (weakJoin) out[out.length - 1] = prev + (p.before === ',' ? ', ' : p.before) + t;
+    else out.push(t);
+  }
+  const back = t => t.replace(/\u0000(\d+)\u0000/g, (m, n) => keep[Number(n)]);
+  return [...new Set(out.map(t => back(t).replace(/\s+/g, ' ').trim()).filter(Boolean))];
+}
+
+module.exports = { englishScore, isEnglishTag, taggedEnglish, preferEnglish, looksEnglish, splitTitles, parseTitle, EDITION_ORDER };

@@ -11,7 +11,11 @@ const abs = (u, base) => { try { return u ? new URL(u, base).href : null; } catc
 const num = s => { const m = /(\d+(?:\.\d+)?)/.exec(String(s || '')); return m ? m[1].replace(/^0+(?=\d)/, '') : null; };
 const chapterNum = s => { const m = /(?:ch(?:apter|ap)?\.?|ep(?:isode)?\.?|#)\s*(\d+(?:\.\d+)?)/i.exec(String(s || '')); return m ? m[1].replace(/^0+(?=\d)/, '') : num(s); };
 const list = v => [...new Set((v || []).map(x => String(x).trim()).filter(Boolean))];
+// Names in one line ("A, B; C"): authors. Titles go through splitTitles, which keeps "Love, Chunibyo & Other
+// Delusions" and "Fate/stay night" whole
 const splitAlt = s => list(String(s || '').split(/\s*(?:[,;\/|]|\n)\s*/));
+const { splitTitles } = require('../titles');
+const altOf = (text, work, stub, sep) => splitTitles(text, { sep, known: [work && work.title, stub && stub.title] });
 const STATUS = s => { s = String(s || '').toLowerCase(); return /complete|finished|ended|end\b/.test(s) ? 'ended' : /hiatus|on hold/.test(s) ? 'hiatus' : /cancel|dropped|abandon/.test(s) ? 'abandoned' : /ongoing|publishing|releasing|updat|every/.test(s) ? 'ongoing' : 'unknown'; };
 const imgOf = el => el && (el.attr('data-src') || el.attr('data-lazy-src') || el.attr('data-original') || (el.attr('srcset') || '').split(/\s+/)[0] || el.attr('src'));
 // Clean-up rules for a field's values (set in the source wizard): counts ("Adventure 999", "Adventure (999)",
@@ -60,7 +64,7 @@ function enrich(doc, work, base) {
     if (!alt.length) {
       // A labeled row: "<b>Alternative:</b> A, B" or "<dt>Other names</dt><dd>A; B</dd>"
       const row = doc.select('li, tr, p, div.info-item, .post-content_item, dl, .imptdt, span.alt, div').find(el => el.el.children.length < 12 && ALT_LABEL.test(el.text()) && el.text().length < 600);
-      if (row) alt = splitAlt(row.text().replace(ALT_LABEL, ''));
+      if (row) alt = altOf(row.text().replace(ALT_LABEL, ''), work);
     }
     work.altTitles = list(alt).filter(t => t !== work.title).slice(0, 30);
   }
@@ -358,9 +362,10 @@ const madara = {
       cover: pick(doc, '.summary_image img@src', res.url) || stub.cover,
       summary: (doc.first('.summary__content') || doc.first('.description-summary') || doc.first('.manga-excerpt') || { textBlock: () => '' }).textBlock(),
       authors: list(pick(doc, '.author-content a', res.url, true).concat(pick(doc, '.artist-content a', res.url, true))),
-      genres: pick(doc, '.genres-content a', res.url, true), altTitles: splitAlt(item('Alternative')),
+      genres: pick(doc, '.genres-content a', res.url, true),
       status: STATUS(item('Status')), type: (/(manhwa|manhua|manga|webtoon|comic)/i.exec(item('Type')) || [])[1] ? item('Type').toLowerCase().replace('webtoon', 'webcomic') : null
     });
+    work.altTitles = altOf(item('Alternative'), work, stub);
     enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
     let rows = doc.select('li.wp-manga-chapter');
@@ -426,10 +431,10 @@ const mangareader = {
       cover: pick(doc, '.thumb img@src || .thumbook img@src', res.url) || stub.cover,
       summary: (doc.first('[itemprop=description]') || doc.first('.entry-content-single') || doc.first('.synp .entry-content') || { textBlock: () => '' }).textBlock(),
       genres: pick(doc, '.mgen a || .seriestugenre a || .genxed a', res.url, true),
-      altTitles: splitAlt((doc.first('.alternative') || doc.first('.seriestualt') || { text: () => '' }).text()),
       authors: splitAlt(info('Author') + ',' + info('Artist')), status: STATUS(info('Status')),
       type: (/(manhwa|manhua|manga|comic)/i.exec(info('Type')) || [])[1] ? info('Type').toLowerCase() : null
     });
+    work.altTitles = altOf((doc.first('.alternative') || doc.first('.seriestualt') || { text: () => '' }).text(), work, stub);
     enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
     work.chapters = doc.select('#chapterlist li, .eplister li').map(li => {
@@ -689,7 +694,6 @@ const custom = {
     const meta = p => (doc.first(`meta[property="${p}"]`) || { attr: () => null }).attr('content');
     const cl = src.clean || {};
     const altRaw = s.altTitles ? pick(doc, s.altTitles, res.url, true, cl.altTitles) : [];
-    const altSplit = v => (s.altSeparator ? list(String(v).split(s.altSeparator)) : splitAlt(v));
     const yearText = pick(doc, s.year, res.url, false, cl.year);
     const work = Object.assign({}, stub, {
       title: pick(doc, s.workTitle, res.url, false, cl.workTitle) || meta('og:title') || pick(doc, 'h1', res.url) || stub.title,
@@ -698,10 +702,11 @@ const custom = {
       // (authors given as one line, "A, B; C": one each)
       genres: pick(doc, s.genres, res.url, true, cl.genres), authors: list(pick(doc, s.authors, res.url, true, cl.authors).flatMap(v => String(v).split(/\s*[,;]\s*/))),
       tags: pick(doc, s.tags, res.url, true, cl.tags),
-      altTitles: list(altRaw.flatMap(altSplit)), status: STATUS(pick(doc, s.status, res.url, false, cl.status)),
+      status: STATUS(pick(doc, s.status, res.url, false, cl.status)),
       type: pick(doc, s.type, res.url, false, cl.type) || null,
       year: (/\b(19|20)\d{2}\b/.exec(yearText || '') || [])[0] ? Number(/\b(19|20)\d{2}\b/.exec(yearText)[0]) : null
     });
+    work.altTitles = list(altRaw.flatMap(v => altOf(v, work, stub, s.altSeparator)));
     if (work.type) work.type = String(work.type).replace(/\s+/g, ' ').trim().slice(0, 30);
     enrich(doc, work, res.url);
     if (!src.includeChapters) return work;
