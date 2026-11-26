@@ -18,6 +18,7 @@ const store = require('./db');
 const config = require('../config');
 const metadata = require('./metadata');
 const tasks = require('./tasks');
+const backup = require('./backup');
 
 // Bump when what is read from files changes (2: ComicInfo genres kept apart from tags)
 const READ_VERSION = 2;
@@ -296,6 +297,13 @@ async function runScan(job) {
     // Read only new or changed files (by size and modification time), or every file for a full scan.
     // Books read by an older version of the reader (READ_VERSION) are read again once.
     const books = new Map(Object.values(store.db.books).filter(b => b.libraryId === libraryId).map(b => [b.relPath, b]));
+    // A folder with no book files at all while the library had some: a drive or share that isn't there right now
+    // (an empty mount point). Nothing is removed — works, reading progress, collections and read lists stay — and
+    // the next scan picks the files up again. (Emptied on purpose: remove the library, or its works, instead.)
+    if (!listing.files.length && books.size) {
+      log(`no book files found, but the library had ${books.size}: the folder looks unavailable — nothing removed`);
+      throw Object.assign(new Error('folderEmpty'), { code: 'folderEmpty' });
+    }
     const toRead = listing.files.filter(f => {
       const b = books.get(f.rel);
       return full || !b || b.size !== f.size || b.fileModified !== f.fileModified || (b.readVersion || 1) < READ_VERSION;
@@ -338,6 +346,7 @@ async function runScan(job) {
           name: oneshot ? path.basename(files[0]).replace(/\.[^.]+$/, '') : path.basename(dir),
           oneshot, meta: {}, overrides: {}, created: now, updated: now
         };
+        backup.applyPending('series', series); // (edits a restored backup had for it)
         added++;
       }
       let seriesChanged = false;
@@ -353,6 +362,7 @@ async function runScan(job) {
             id: bookId, seriesId, libraryId, relPath: f.rel, fileName: path.basename(f.rel),
             format: BOOK_EXT[path.extname(f.rel).toLowerCase()], overrides: {}, created: now
           };
+          backup.applyPending('books', book);
         }
         // A book can move between series when the one-shot setting changes; its id (and progress) stays
         if (book.seriesId !== seriesId) { book.seriesId = seriesId; seriesChanged = true; }
@@ -396,8 +406,8 @@ async function runScan(job) {
     for (const s of Object.values(store.db.series)) {
       if (s.libraryId === libraryId && !seenSeries.has(s.id)) { metadata.forgetSeries(s); delete store.db.series[s.id]; anyChange = true; }
     }
-    for (const c of Object.values(store.db.collections)) c.seriesIds = c.seriesIds.filter(id => store.db.series[id]);
-    for (const r of Object.values(store.db.readlists)) r.bookIds = r.bookIds.filter(id => store.db.books[id]);
+    // (collections and read lists keep the works and books that went: their ids come from their paths, so when a
+    // folder that was unavailable comes back they're in them again. Only deleting works or a library removes them.)
     if (added || updated || removed) anyChange = true;
 
     // (a scan that found nothing new leaves the data's generation as it was: answers cached for it — also the
@@ -429,7 +439,7 @@ async function runScan(job) {
   } catch (e) {
     if (e.code === 'cancelled') throw e; // stopped from the Processes page: not an error, it runs again later
     if (store.db.libraries[libraryId]) {
-      lib.scanError = e.code === 'ENOENT' ? 'folderNotFound' : (e.code === 'EACCES' || e.code === 'EPERM') ? 'folderNoAccess' : e.message;
+      lib.scanError = e.code === 'ENOENT' ? 'folderNotFound' : (e.code === 'EACCES' || e.code === 'EPERM') ? 'folderNoAccess' : e.code === 'folderEmpty' ? 'folderEmpty' : e.message;
       store.saveLibrary();
     }
     console.error(`[library] scan of "${lib.name}" failed: ${e.message}`);

@@ -70,7 +70,16 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   (or automatic from the files/metadata) and per work; a mode picked in the reader is remembered per work
   in that browser until an administrator changes the default.
 - **Progress**: per user; mark books or whole series as read/unread.
-- **Collections** (groups of series) and **read lists** (books from any series, in reading order).
+- **Collections** (groups of series) and **read lists** (books from any series, in reading order). Each user has
+  their own, private until they make one **public**; the *Public* tab shows everyone's public ones (each user sees
+  only the works of the libraries they may open). Works and books whose library folder is unavailable for a while
+  stay in them (counted as unavailable) and are back when the folder is; a library folder that suddenly has no
+  book files at all (an unmounted drive) isn't treated as emptied: nothing is removed.
+- **Backup and restore** (Server settings): every setting in one JSON file — server settings (not API keys),
+  libraries, folder metadata sources, collections and read lists, edits made by hand on works and books, the
+  external catalog's sources (not their saved cookies), merges and templates, download jobs. Import adds and
+  updates by id, or replaces the sections you tick; edits of works not scanned yet are applied when the scan
+  finds them. Users, reading progress and anything scans/crawls/downloads rebuild are not in it.
   Administrators create and edit them; everyone sees the parts they have access to.
 - **Users**: per-user library access (all libraries, or only some). Downloads of the original files.
 

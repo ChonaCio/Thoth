@@ -415,30 +415,45 @@ function home(user) {
   };
 }
 
-/* ---------------- collections & read lists ---------------- */
+/* ---------------- collections & read lists ----------------
+ * Each user's own: private (only them) until they make it public (everyone sees it, each only the works of the
+ * libraries they may see; only its owner changes it). Lists from before owners existed (no owner) are public and
+ * administrators manage them. Works and books that are gone for now (a library folder unavailable) stay in them —
+ * not shown, counted as missing — and are back when their files are. */
+const ownerKey = user => String(user.username || '').toLowerCase();
+const isPublic = x => (x.owner ? Boolean(x.public) : x.public !== false);
+const ownsList = (x, user) => (x.owner ? x.owner === ownerKey(user) : isAdmin(user));
+const canSeeList = (x, user) => ownsList(x, user) || isPublic(x);
+const listMeta = (x, user) => ({ owner: x.owner || null, public: isPublic(x), mine: ownsList(x, user) });
 function collectionView(c, user, full) {
   const series = c.seriesIds.map(id => db.series[id]).filter(s => shown(s) && store.canAccessLibrary(user, s.libraryId));
-  const v = { id: c.id, name: c.name, seriesCount: series.length, created: c.created, updated: c.updated,
-    coverSeries: series.slice(0, 4).map(s => store.seriesView(s, user)).map(s => ({ id: s.id, coverBookId: s.coverBookId, coverV: s.coverV, coverFormat: s.coverFormat, coverSource: s.coverSource })) };
+  const v = Object.assign({ id: c.id, name: c.name, seriesCount: series.length, created: c.created, updated: c.updated,
+    missing: c.seriesIds.filter(id => !db.series[id]).length,
+    coverSeries: series.slice(0, 4).map(s => store.seriesView(s, user)).map(s => ({ id: s.id, coverBookId: s.coverBookId, coverV: s.coverV, coverFormat: s.coverFormat, coverSource: s.coverSource })) }, listMeta(c, user));
   if (full) v.series = series.map(s => store.seriesView(s, user));
   return v;
 }
 function readlistView(r, user, full) {
-  const books = r.bookIds.map(id => db.books[id]).filter(b => bookShown(b) && store.canAccessLibrary(user, b.libraryId));
-  const v = { id: r.id, name: r.name, summary: r.summary || '', booksCount: books.length, created: r.created, updated: r.updated,
+  const books = r.bookIds.map(id => db.books[id]).filter(b => b && bookShown(b) && store.canAccessLibrary(user, b.libraryId));
+  const v = Object.assign({ id: r.id, name: r.name, summary: r.summary || '', booksCount: books.length, created: r.created, updated: r.updated,
+    missing: r.bookIds.filter(id => !db.books[id]).length,
     booksRead: books.filter(b => (store.progressOf(user, b.id) || {}).completed).length,
-    coverBooks: books.slice(0, 4).map(b => ({ id: b.id, format: b.format, v: Math.round(Date.parse(b.fileModified || 0) / 1000) })) };
+    coverBooks: books.slice(0, 4).map(b => ({ id: b.id, format: b.format, v: Math.round(Date.parse(b.fileModified || 0) / 1000) })) }, listMeta(r, user));
   if (full) v.books = books.map(b => store.bookView(b, user));
   return v;
 }
-function visibleCollections(user) {
-  return Object.values(db.collections).map(c => collectionView(c, user)).filter(c => c.seriesCount || isAdmin(user))
+// scope: 'mine' (the user's own, public or not), 'public' (everyone's public ones), else both (search, pickers)
+function visibleLists(table, view, countKey, user, scope) {
+  return Object.values(table)
+    .filter(x => (scope === 'mine' ? ownsList(x, user) : scope === 'public' ? isPublic(x) : canSeeList(x, user)))
+    .map(x => view(x, user))
+    .filter(v => v.mine || v[countKey]) // (someone else's list with nothing this user may see: not listed)
     .sort((a, b) => store.collator.compare(a.name, b.name));
 }
-function visibleReadlists(user) {
-  return Object.values(db.readlists).map(r => readlistView(r, user)).filter(r => r.booksCount || isAdmin(user))
-    .sort((a, b) => store.collator.compare(a.name, b.name));
-}
+const visibleCollections = (user, scope) => visibleLists(db.collections, collectionView, 'seriesCount', user, scope);
+const visibleReadlists = (user, scope) => visibleLists(db.readlists, readlistView, 'booksCount', user, scope);
+// Setting a list's items keeps the ones that are gone for now (not shown, so the list sent back doesn't have them)
+const keepMissing = (old, next, table) => next.concat(old.filter(id => !table[id] && !next.includes(id)));
 function ids(list, table) {
   return Array.isArray(list) ? [...new Set(list.map(String))].filter(id => table[id]) : null;
 }
@@ -689,7 +704,7 @@ async function handle(ctx) {
       const work = owner ? store.seriesView(owner, user, { admin }) : null;
       return send(200, { series: store.seriesView(s, user, { admin }), work, editions, workTitle: work ? work.title : editions.length ? editions[0].title : store.seriesView(s, user).title,
         books: store.booksOf(s.id).map(b => store.bookView(b, user, { admin })),
-        collections: Object.values(db.collections).filter(c => c.seriesIds.includes(s.id)).map(c => ({ id: c.id, name: c.name })) });
+        collections: Object.values(db.collections).filter(c => c.seriesIds.includes(s.id) && canSeeList(c, user)).map(c => ({ id: c.id, name: c.name })) });
     }
     if (method === 'PATCH') {
       requireAdmin();
@@ -993,6 +1008,33 @@ async function handle(ctx) {
     if (q.get('wait') === '1') return send(200, await rename.waitFor(job.id));
     return send(202, { job });
   }
+  // ---- Server backup (administrators): every setting as one file, and putting one back (backup.js) ----
+  // GET /api/backup → the file; POST /api/backup/check { backup } → what it holds; POST /api/backup/import
+  // { backup, mode: 'merge' | 'replace', sections? } → what was put back (new libraries are scanned)
+  if (p === '/api/backup' && method === 'GET') {
+    requireAdmin();
+    const backup = require('./backup');
+    const data = JSON.stringify(backup.exportAll(), null, 1);
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store',
+      'Content-Disposition': `attachment; filename="thoth-backup-${new Date().toISOString().slice(0, 10)}.json"` });
+    res.end(data);
+    console.log(`[backup] settings exported by ${user.username}`);
+    return true;
+  }
+  if (p === '/api/backup/check' && method === 'POST') {
+    requireAdmin();
+    const backup = require('./backup');
+    backup.check(body.backup);
+    return send(200, { summary: backup.summary(body.backup), sections: backup.SECTIONS });
+  }
+  if (p === '/api/backup/import' && method === 'POST') {
+    requireAdmin();
+    const backup = require('./backup');
+    const r = backup.importAll(body.backup, { mode: body.mode === 'replace' ? 'replace' : 'merge', sections: body.sections });
+    for (const id of r.newLibraries) scanner.scanLibrary(id, { mode: 'full', reason: 'new' }).catch(() => {});
+    console.log(`[backup] settings imported by ${user.username} (${body.mode === 'replace' ? 'replace' : 'merge'}): ${JSON.stringify(r.imported)}`);
+    return send(200, r);
+  }
   // POST /api/files/merge-plan { merges: [{ target, sources }], deleteSources, apart } — several merges made out of
   // one suggestion (works that looked like one but are two or more): each its own job; with apart, the kept works
   // aren't suggested together again → { jobs }
@@ -1171,7 +1213,7 @@ async function handle(ctx) {
     if (method === 'GET') {
       let siblings = store.booksOf(b.seriesId);
       const rl = q.get('readlist') && db.readlists[q.get('readlist')];
-      if (rl) siblings = rl.bookIds.map(id => db.books[id]).filter(x => x && store.canAccessLibrary(user, x.libraryId));
+      if (rl && canSeeList(rl, user)) siblings = rl.bookIds.map(id => db.books[id]).filter(x => x && store.canAccessLibrary(user, x.libraryId));
       const i = siblings.findIndex(x => x.id === b.id);
       const s = db.series[b.seriesId];
       return send(200, {
@@ -1179,7 +1221,7 @@ async function handle(ctx) {
         series: s ? store.seriesView(s, user) : null,
         prev: i > 0 ? store.bookView(siblings[i - 1], user) : null,
         next: i >= 0 && i < siblings.length - 1 ? store.bookView(siblings[i + 1], user) : null,
-        readlists: Object.values(db.readlists).filter(r => r.bookIds.includes(b.id)).map(r => ({ id: r.id, name: r.name }))
+        readlists: Object.values(db.readlists).filter(r => r.bookIds.includes(b.id) && canSeeList(r, user)).map(r => ({ id: r.id, name: r.name }))
       });
     }
     if (method === 'PATCH') {
@@ -1263,30 +1305,32 @@ async function handle(ctx) {
   }
 
   // ---- collections (groups of series) ----
-  if (p === '/api/collections' && method === 'GET') return send(200, { collections: visibleCollections(user) });
+  // GET /api/collections?scope=mine|public (none: both)
+  if (p === '/api/collections' && method === 'GET') return send(200, { collections: visibleCollections(user, q.get('scope')) });
   if (p === '/api/collections' && method === 'POST') {
-    requireAdmin();
     const name = clean(body.name, 80);
     if (!name) throw httpError(400, 'nameRequired');
     const now = new Date().toISOString();
-    const c = { id: store.newId(), name, seriesIds: ids(body.seriesIds, db.series) || [], created: now, updated: now };
+    const c = { id: store.newId(), name, owner: ownerKey(user), public: body.public === true, seriesIds: ids(body.seriesIds, db.series) || [], created: now, updated: now };
     db.collections[c.id] = c;
     store.saveLibrary();
     return send(201, { collection: collectionView(c, user, true) });
   }
   if ((m = /^\/api\/collections\/([\w-]+)$/.exec(p))) {
     const c = db.collections[m[1]];
-    if (!c) throw httpError(404, 'notFound');
+    if (!c || !canSeeList(c, user)) throw httpError(404, 'notFound'); // (someone's private one: as if it didn't exist)
     if (method === 'GET') {
       const v = collectionView(c, user, true);
-      if (!v.seriesCount && !admin) throw httpError(404, 'notFound');
+      if (!v.seriesCount && !v.mine) throw httpError(404, 'notFound');
       return send(200, { collection: v });
     }
-    requireAdmin();
-    if (method === 'DELETE') { delete db.collections[c.id]; store.saveLibrary(); return send(200, { ok: true }); }
+    // Changing it: its owner (administrators also remove public ones)
+    if (method === 'DELETE' && (ownsList(c, user) || (admin && isPublic(c)))) { delete db.collections[c.id]; store.saveLibrary(); return send(200, { ok: true }); }
+    if (!ownsList(c, user)) throw httpError(403, 'forbidden');
     if (method === 'PATCH') {
       if ('name' in body) { const name = clean(body.name, 80); if (!name) throw httpError(400, 'nameRequired'); c.name = name; }
-      const set = ids(body.seriesIds, db.series); if (set) c.seriesIds = set;
+      if ('public' in body) c.public = body.public === true;
+      const set = ids(body.seriesIds, db.series); if (set) c.seriesIds = keepMissing(c.seriesIds, set, db.series);
       const add = ids(body.addSeriesIds, db.series); if (add) c.seriesIds = [...new Set([...c.seriesIds, ...add])];
       const remove = ids(body.removeSeriesIds, db.series); if (remove) c.seriesIds = c.seriesIds.filter(id => !remove.includes(id));
       c.updated = new Date().toISOString();
@@ -1296,31 +1340,31 @@ async function handle(ctx) {
   }
 
   // ---- read lists (ordered books) ----
-  if (p === '/api/readlists' && method === 'GET') return send(200, { readlists: visibleReadlists(user) });
+  if (p === '/api/readlists' && method === 'GET') return send(200, { readlists: visibleReadlists(user, q.get('scope')) });
   if (p === '/api/readlists' && method === 'POST') {
-    requireAdmin();
     const name = clean(body.name, 80);
     if (!name) throw httpError(400, 'nameRequired');
     const now = new Date().toISOString();
-    const r = { id: store.newId(), name, summary: clean(body.summary, 2000), bookIds: ids(body.bookIds, db.books) || [], created: now, updated: now };
+    const r = { id: store.newId(), name, owner: ownerKey(user), public: body.public === true, summary: clean(body.summary, 2000), bookIds: ids(body.bookIds, db.books) || [], created: now, updated: now };
     db.readlists[r.id] = r;
     store.saveLibrary();
     return send(201, { readlist: readlistView(r, user, true) });
   }
   if ((m = /^\/api\/readlists\/([\w-]+)$/.exec(p))) {
     const r = db.readlists[m[1]];
-    if (!r) throw httpError(404, 'notFound');
+    if (!r || !canSeeList(r, user)) throw httpError(404, 'notFound');
     if (method === 'GET') {
       const v = readlistView(r, user, true);
-      if (!v.booksCount && !admin) throw httpError(404, 'notFound');
+      if (!v.booksCount && !v.mine) throw httpError(404, 'notFound');
       return send(200, { readlist: v });
     }
-    requireAdmin();
-    if (method === 'DELETE') { delete db.readlists[r.id]; store.saveLibrary(); return send(200, { ok: true }); }
+    if (method === 'DELETE' && (ownsList(r, user) || (admin && isPublic(r)))) { delete db.readlists[r.id]; store.saveLibrary(); return send(200, { ok: true }); }
+    if (!ownsList(r, user)) throw httpError(403, 'forbidden');
     if (method === 'PATCH') {
       if ('name' in body) { const name = clean(body.name, 80); if (!name) throw httpError(400, 'nameRequired'); r.name = name; }
+      if ('public' in body) r.public = body.public === true;
       if ('summary' in body) r.summary = clean(body.summary, 2000);
-      const set = ids(body.bookIds, db.books); if (set) r.bookIds = set;
+      const set = ids(body.bookIds, db.books); if (set) r.bookIds = keepMissing(r.bookIds, set, db.books);
       const add = ids(body.addBookIds, db.books); if (add) r.bookIds = [...r.bookIds, ...add.filter(id => !r.bookIds.includes(id))];
       const remove = ids(body.removeBookIds, db.books); if (remove) r.bookIds = r.bookIds.filter(id => !remove.includes(id));
       r.updated = new Date().toISOString();

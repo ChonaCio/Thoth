@@ -827,8 +827,8 @@
             '<div class="detail__actions">' +
               (next ? '<a class="btn btn--primary" href="#read/' + next.book.id + (next.fromStart ? '?page=1' : '') + '">' + icon('play') + esc(t(next.key)) + '</a>' : '') +
               '<button class="btn btn--outline" data-lib="series-toggle-read" data-id="' + s.id + '" data-done="' + (allRead ? '1' : '') + '">' + icon(allRead ? 'remove_done' : 'done_all') + esc(t(allRead ? 'series.markUnread' : 'series.markRead')) + '</button>' +
-              (isAdmin() ? '<button class="btn btn--text" data-lib="series-add-collection" data-id="' + s.id + '">' + icon('collections') + esc(t('series.addToCollection')) + '</button>' +
-                '<button class="btn btn--text" data-lib="series-edit" data-id="' + w.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' +
+              '<button class="btn btn--text" data-lib="series-add-collection" data-id="' + s.id + '">' + icon('collections') + esc(t('series.addToCollection')) + '</button>' +
+              (isAdmin() ? '<button class="btn btn--text" data-lib="series-edit" data-id="' + w.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' +
                 (s.hidden ? '' : '<button class="btn btn--text btn--danger" data-lib="series-delete" data-id="' + s.id + '">' + icon('delete') + esc(t('del.button')) + '</button>') : '') +
             '</div>' +
             (w.summary ? '<p class="detail__summary">' + esc(w.summary) + '</p>' : '') +
@@ -889,8 +889,8 @@
               '<button class="btn btn--outline" data-lib="book-toggle-read" data-id="' + b.id + '" data-done="' + (p && p.completed ? '1' : '') + '" data-pages="' + (b.pageCount || 1) + '">' +
                 icon(p && p.completed ? 'remove_done' : 'done_all') + esc(t(p && p.completed ? 'series.markUnread' : 'series.markRead')) + '</button>' +
               '<a class="btn btn--text" href="/api/books/' + b.id + '/file?download=1" download>' + icon('download') + esc(t('book.download')) + '</a>' +
-              (isAdmin() ? '<button class="btn btn--text" data-lib="book-add-readlist" data-id="' + b.id + '">' + icon('readlist') + esc(t('book.addToReadlist')) + '</button>' +
-                '<button class="btn btn--text" data-lib="book-edit" data-id="' + b.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' : '') +
+              '<button class="btn btn--text" data-lib="book-add-readlist" data-id="' + b.id + '">' + icon('readlist') + esc(t('book.addToReadlist')) + '</button>' +
+              (isAdmin() ? '<button class="btn btn--text" data-lib="book-edit" data-id="' + b.id + '">' + icon('edit') + esc(t('series.edit')) + '</button>' : '') +
             '</div>' +
             '<dl class="pref-list detail__facts">' + rows.map(function (r) { return '<dt>' + esc(t(r[0])) + '</dt><dd>' + esc(r[1]) + '</dd>'; }).join('') + '</dl>' +
             (b.summary ? '<p class="detail__summary">' + esc(b.summary) + '</p>' : '') +
@@ -944,48 +944,75 @@
       return '<div class="cover__layer cover__layer--' + i + '">' + x + '</div>';
     }).reverse().join('') + '</div>';
   }
+  // (who it's from and whether others see it: "Private", "Public", "by ana")
+  function listBadges(x) {
+    return (x.mine ? '<span class="badge' + (x.public ? ' badge--primary' : '') + '">' + icon(x.public ? 'group' : 'lock') + esc(t(x.public ? 'list.public' : 'list.private')) + '</span>'
+      : x.owner ? '<span class="muted small">' + esc(t('list.by', { name: x.owner })) + '</span>' : '');
+  }
   function collectionCard(c) {
     var covers = c.coverSeries.map(seriesCoverHtml);
     return '<div class="media-card"><a class="media-card__link" href="#collection/' + c.id + '">' + stackCover(covers) +
-      '<div class="media-card__title">' + esc(c.name) + '</div><div class="media-card__sub">' + esc(count(c.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + '</div></a></div>';
+      '<div class="media-card__title">' + esc(c.name) + '</div><div class="media-card__sub">' + esc(count(c.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + '</div>' +
+      '<div class="media-card__sub list-card__meta">' + listBadges(c) + '</div></a></div>';
   }
   function readlistCard(r) {
     var covers = r.coverBooks.map(function (b) { return b.format === 'cbz' ? '<img class="cover__img" loading="lazy" alt="" src="/api/books/' + b.id + '/thumbnail?v=' + b.v + '" />' + placeholder('cbz') : placeholder(b.format); });
     return '<div class="media-card"><a class="media-card__link" href="#readlist/' + r.id + '">' + stackCover(covers) +
-      '<div class="media-card__title">' + esc(r.name) + '</div><div class="media-card__sub">' + esc(t('rl.progress', { read: r.booksRead, total: r.booksCount })) + '</div></a></div>';
+      '<div class="media-card__title">' + esc(r.name) + '</div><div class="media-card__sub">' + esc(t('rl.progress', { read: r.booksRead, total: r.booksCount })) + '</div>' +
+      '<div class="media-card__sub list-card__meta">' + listBadges(r) + '</div></a></div>';
   }
-
-  var collections = {
-    title: function () { return t('nav.collections'); },
-    render: function () {
-      var c = cache.collections;
-      var head = '<div class="page-head"><h1 class="page-title">' + esc(t('nav.collections')) + '</h1>' +
-        (isAdmin() ? '<button class="btn btn--primary" data-lib="collection-new">' + icon('add') + esc(t('coll.new')) + '</button>' : '') + '</div>';
-      if (!c) return head + spinner;
-      if (c.error) return head + errorBanner(c.error);
-      if (!c.list.length) return head + emptyState('collections', t('coll.empty'), isAdmin() ? t('coll.emptyAdmin') : '');
-      return head + grid(c.list.map(collectionCard));
-    },
-    enter: function (route) {
-      load(route.hash, function () {
-        return api('GET', '/api/collections').then(function (r) { cache.collections = { list: r.collections }; }, function (e) { cache.collections = { error: e }; throw e; });
-      }, function () { return cache.collections; });
-    }
-  };
+  // Collections / read lists pages: two tabs, the user's own (private or public) and everyone's public ones
+  function listTabs(base, scope) {
+    var tab = function (s, ic, key) { return '<a class="tab' + (scope === s ? ' is-active' : '') + '" href="#' + base + (s === 'mine' ? '' : '?scope=public') + '"' + (scope === s ? ' aria-current="page"' : '') + '>' + icon(ic) + esc(t(key)) + '</a>'; };
+    return '<nav class="tabs files-tabs" aria-label="' + esc(t(base === 'collections' ? 'nav.collections' : 'nav.readlists')) + '">' + tab('mine', 'lock', 'list.tabMine') + tab('public', 'group', 'list.tabPublic') + '</nav>';
+  }
+  var listScope = function (route) { return route.query.get('scope') === 'public' ? 'public' : 'mine'; };
+  function listsPage(o) {
+    return {
+      title: function () { return t(o.nav); },
+      render: function (route) {
+        var scope = listScope(route), c = cache[o.cacheKey] && cache[o.cacheKey][scope];
+        var head = '<div class="page-head"><h1 class="page-title">' + esc(t(o.nav)) + '</h1>' +
+          '<button class="btn btn--primary" data-lib="' + o.newAction + '">' + icon('add') + esc(t(o.newKey)) + '</button></div>' + listTabs(o.base, scope) +
+          '<p class="page-lead">' + esc(t(scope === 'public' ? 'list.publicLead' : 'list.mineLead')) + '</p>';
+        if (!c) return head + spinner;
+        if (c.error) return head + errorBanner(c.error);
+        if (!c.list.length) return head + emptyState(o.emptyIcon, t(scope === 'public' ? 'list.noPublic' : o.emptyKey), t(scope === 'public' ? 'list.noPublicHelp' : o.emptyHelp));
+        return head + grid(c.list.map(o.card));
+      },
+      enter: function (route) {
+        var scope = listScope(route);
+        load(route.hash, function () {
+          return api('GET', o.url + '?scope=' + scope).then(function (r) { cache[o.cacheKey] = cache[o.cacheKey] || {}; cache[o.cacheKey][scope] = { list: r[o.field] }; }, function (e) { cache[o.cacheKey] = cache[o.cacheKey] || {}; cache[o.cacheKey][scope] = { error: e }; throw e; });
+        }, function () { return cache[o.cacheKey] && cache[o.cacheKey][scope]; });
+      }
+    };
+  }
+  var collections = listsPage({ nav: 'nav.collections', base: 'collections', cacheKey: 'collections', url: '/api/collections', field: 'collections', newAction: 'collection-new', newKey: 'coll.new',
+    emptyIcon: 'collections', emptyKey: 'coll.empty', emptyHelp: 'list.mineEmptyColl', card: collectionCard });
+  // (a list's own page: what only its owner can do, and its items that are unavailable for now)
+  function listOwnerTools(kind, d) {
+    var p = kind === 'collection' ? 'collection' : 'readlist';
+    return d.mine ? '<div class="toolbar__group">' +
+      '<button class="btn btn--text" data-lib="' + p + '-public" data-id="' + d.id + '" data-public="' + (d.public ? '0' : '1') + '" title="' + esc(t(d.public ? 'list.makePrivateHelp' : 'list.makePublicHelp')) + '">' + icon(d.public ? 'lock' : 'group') + esc(t(d.public ? 'list.makePrivate' : 'list.makePublic')) + '</button>' +
+      '<button class="btn btn--text" data-lib="' + p + '-rename" data-id="' + d.id + '">' + icon('edit') + esc(t('coll.rename')) + '</button>' +
+      '<button class="btn btn--text btn--danger" data-lib="' + p + '-delete" data-id="' + d.id + '">' + icon('delete') + esc(t('coll.delete')) + '</button></div>'
+      : isAdmin() && d.public ? '<div class="toolbar__group"><button class="btn btn--text btn--danger" data-lib="' + p + '-delete" data-id="' + d.id + '">' + icon('delete') + esc(t('coll.delete')) + '</button></div>' : '';
+  }
+  function listNotes(d) {
+    return '<p class="muted small list-meta">' + listBadges(d) +
+      (d.missing ? ' <span title="' + esc(t('list.missingHelp')) + '">' + icon('history') + esc(t('list.missing', { count: d.missing })) + '</span>' : '') + '</p>';
+  }
   var collection = {
     title: function (route) { var d = cache.collection[route.param]; return d && d.name ? d.name : t('nav.collections'); },
     render: function (route) {
       var d = cache.collection[route.param];
       if (!d) return spinner;
       if (d.error) return backLink('#collections', t('nav.collections')) + errorBanner(d.error);
-      return backLink('#collections', t('nav.collections')) +
-        '<div class="page-head"><h1 class="page-title">' + esc(d.name) + '</h1>' +
-          (isAdmin() ? '<div class="toolbar__group">' +
-            '<button class="btn btn--text" data-lib="collection-rename" data-id="' + d.id + '">' + icon('edit') + esc(t('coll.rename')) + '</button>' +
-            '<button class="btn btn--text btn--danger" data-lib="collection-delete" data-id="' + d.id + '">' + icon('delete') + esc(t('coll.delete')) + '</button></div>' : '') +
-        '</div>' +
+      return backLink(d.mine ? '#collections' : '#collections?scope=public', t('nav.collections')) +
+        '<div class="page-head"><h1 class="page-title">' + esc(d.name) + '</h1>' + listOwnerTools('collection', d) + '</div>' + listNotes(d) +
         '<p class="muted small grid-count">' + esc(count(d.seriesCount, 'lib.seriesCount1', 'lib.seriesCount')) + '</p>' +
-        (d.series.length ? grid(d.series.map(function (s) { return seriesCard(s, { remove: isAdmin() ? 'collection-remove-series' : '' }); })) : emptyState('collections', '', t('coll.noSeries')));
+        (d.series.length ? grid(d.series.map(function (s) { return seriesCard(s, { remove: d.mine ? 'collection-remove-series' : '' }); })) : emptyState('collections', '', t('coll.noSeries')));
     },
     enter: function (route) {
       var id = route.param;
@@ -996,23 +1023,8 @@
   };
 
   /* ================= READ LISTS ================= */
-  var readlists = {
-    title: function () { return t('nav.readlists'); },
-    render: function () {
-      var c = cache.readlists;
-      var head = '<div class="page-head"><h1 class="page-title">' + esc(t('nav.readlists')) + '</h1>' +
-        (isAdmin() ? '<button class="btn btn--primary" data-lib="readlist-new">' + icon('add') + esc(t('rl.new')) + '</button>' : '') + '</div>';
-      if (!c) return head + spinner;
-      if (c.error) return head + errorBanner(c.error);
-      if (!c.list.length) return head + emptyState('readlist', t('rl.empty'), isAdmin() ? t('rl.emptyAdmin') : '');
-      return head + grid(c.list.map(readlistCard));
-    },
-    enter: function (route) {
-      load(route.hash, function () {
-        return api('GET', '/api/readlists').then(function (r) { cache.readlists = { list: r.readlists }; }, function (e) { cache.readlists = { error: e }; throw e; });
-      }, function () { return cache.readlists; });
-    }
-  };
+  var readlists = listsPage({ nav: 'nav.readlists', base: 'readlists', cacheKey: 'readlists', url: '/api/readlists', field: 'readlists', newAction: 'readlist-new', newKey: 'rl.new',
+    emptyIcon: 'readlist', emptyKey: 'rl.empty', emptyHelp: 'list.mineEmptyRl', card: readlistCard });
   var readlist = {
     title: function (route) { var d = cache.readlist[route.param]; return d && d.name ? d.name : t('nav.readlists'); },
     render: function (route) {
@@ -1020,13 +1032,9 @@
       if (!d) return spinner;
       if (d.error) return backLink('#readlists', t('nav.readlists')) + errorBanner(d.error);
       var next = nextToRead(d.books);
-      var admin = isAdmin();
-      return backLink('#readlists', t('nav.readlists')) +
-        '<div class="page-head"><h1 class="page-title">' + esc(d.name) + '</h1>' +
-          (admin ? '<div class="toolbar__group">' +
-            '<button class="btn btn--text" data-lib="readlist-rename" data-id="' + d.id + '">' + icon('edit') + esc(t('coll.rename')) + '</button>' +
-            '<button class="btn btn--text btn--danger" data-lib="readlist-delete" data-id="' + d.id + '">' + icon('delete') + esc(t('coll.delete')) + '</button></div>' : '') +
-        '</div>' +
+      var admin = d.mine; // (its owner arranges it)
+      return backLink(d.mine ? '#readlists' : '#readlists?scope=public', t('nav.readlists')) +
+        '<div class="page-head"><h1 class="page-title">' + esc(d.name) + '</h1>' + listOwnerTools('readlist', d) + '</div>' + listNotes(d) +
         (d.summary ? '<p class="page-lead">' + esc(d.summary) + '</p>' : '') +
         '<div class="detail__actions">' +
           (next ? '<a class="btn btn--primary" href="#read/' + next.book.id + '?readlist=' + d.id + (next.fromStart ? '&page=1' : '') + '">' + icon('play') + esc(t(next.key)) + '</a>' : '') +
@@ -4240,9 +4248,11 @@
             '<button type="button" class="btn btn--text" data-lib="config-defaults">' + esc(t('cfg.defaults')) + '</button>' +
             '<button type="submit" class="btn btn--primary">' + esc(t('common.save')) + '</button>' +
           '</div>' +
-        '</form></section>';
+        '</form></section>' + backupCard();
     },
     mount: function (el) {
+      var file = $('#backup-file', el);
+      if (file) file.addEventListener('change', function () { readBackupFile(file.files && file.files[0]); });
       var form = $('#config-form', el);
       if (!form) return;
       form.addEventListener('submit', function (e) {
@@ -4273,6 +4283,61 @@
       }, function () { return cache.config; });
     }
   };
+
+  /* ---- Backup and restore (Server settings): every setting as one file ---- */
+  var BACKUP_SECTIONS = ['config', 'libraries', 'settings', 'metadataSources', 'collections', 'readlists', 'workEdits', 'catalog', 'downloads'];
+  function backupState() { if (!cache.backup) cache.backup = { data: null, name: '', summary: null, error: null, result: null, busy: false }; return cache.backup; }
+  function backupCard() {
+    var b = backupState(), s = b.summary;
+    var counts = s ? { config: s.config, libraries: s.libraries, settings: null, metadataSources: s.metadataSources, collections: s.collections, readlists: s.readlists, workEdits: s.workEdits,
+      catalog: s.catalogSources + s.catalogMerges + s.catalogTemplates, downloads: s.downloadJobs } : {};
+    return '<section class="card card--wide backup-card"><h2 class="card__title">' + icon('storage') + esc(t('bk.title')) + '</h2>' +
+      '<p class="muted small">' + esc(t('bk.intro')) + '</p>' +
+      '<div class="backup-card__row"><a class="btn btn--primary" href="/api/backup" download>' + icon('download') + esc(t('bk.export')) + '</a>' +
+        '<label class="btn btn--outline backup-card__pick">' + icon('upload') + esc(t('bk.choose')) + '<input type="file" id="backup-file" accept=".json,application/json" hidden /></label>' +
+        (b.name ? '<span class="muted small">' + esc(b.name) + '</span>' : '') + '</div>' +
+      '<p class="muted small">' + esc(t('bk.notIncluded')) + '</p>' +
+      (b.error ? '<p class="notice notice--error small">' + esc(A().errMsg(b.error)) + '</p>' : '') +
+      (s ? '<div class="backup-card__import">' +
+        '<p class="small">' + esc(t('bk.fileFrom', { date: s.exportedAt ? A().fmtDate(s.exportedAt) : '—', app: s.app || '?' })) + '</p>' +
+        '<div class="dl-checks">' + BACKUP_SECTIONS.map(function (k) {
+          var n = counts[k];
+          return '<label class="checkbox"><input type="checkbox" name="bk-section" value="' + k + '" checked /><span>' + esc(t('bk.section.' + k)) + (n != null ? ' <span class="muted small">(' + n + ')</span>' : '') + '</span></label>';
+        }).join('') + '</div>' +
+        '<label class="checkbox dl-radio"><input type="radio" name="bk-mode" value="merge" checked /><span><strong>' + esc(t('bk.merge')) + '</strong> — ' + esc(t('bk.mergeHelp')) + '</span></label>' +
+        '<label class="checkbox dl-radio"><input type="radio" name="bk-mode" value="replace" /><span><strong>' + esc(t('bk.replace')) + '</strong> — ' + esc(t('bk.replaceHelp')) + '</span></label>' +
+        '<div class="form__actions"><button type="button" class="btn btn--text" data-lib="backup-cancel">' + esc(t('common.cancel')) + '</button>' +
+          '<button type="button" class="btn btn--primary" data-lib="backup-import"' + (b.busy ? ' disabled' : '') + '>' + icon('upload') + esc(t('bk.import')) + '</button></div></div>' : '') +
+      (b.result ? '<div class="banner banner--ok"><div><strong>' + esc(t('bk.done')) + '</strong><p class="small">' + esc(Object.keys(b.result.imported).map(function (k) { return t('bk.imported.' + k, { count: b.result.imported[k] }); }).join(' · ')) +
+        (b.result.pendingEdits ? ' · ' + esc(t('bk.pending', { count: b.result.pendingEdits })) : '') + (b.result.newLibraries.length ? ' · ' + esc(t('bk.scanning', { count: b.result.newLibraries.length })) : '') + '</p></div></div>' : '') +
+    '</section>';
+  }
+  function readBackupFile(f) {
+    var b = backupState();
+    b.error = null; b.result = null; b.summary = null; b.data = null; b.name = f ? f.name : '';
+    if (!f) return A().renderPage();
+    var reader = new FileReader();
+    reader.onload = function () {
+      var data;
+      try { data = JSON.parse(reader.result); } catch (e) { b.error = { code: 'notBackup', message: t('bk.notJson') }; return A().renderPage(); }
+      api('POST', '/api/backup/check', { backup: data }).then(function (r) { b.data = data; b.summary = r.summary; }, function (e) { b.error = e; }).then(function () { A().renderPage(); });
+    };
+    reader.readAsText(f);
+  }
+  function importBackup() {
+    var b = backupState();
+    if (!b.data) return;
+    var sections = $$('input[name="bk-section"]:checked').map(function (x) { return x.value; });
+    var mode = (($$('input[name="bk-mode"]:checked')[0]) || {}).value || 'merge';
+    if (!sections.length) return A().toast(t('bk.pickSection'));
+    if (!confirm(t(mode === 'replace' ? 'bk.confirmReplace' : 'bk.confirmMerge', { sections: sections.map(function (k) { return t('bk.section.' + k); }).join(', ') }))) return;
+    b.busy = true; A().renderPage();
+    api('POST', '/api/backup/import', { backup: b.data, mode: mode, sections: sections }).then(function (r) {
+      b.result = r; b.summary = null; b.data = null; b.name = '';
+      cache.config = null; invalidate(); A().refreshLibraries(); A().toast(t('bk.done'));
+      serverSettings.enter(A().parseRoute());
+    }, function (e) { b.error = e; }).then(function () { b.busy = false; A().renderPage(); });
+  }
 
   // After "Restart server": wait for it to go away and come back, then reload the page
   function waitForServerRestart() {
@@ -4613,7 +4678,7 @@
   function addTo(kind, itemId) {
     var isColl = kind === 'collection';
     var listUrl = isColl ? '/api/collections' : '/api/readlists';
-    api('GET', listUrl).then(function (r) {
+    api('GET', listUrl + '?scope=mine').then(function (r) { // (only the user's own lists can be added to)
       var lists = isColl ? r.collections : r.readlists;
       var NEW = '__new';
       openForm({
@@ -5221,6 +5286,15 @@
         return nameForm('coll.rename', cache.readlist[id].name, function (name) {
           return api('PATCH', '/api/readlists/' + id, { name: name }).then(function () { invalidate(); refreshCurrent(); });
         });
+      case 'backup-import': return importBackup();
+      case 'backup-cancel': cache.backup = null; return A().renderPage();
+      case 'collection-public':
+      case 'readlist-public': {
+        var isC = action === 'collection-public', on = btn.dataset.public === '1';
+        return api('PATCH', (isC ? '/api/collections/' : '/api/readlists/') + id, { public: on }).then(function () {
+          A().toast(t(on ? 'list.nowPublic' : 'list.nowPrivate')); invalidate(); markStale(cache.collections); markStale(cache.readlists); refreshCurrent();
+        }, fail);
+      }
       case 'collection-delete':
         if (!confirm(t('coll.confirmDelete', { name: cache.collection[id].name }))) return;
         return api('DELETE', '/api/collections/' + id).then(function () { A().toast(t('coll.deleted')); invalidate(); location.hash = '#collections'; }, fail);

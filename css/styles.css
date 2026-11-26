@@ -1109,6 +1109,21 @@ body.is-reading { overflow: hidden; }
 .select-bar__gap { flex: 1; }
 .select-bar svg { width: 18px; height: 18px; fill: currentColor; }
 
+/* ================= Collections / read lists: owner, public ================= */
+.list-card__meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 1.2em; }
+.list-card__meta .badge, .list-meta .badge { display: inline-flex; align-items: center; gap: 3px; font-size: 11px; }
+.list-card__meta svg, .list-meta svg { width: 12px; height: 12px; fill: currentColor; }
+.list-meta { display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: center; margin: -8px 0 12px; }
+.list-meta > span { display: inline-flex; align-items: center; gap: 4px; }
+
+/* ================= Server settings: backup and restore ================= */
+.backup-card .card__title { display: flex; align-items: center; gap: 8px; }
+.backup-card .card__title svg { width: 20px; height: 20px; fill: currentColor; }
+.backup-card__row { display: flex; flex-wrap: wrap; gap: 8px 12px; align-items: center; }
+.backup-card__pick { cursor: pointer; }
+.backup-card__import { align-self: stretch; display: flex; flex-direction: column; gap: 6px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; }
+.backup-card .banner { align-self: stretch; }
+
 /* ================= Downloads ================= */
 .dl-job.is-paused .lib-card__head, .dl-job.is-paused > p { opacity: .6; }
 .dl-job .card__title a { color: inherit; }

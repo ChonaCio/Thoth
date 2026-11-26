@@ -18,6 +18,10 @@ for (const f of ['js/library.js', 'js/downloads.js', 'js/reader.js', 'js/app.js'
 ['ongoing', 'ended', 'hiatus', 'abandoned', 'unknown'].forEach(s => keys.add('series.status.' + s));
 ['ltr', 'rtl', 'vertical'].forEach(s => keys.add('series.direction.' + s));
 ['writer', 'penciller', 'inker', 'colorist', 'letterer', 'coverartist', 'editor'].forEach(s => keys.add('author.' + s));
+// (Backup: sections and what was imported)
+['config', 'libraries', 'settings', 'metadataSources', 'collections', 'readlists', 'workEdits', 'catalog', 'downloads'].forEach(s => keys.add('bk.section.' + s));
+['config', 'libraries', 'settings', 'metadataSources', 'collections', 'readlists', 'workEdits', 'catalogSources', 'catalogMerges', 'catalogTemplates', 'downloadJobs'].forEach(s => keys.add('bk.imported.' + s));
+keys.add('err.folderEmpty');
 // (Downloads: statuses, modes, orders, schedules and days built from their names)
 ['done', 'pending', 'locked', 'failed', 'nosource'].forEach(s => keys.add('dl.status.' + s));
 ['priority', 'quality'].forEach(s => { keys.add('dl.mode.' + s); keys.add('dl.modeHelp.' + s); });
