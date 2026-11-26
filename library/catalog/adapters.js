@@ -259,11 +259,38 @@ const webtoons = {
     const maxPage = Math.max(1, ...[...first.text.matchAll(/[?&](?:amp;)?page=(\d+)/g)].map(m => Number(m[1])));
     const lastEp = Number((doc.first('li._episodeItem') || { attr: () => 0 }).attr('data-episode-no')) || 0;
     const pages = Math.max(maxPage, Math.ceil(lastEp / 10) + 1);
+    let refused = 0, stoppedAtKnown = false;
     for (let p = 2; p <= pages && p <= 500; p++) {
-      if (ctx.incremental && r.knownHit) break; // the rest is already stored
+      if (ctx.incremental && r.knownHit) { stoppedAtKnown = true; break; } // the rest is already stored
       const url = `${stub.url}${stub.url.includes('?') ? '&' : '?'}page=${p}`;
       try { const d = parse((await get(url)).text); r = take(d); if (!r.added) break; }
-      catch (e) { if (e.code === 'robots') { partial = true; continue; } throw e; }
+      catch (e) { if (e.code === 'robots') { partial = true; refused++; continue; } throw e; }
+    }
+    // WEBTOON's robots.txt ("…/list?title_no=*&page=1", a prefix) refuses list pages 10–19, 100–199…: their
+    // episodes would be missing (Reborn Rich: 19, then 120). An episode's viewer page is allowed and lists every
+    // episode (number, title, address): read once, for the episodes the list pages didn't give
+    const missing = () => { let n = 0; for (let i = 1; i <= lastEp; i++) if (!ids.has(String(i))) n++; return n; };
+    if (!stoppedAtKnown && lastEp && (refused || missing() > 0) && chapters.length) {
+      const newest = chapters.find(c => c.u && /\/viewer\?/.test(c.u));
+      if (newest) {
+        try {
+          const v = parse((await get(newest.u)).text);
+          let lis = v.select('#_bottomEpisodeList li');
+          if (!lis.length) lis = v.select('#topEpisodeList li');
+          let added = 0;
+          for (const li of lis) {
+            const a = li.first('a'), href = a ? abs(a.attr('href'), newest.u) : null;
+            const id = li.attr('data-episode-no') || ((href || '').match(/episode_no=(\d+)/) || [])[1];
+            if (!id || ids.has(id)) continue;
+            ids.add(id);
+            const title = li.text().replace(/\s+/g, ' ').trim().replace(/^#\d+\s*/, '');
+            chapters.push({ id, n: chapterNum(title) || id, t: title, u: href, d: '', l: langs(src)[0] || 'en', pr: isPremium(li, title) || undefined });
+            added++;
+          }
+          if (added) work.fromViewer = added;
+          if (!missing()) partial = false; // (complete again)
+        } catch (e) { if (e.code === 'stopped' || e.code === 'blocked') throw e; /* the list stays partial */ }
+      }
     }
     work.chapters = chapters;
     if (partial) work.partial = true;

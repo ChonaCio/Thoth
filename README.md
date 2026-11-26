@@ -804,8 +804,13 @@ a work's page in the catalog (its **Download** box: add it to a job, or start a 
   site, pages, size, width; to download; waiting; failed and why) with *Try again*.
 - Pages are found on the chapter page (the usual reader areas, lazy-loaded images, image lists in the page's
   scripts; a source can name its own with the `pageImages` selector) or, for MangaDex, its API.
-- Each run is **its own process**, like a crawl (it keeps going if the server restarts), shown under Processes →
-  Tasks with its log. Storage: `data/downloads/<job>/` (`state.json`: every chapter's state, `run.json`,
+- Chapters whose files are already in the work's folder (downloaded by another job, copied in by hand, not scanned
+  yet) aren't downloaded again; only what's missing is.
+- The catalog marks works that are **in a download job** (next to *In library*). In a job's settings, ticking sites
+  under *Works from these sites* lists their works to add (all of them at once with *Add all shown*).
+- Each run is **its own process**, like a crawl (it keeps going if the server restarts): it works out what to
+  download itself (reading the library and the catalog from disk, read-only), then downloads it. Shown on the
+  Processes page (Downloads) and under Processes → Tasks with its log. Storage: `data/downloads/<job>/` (`state.json`: every chapter's state, `run.json`,
   `progress.json`). Deleting a job keeps the downloaded files.
 ### Library and work settings
 

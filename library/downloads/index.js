@@ -219,10 +219,34 @@ function targetOf(job, unit, edition) {
   const s = unit.inLibrary && db.series[unit.inLibrary.seriesId];
   if (s && s.libraryId === job.libraryId && !s.oneshot && s.relPath != null) {
     const have = new Set(store.booksOf(s.id).map(b => numText(store.bookMeta(b).number)).filter(Boolean));
-    return { folder: path.join(lib.root, s.relPath), have, seriesId: s.id };
+    const folder = path.join(lib.root, s.relPath);
+    for (const n of onDisk(folder)) have.add(n);
+    return { folder, have, seriesId: s.id };
   }
   const suffix = edition && edition !== 'base' ? ' (' + edition.split('+').map(e => EDITION_NAME[e] || e).join(', ') + ')' : '';
-  return { folder: path.join(lib.root, safeName(unit.title) + suffix), have: new Set(), seriesId: null };
+  const folder = path.join(lib.root, safeName(unit.title) + suffix);
+  return { folder, have: onDisk(folder), seriesId: null };
+}
+// The chapter numbers of the book files in a folder as they are on disk now (downloaded by another job, copied by
+// hand, not scanned into the library yet): those aren't downloaded again. Read once per folder for a few seconds.
+const diskMemo = new Map(); // folder → { at, set }
+const BOOK_FILE = /\.(cbz|cbr|zip|rar|cb7|7z|pdf|epub)$/i;
+function onDisk(folder) {
+  const m = diskMemo.get(folder);
+  if (m && Date.now() - m.at < 5000) return new Set(m.set);
+  const set = new Set();
+  let names = [];
+  try { names = fs.readdirSync(folder); } catch { /* not there yet */ }
+  for (const name of names) {
+    if (!BOOK_FILE.test(name)) continue;
+    const base = name.replace(BOOK_FILE, '');
+    const hit = /(?:^|[\s._-])(?:chapter|chap|ch|c|episode|ep|e|#)[\s._-]*0*(\d+(?:\.\d+)?)/i.exec(base) || /^0*(\d+(?:\.\d+)?)(?:\D|$)/.exec(base);
+    const n = hit && numText(hit[1]);
+    if (n) set.add(n);
+  }
+  if (diskMemo.size > 2000) diskMemo.clear();
+  diskMemo.set(folder, { at: Date.now(), set });
+  return new Set(set);
 }
 const readState = id => { try { return JSON.parse(fs.readFileSync(path.join(jobDir(id), 'state.json'), 'utf8')); } catch { return { chapters: {} }; } };
 const chapterKey = (workKey, edition, c) => `${workKey}|${edition}|${numText(c.n) || 't:' + String(c.t || '').toLowerCase()}`;
@@ -284,7 +308,8 @@ function liveRun(id) {
   if (!p || (p.status !== 'running' && p.status !== 'starting')) return null;
   const beat = Date.parse(p.heartbeatAt || p.startedAt || 0) || 0;
   if (p.status === 'starting' && Date.now() - beat < 20000) return p;
-  if (alive(p.pid) && Date.now() - beat < 30000) return p;
+  // (working out what to download reads the whole catalog in one go: its heartbeat can pause for a while)
+  if (alive(p.pid) && Date.now() - beat < (p.phase === 'planning' ? 600000 : 30000)) return p;
   Object.assign(p, { status: 'failed', error: 'The download process stopped unexpectedly', finishedAt: new Date().toISOString() });
   try { fs.writeFileSync(path.join(jobDir(id), 'progress.json'), JSON.stringify(p)); } catch { /* gone */ }
   return null;
@@ -311,18 +336,13 @@ function startRun(q) {
   if (!j) return;
   const dir = jobDir(j.id);
   fs.mkdirSync(dir, { recursive: true });
-  let chapters;
-  try { chapters = plan(j, { full: q.full }); } catch (e) { j.lastRunAt = new Date().toISOString(); j.lastStatus = 'failed: ' + e.message; store.saveLibrary(); return; }
+  // What to download is worked out by the run's own process (plan, in runner.js), not here: with thousands of
+  // works (every work of some sites) reading their chapter lists takes a while, and the server stays free. The
+  // process reads the library and the catalog from disk (read-only), so what's waiting to be saved is saved first;
+  // the job's settings travel with it (a job just saved is planned as it is now).
+  store.flushAll();
   const runId = 'd' + Date.now().toString(36);
   const startedAt = new Date();
-  if (!chapters.length) {
-    Object.assign(j, { lastRunAt: startedAt.toISOString(), lastStatus: 'nothing new to download', nextRunAt: j.enabled ? nextRun(j.schedule) : null });
-    if (q.full) j.fullPassAt = startedAt.toISOString();
-    store.saveLibrary();
-    const t = tasks.start({ kind: 'download', title: runTitle(j, q.full) });
-    t.end('done', 'nothing new to download');
-    return;
-  }
   const logFile = tasks.logPathFor('download', runId, startedAt);
   try { fs.mkdirSync(path.dirname(logFile), { recursive: true }); fs.writeFileSync(logFile, `# ${runTitle(j, q.full)}\n`); } catch { /* best effort */ }
   const sources = {};
@@ -331,15 +351,22 @@ function startRun(q) {
     if (s) sources[sid] = { id: sid, name: s.name, type: s.type, baseUrl: s.baseUrl, gapMs: s.gapMs, concurrency: s.concurrency, access: s.access || null, selectors: s.selectors ? { pageImages: s.selectors.pageImages || null } : null };
   }
   fs.writeFileSync(path.join(dir, 'run.json'), JSON.stringify({ runId, jobId: j.id, jobName: j.name, full: q.full, reason: q.reason, logFile, allowLocal: ALLOW_LOCAL,
-    mode: j.mode, concurrency: j.concurrency, sources, chapters }));
+    mode: j.mode, concurrency: j.concurrency, sources, plan: true, job: j }));
   fs.rmSync(path.join(dir, 'stop'), { force: true });
-  fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ runId, jobId: j.id, status: 'starting', full: q.full, startedAt: startedAt.toISOString(), total: chapters.length, done: 0 }));
+  fs.writeFileSync(path.join(dir, 'progress.json'), JSON.stringify({ runId, jobId: j.id, status: 'starting', full: q.full, startedAt: startedAt.toISOString(), total: 0, done: 0, phase: 'planning' }));
   const out = fs.openSync(path.join(dir, 'run.log'), 'a');
-  const child = spawn(process.execPath, [path.join(__dirname, 'runner.js'), dir], { detached: true, stdio: ['ignore', out, out], windowsHide: true, env: process.env });
+  const child = spawn(process.execPath, [path.join(__dirname, 'runner.js'), dir], { detached: true, stdio: ['ignore', out, out], windowsHide: true, env: Object.assign({}, process.env, { THOTH_DB_READONLY: '1' }) });
   fs.closeSync(out);
   child.unref();
   runTask(j.id, runId, q.full, logFile, startedAt);
-  console.log(`[downloads] "${j.name}": ${chapters.length} chapter(s) to download, as its own process (pid ${child.pid})`);
+  console.log(`[downloads] "${j.name}": run started as its own process (pid ${child.pid}): it works out what to download, then downloads it`);
+}
+// In the run's process (runner.js): the chapters to download for this job (its settings as sent), from the library
+// and the catalog as they are on disk
+function planFor(job, { full = false } = {}) {
+  if (!job || !Array.isArray(job.works)) throw new Error('No job settings');
+  db.downloadJobs[job.id] = job; // (as the server sent it: the process doesn't save anything)
+  return plan(job, { full });
 }
 function runTask(jobId, runId, full, logFile, startedAt) {
   if (tasks.find(runId)) return;
@@ -376,7 +403,7 @@ function pump() {
     const first = !recent.has(id) && !pumpTimer;
     recent.set(id, p.runId);
     if (first && j.lastRunId === p.runId) continue; // (noticed before a restart)
-    const summary = p.error || `${p.ok || 0} downloaded, ${p.failed || 0} failed, ${p.locked || 0} locked` + (p.status === 'stopped' ? `, ${(p.total || 0) - (p.done || 0)} not started (stopped)` : '');
+    const summary = p.error || (p.status === 'done' && !p.total ? 'nothing new to download' : `${p.ok || 0} downloaded, ${p.failed || 0} failed, ${p.locked || 0} locked` + (p.status === 'stopped' ? `, ${(p.total || 0) - (p.done || 0)} not started (stopped)` : ''));
     tasks.endById(p.runId, p.status === 'done' ? 'done' : p.status === 'stopped' ? 'stopped' : 'failed', summary);
     let full = false; try { full = JSON.parse(fs.readFileSync(path.join(jobDir(id), 'run.json'), 'utf8')).full; } catch { /* gone */ }
     Object.assign(j, { lastRunId: p.runId, lastRunAt: p.finishedAt, lastStatus: summary, nextRunAt: j.enabled ? nextRun(j.schedule) : null });
@@ -419,7 +446,7 @@ function runView(id) {
   const p = liveRun(id);
   if (!p) return null;
   const started = Date.parse(p.startedAt || 0) || Date.now();
-  return { status: 'running', full: Boolean(p.full), startedAt: p.startedAt, total: p.total || 0, done: p.done || 0, ok: p.ok || 0, failed: p.failed || 0, locked: p.locked || 0,
+  return { status: 'running', phase: p.phase || 'downloading', pid: p.pid || null, full: Boolean(p.full), startedAt: p.startedAt, total: p.total || 0, done: p.done || 0, ok: p.ok || 0, failed: p.failed || 0, locked: p.locked || 0,
     bytes: p.bytes || 0, current: p.current || [], etaMs: p.done >= 2 && p.total ? Math.round((Date.now() - started) / p.done * (p.total - p.done)) : null };
 }
 function view(j, { details = false } = {}) {
@@ -486,13 +513,42 @@ function retry(id, key = null) {
   fs.writeFileSync(path.join(jobDir(j.id), 'state.json'), JSON.stringify(state));
   return { retried: n };
 }
+// Catalog work key → the jobs it's in ([{ id, name }]), for the catalog's marks; built once per data version
+let jobIndexMemo = { ver: null, map: null };
+function jobIndex() {
+  const ver = store.generation() + '|' + catalog.dataVersion();
+  if (jobIndexMemo.ver === ver) return jobIndexMemo.map;
+  const map = new Map();
+  for (const j of Object.values(db.downloadJobs)) {
+    for (const w of jobWorks(j)) {
+      if (!w.item) continue;
+      const keys = [w.item.key].concat((w.item.versions || []).map(v => v.key));
+      for (const k of keys) { if (!map.has(k)) map.set(k, []); const l = map.get(k); if (!l.some(x => x.id === j.id)) l.push({ id: j.id, name: j.name }); }
+    }
+  }
+  jobIndexMemo = { ver, map };
+  return map;
+}
+// Catalog list items marked with their jobs (inJobs)
+function markItems(items) { const idx = jobIndex(); if (!idx.size) return items; for (const it of items || []) { const j = idx.get(it.key); if (j) it.inJobs = j; } return items; }
 // The jobs a catalog work is in (for its page's Download button)
 function jobsOfWork(key) {
   const it = catalog.itemByKey(key);
   if (!it) return [];
   return Object.values(db.downloadJobs).filter(j => jobWorks(j).some(w => w.item && w.item.key === it.key)).map(j => ({ id: j.id, name: j.name }));
 }
-function info() { return { jobs: Object.keys(db.downloadJobs).length, running: Object.keys(db.downloadJobs).filter(id => liveRun(id)).length, queued: queue.length }; }
+// The Processes page: every run is its own process (its pid), planning then downloading; what waits; what's next
+function info() {
+  const runs = [];
+  for (const [id, j] of Object.entries(db.downloadJobs)) {
+    const p = liveRun(id);
+    if (p) runs.push({ jobId: id, name: j.name, pid: p.pid || null, phase: p.phase || 'downloading', full: Boolean(p.full), startedAt: p.startedAt || null, done: p.done || 0, total: p.total || 0, ok: p.ok || 0, failed: p.failed || 0, locked: p.locked || 0, current: (p.current || []).slice(0, 4) });
+  }
+  const next = Object.values(db.downloadJobs).filter(j => j.enabled && j.nextRunAt).sort((a, b) => String(a.nextRunAt).localeCompare(String(b.nextRunAt)))[0];
+  return { jobs: Object.keys(db.downloadJobs).length, running: runs.length, runs, maxRuns: MAX_RUNS(),
+    queued: queue.length, queue: queue.map(q => ({ jobId: q.jobId, name: (db.downloadJobs[q.jobId] || {}).name || q.jobId, full: q.full })),
+    next: next ? { jobId: next.id, name: next.name, at: next.nextRunAt } : null };
+}
 
-module.exports = { list, get, createJob, updateJob, removeJob, addWorks, removeWork, restoreExcluded, workChapters, retry, run, stop, start, pump, plan, jobsOfWork, info,
+module.exports = { list, get, createJob, updateJob, removeJob, addWorks, removeWork, restoreExcluded, workChapters, retry, run, stop, start, pump, plan, planFor, jobsOfWork, info, markItems, jobIndex,
   nextRun, cleanSchedule, chapterFileName, VERSIONS };

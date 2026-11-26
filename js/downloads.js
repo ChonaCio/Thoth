@@ -53,6 +53,7 @@
     var r = j.run;
     if (!r) return '';
     if (r.status === 'queued') return '<p class="muted small">' + icon('history') + ' ' + esc(t('dl.queued')) + '</p>';
+    if (r.phase === 'planning') return U().progressBar({ percent: null, etaMs: null, elapsedMs: r.startedAt ? Date.now() - Date.parse(r.startedAt) : 0 }, t('dl.planning'), '');
     var bar = { percent: r.total ? Math.min(100, Math.floor(r.done / r.total * 100)) : null, etaMs: r.etaMs, elapsedMs: r.startedAt ? Date.now() - Date.parse(r.startedAt) : 0 };
     var html = U().progressBar(bar, t(r.full ? 'dl.runningFull' : 'dl.running'), t('dl.runProgress', { done: r.done, total: r.total, ok: r.ok, failed: r.failed, locked: r.locked }));
     if (r.current && r.current.length) html += '<ul class="dl-now small">' + r.current.map(function (c) { return '<li>' + icon('download') + '<span>' + esc(c) + '</span></li>'; }).join('') + '</ul>';
@@ -245,17 +246,20 @@
   function resultRows() {
     var s = st.ed.search;
     if (s.loading && !s.items) return '<li>' + spinner + '</li>';
-    if (!s.items) return '';
+    if (!s.items) return '<li class="muted small dl-empty">' + esc(t('dl.browseHint')) + '</li>';
     if (!s.items.length) return '<li class="muted small dl-empty">' + esc(t('lib.noMatch')) + '</li>';
     var have = inJobKeys();
-    return s.items.map(function (it) {
+    var head = '<li class="dl-browse-head"><span class="muted small">' + esc(t(s.sites ? 'dl.browseCount' : 'dl.searchCount', { count: s.total })) + '</span>' +
+      '<button type="button" class="btn btn--text btn--small" data-dl="add-shown">' + icon('add') + esc(t('dl.addShown', { count: s.items.length })) + '</button></li>';
+    var more = s.items.length < s.total ? '<li class="dl-browse-more"><button type="button" class="btn btn--outline btn--small" data-dl="browse-more"' + (s.loading ? ' disabled' : '') + '>' + esc(t('lib.loadMore')) + '</button></li>' : '';
+    return head + s.items.map(function (it) {
       var inJob = have[it.key] || it.sources.some(function (x) { return have[x.key]; });
       return '<li class="dl-work">' + thumb(it.cover ? it.coverKey : null) + '<div class="dl-work__body"><strong>' + esc(it.title) + '</strong>' +
           (it.inLibrary ? ' <span class="badge badge--success">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') +
           '<p class="muted small">' + esc([it.sources.map(function (x) { return x.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : ''].filter(Boolean).join(' · ')) + '</p></div>' +
         (inJob ? '<span class="muted small">' + icon('check') + esc(t('dl.inJob')) + '</span>'
           : '<button type="button" class="btn btn--outline btn--small" data-dl="add" data-key="' + esc(it.key) + '" data-title="' + esc(it.title) + '" data-cover="' + esc(it.cover ? it.coverKey : '') + '">' + icon('add') + esc(t('common.add')) + '</button>') + '</li>';
-    }).join('');
+    }).join('') + more;
   }
   function currentOrder() { var o = $('#dl-order'); return o ? o.value : st.ed.job.workOrder; }
   function drawWorks() {
@@ -265,17 +269,27 @@
     var c = $('#dl-count'); if (c) c.textContent = '(' + t('dl.worksCount', { count: n }) + ')';
     var res = $('#dl-results'); if (res) { res.innerHTML = resultRows(); window.renderIcons(res); }
   }
+  // Works to add: every work of the ticked sites ("Works from these sites"), loaded page by page, narrowed by the
+  // search when there is one; or, with no site ticked, the search over the whole catalog
   var searchTimer = null;
-  function search(q) {
+  function tickedSites() { return $$('input[name="dl-list"]:checked').map(function (x) { return x.value; }); }
+  function browse(reset) {
     var s = st.ed.search, ed = st.ed;
-    s.q = q;
+    var sites = tickedSites(), q = (s.q || '').trim();
+    if (!sites.length && q.length < 2) { s.items = null; s.total = 0; drawWorks(); return; }
+    var seq = s.seq = (s.seq || 0) + 1;
+    s.loading = true;
+    if (reset) { s.items = null; drawWorks(); }
+    var params = { q: q.length >= 2 ? q : '', sources: sites.join(','), sort: 'title', limit: 60, offset: reset ? 0 : (s.items || []).length };
+    api('GET', '/api/catalog?' + Store.qs(params)).then(function (r) {
+      if (st.ed !== ed || seq !== s.seq) return;
+      s.items = reset ? r.items : (s.items || []).concat(r.items); s.total = r.total; s.sites = sites.length;
+    }, function () { if (seq === s.seq) s.items = []; }).then(function () { if (seq === s.seq) { s.loading = false; if (st.ed === ed) drawWorks(); } });
+  }
+  function search(q) {
+    st.ed.search.q = q;
     clearTimeout(searchTimer);
-    if (q.trim().length < 2) { s.items = null; drawWorks(); return; }
-    searchTimer = setTimeout(function () {
-      s.loading = true;
-      api('GET', '/api/catalog?' + Store.qs({ q: q.trim(), limit: 30 })).then(function (r) { if (st.ed === ed && s.q === q) s.items = r.items; }, function () { s.items = []; })
-        .then(function () { s.loading = false; if (st.ed === ed) drawWorks(); });
-    }, 300);
+    searchTimer = setTimeout(function () { browse(true); }, 300);
   }
   function syncSchedule() {
     var v = ($('#dl-sched') || {}).value;
@@ -420,6 +434,12 @@
         return api('DELETE', '/api/downloads/jobs/' + encodeURIComponent(id)).then(function () { A().toast(t('dl.deleted')); loadList(); }, fail);
       }
       if (act === 'add') { st.ed.added.push({ key: b.dataset.key, title: b.dataset.title, cover: b.dataset.cover || null }); delete st.ed.removed[b.dataset.key]; drawWorks(); return; }
+      if (act === 'browse-more') { b.disabled = true; return browse(false); }
+      if (act === 'add-shown') {
+        var have = inJobKeys();
+        (st.ed.search.items || []).forEach(function (it) { if (!have[it.key] && !it.sources.some(function (x) { return have[x.key]; })) { st.ed.added.push({ key: it.key, title: it.title, cover: it.cover ? it.coverKey : null }); delete st.ed.removed[it.key]; } });
+        drawWorks(); return;
+      }
       if (act === 'unadd') { st.ed.added = st.ed.added.filter(function (w) { return w.key !== b.dataset.key; }); drawWorks(); return; }
       if (act === 'unwork') { st.ed.removed[b.dataset.key] = true; drawWorks(); return; }
       if (act === 'work-up' || act === 'work-down') return moveWork(b.dataset.key, act === 'work-up');
@@ -438,6 +458,7 @@
     document.addEventListener('keydown', function (e) { if (e.target.id === 'dl-search' && e.key === 'Enter') e.preventDefault(); });
     document.addEventListener('change', function (e) {
       if (e.target.id === 'dl-sched') syncSchedule();
+      if (e.target.name === 'dl-list' && st.ed) browse(true); // (the ticked sites' works listed to add)
       if (e.target.id === 'dl-order') { var n = $('#dl-order-note'); if (n) n.textContent = t('dl.orderNote.' + e.target.value); drawWorks(); }
     });
   }
@@ -457,7 +478,12 @@
       st.ed = null;
       loadList();
     },
-    mount: function () { if ($('#dl-sched')) syncSchedule(); if ($('#dl-works')) drawWorks(); }
+    mount: function () {
+      if ($('#dl-sched')) syncSchedule();
+      if ($('#dl-works')) drawWorks();
+      // (a job with sites ticked: their works listed to add, once)
+      if (st.ed && st.ed.job && !st.ed.browsed && $('#dl-results')) { st.ed.browsed = true; if (tickedSites().length) browse(true); }
+    }
   };
   // (registered once library.js has made LibraryPages)
   function register() { window.LibraryPages.downloads = page; }

@@ -865,9 +865,12 @@ body.is-reading { overflow: hidden; }
 
 /* ---- External catalog ---- */
 .cat-card .cover { position: relative; }
-.cat-card__have { position: absolute; left: 6px; bottom: 6px; display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px;
+/* (marks over the cover: in the library, in a download job — stacked at the bottom left) */
+.cat-card__marks { position: absolute; left: 6px; bottom: 6px; right: 6px; z-index: 2; display: flex; flex-wrap: wrap; gap: 4px; pointer-events: auto; }
+.cat-card__have, .cat-card__job { display: inline-flex; align-items: center; gap: 3px; padding: 2px 8px; border-radius: 999px;
   background: var(--primary); color: var(--on-primary); font-size: 11px; font-weight: 600; box-shadow: 0 1px 4px rgba(0,0,0,.3); }
-.cat-card__have .icon svg { width: 12px; height: 12px; fill: currentColor; }
+.cat-card__job { background: #0b8043; color: #fff; }
+.cat-card__have .icon svg, .cat-card__job .icon svg { width: 12px; height: 12px; fill: currentColor; }
 #cat-grid.is-loading .media-grid { opacity: .45; transition: opacity .15s; }
 .cat-have { margin-bottom: 16px; }
 .cat-source, .cat-missing { margin-top: 16px; }
@@ -1147,6 +1150,8 @@ body.is-reading { overflow: hidden; }
 .dl-works-head .card__title { margin: 0; }
 .dl-works { list-style: none; margin: 8px 0; padding: 0; border: 1px solid var(--border); border-radius: 10px; max-height: 460px; overflow-y: auto; }
 .dl-results:empty { display: none; }
+.dl-browse-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 12px; position: sticky; top: 0; z-index: 1; background: var(--surface); border-bottom: 1px solid var(--border); }
+.dl-browse-more { display: flex; justify-content: center; padding: 10px; border-top: 1px solid var(--border); }
 .dl-work { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-top: 1px solid var(--border); min-width: 0; }
 .dl-work:first-child { border-top: 0; }
 .dl-work.is-new { background: var(--primary-soft); }

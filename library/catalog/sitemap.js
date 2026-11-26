@@ -266,6 +266,8 @@ async function* sitemapWorks(ctx) {
     }
     const works = {};
     for (const [sid, e] of entries) works[sid] = hashOf(e.parts.sort().join('\n')).slice(0, 16);
+    // (how many works the sitemaps date: when nearly all are, a work's date changes with every new chapter)
+    for (const e of entries.values()) if (e.url) { counts.worksSeen = (counts.worksSeen || 0) + 1; if (e.lastmod) counts.dated = (counts.dated || 0) + 1; }
     next.files[file] = { hash, lastmod: lastmod || null, works };
     const old = prev && prev.files[file];
     const nWorks = [...entries.values()].filter(e => e.url).length;
@@ -284,6 +286,9 @@ async function* sitemapWorks(ctx) {
     }
     for (let i = 0; i < page.length; i += 100) yield page.slice(i, i + 100);
   }
+  // Dated share of the works (kept for updates where every file was unchanged and nothing was counted)
+  counts.datedShare = counts.worksSeen ? counts.dated / counts.worksSeen : prev && prev.datedShare != null ? prev.datedShare : null;
+  next.datedShare = counts.datedShare;
 }
 
 module.exports = { looksLikeSitemap, parseSitemap, readSitemap, walk, patternRegex, inferPatterns, defaultPatterns, workMatcher, isChapterSegment, DEFAULT_WORK_RE, templateOf, titleFromSlug, sitemapWorks, pathOf, contentHash };

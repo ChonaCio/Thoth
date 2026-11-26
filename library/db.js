@@ -36,7 +36,11 @@ const progress = load(PROGRESS_FILE, {}); // { userKey: { bookId: { page, comple
 // Batch writes: the first change schedules a save 300 ms later and later changes ride along with it.
 // (Not reset on every change, so a busy server can't postpone saving forever.)
 const timers = {};
+// THOTH_DB_READONLY=1: a helper process that only reads the data (a download run planning its chapters) never
+// writes it — the server is the only writer
+const READONLY = process.env.THOTH_DB_READONLY === '1';
 function scheduleSave(which) {
+  if (READONLY) return;
   if (!timers[which]) timers[which] = setTimeout(() => flush(which), 300);
 }
 function flush(which) {
@@ -46,6 +50,7 @@ function flush(which) {
   else saveNow(PROGRESS_FILE, progress);
 }
 function flushAll() {
+  if (READONLY) return;
   for (const w of Object.keys(timers)) { try { flush(w); } catch (e) { console.error('[library] save failed:', e.message); } }
 }
 process.on('exit', flushAll);

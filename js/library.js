@@ -1708,7 +1708,10 @@
     return '<article class="media-card cat-card">' +
       '<a class="media-card__link" href="#catalog/work?key=' + encodeURIComponent(it.key) + '">' +
         '<div class="cover">' + (it.cover ? '<img class="cover__img" loading="lazy" decoding="async" alt="" src="' + catCover(it.coverKey) + '" />' : '') + placeholder('cbz') +
-          (it.inLibrary ? '<span class="cat-card__have" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') + '</div>' +
+          '<span class="cat-card__marks">' +
+            (it.inLibrary ? '<span class="cat-card__have" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') +
+            (it.inJobs ? '<span class="cat-card__job" title="' + esc(t('cat.inJobsAs', { jobs: it.inJobs.map(function (j) { return j.name; }).join(', ') })) + '">' + icon('download') + esc(t('cat.inJob')) + '</span>' : '') +
+          '</span></div>' +
         '<div class="media-card__body"><h3 class="media-card__title">' + esc(it.title) + '</h3>' +
           '<p class="media-card__meta cat-card__meta">' + it.sources.map(function (s) { return sourceIconHtml(s.sourceId, 'src-icon--xs'); }).join('') + '<span>' + esc([it.sources.map(function (s) { return s.name; }).join(', '), it.chapters ? t('cat.chapters', { count: it.chapters }) : '',
             it.versions && it.versions.length > 1 ? t('lib.versions', { count: it.versions.length }) : ''].filter(Boolean).join(' · ')) + '</span></p></div>' +
@@ -1722,6 +1725,7 @@
     return '<li class="cat-row"><a class="cat-row__cover" href="#catalog/work?key=' + encodeURIComponent(it.key) + '" tabindex="-1">' + (it.cover ? '<img loading="lazy" decoding="async" alt="" src="' + catCover(it.coverKey) + '" />' : icon('image')) + '</a>' +
       '<div class="cat-row__body"><a class="cat-row__title" href="#catalog/work?key=' + encodeURIComponent(it.key) + '">' + esc(it.title) + '</a>' +
         (it.inLibrary ? ' <span class="badge badge--success" title="' + esc(t('cat.inLibraryAs', { title: it.inLibrary.title })) + '">' + icon('check') + esc(t('cat.inLibrary')) + '</span>' : '') +
+        (it.inJobs ? ' <span class="badge badge--primary" title="' + esc(t('cat.inJobsAs', { jobs: it.inJobs.map(function (j) { return j.name; }).join(', ') })) + '">' + icon('download') + esc(t('cat.inJob')) + '</span>' : '') +
         '<p class="muted small">' + esc([it.type, it.status && it.status !== 'unknown' ? t('series.status.' + it.status) : '', it.chapters ? t('cat.chapters', { count: it.chapters }) : '', it.lastChapter ? t('cat.latestChapter', { n: it.lastChapter }) : '',
           it.updatedAt ? A().fmtDate(it.updatedAt) : ''].filter(Boolean).join(' · ')) + '</p>' +
         '<p class="cat-row__sites small">' + it.sources.map(function (x) { return x.url ? '<a href="' + esc(x.url) + '" target="_blank" rel="noopener noreferrer">' + sourceIconHtml(x.sourceId, 'src-icon--xs') + esc(x.name) + '</a>' : esc(x.name); }).join(' ') + '</p>' +
@@ -3900,8 +3904,31 @@
     };
   }
 
+  // Downloads: every run of a job is its own process (it works out what to download, then downloads it)
+  function procDownloads(p) {
+    var d = p.downloads;
+    if (!d || !d.jobs) return null;
+    var runs = d.runs || [];
+    return {
+      id: 'downloads', icon: 'download', title: t('nav.downloads'), badge: proc.busy(runs.length > 0),
+      parts: [
+        facts([
+          ['proc.dl.jobs', esc(d.jobs)],
+          ['proc.dl.atOnce', esc(d.maxRuns || 1)],
+          d.queued ? ['proc.queue', esc(d.queue.map(function (q) { return q.name; }).join(', '))] : null,
+          d.next ? ['proc.dl.next', esc(d.next.name + ' · ' + A().fmtDate(d.next.at))] : null
+        ]),
+        runs.length ? runs.map(function (r) {
+          var bar = { percent: r.total ? Math.min(100, Math.floor(r.done / r.total * 100)) : null, etaMs: null, elapsedMs: r.startedAt ? Date.now() - Date.parse(r.startedAt) : 0 };
+          return '<p class="proc-current"><strong>' + esc(r.name) + '</strong>' + (r.pid ? ' <span class="muted small">' + esc(t('proc.pid')) + ' ' + esc(r.pid) + '</span>' : '') + '</p>' +
+            progressBar(bar, t(r.phase === 'planning' ? 'dl.planning' : r.full ? 'dl.runningFull' : 'dl.running'), r.phase === 'planning' ? '' : t('dl.runProgress', { done: r.done, total: r.total, ok: r.ok, failed: r.failed, locked: r.locked }));
+        }).join('') : proc.muted(t('proc.dl.none')),
+        proc.help(t('proc.dl.help'), { href: '#downloads', text: t('nav.downloads') })
+      ]
+    };
+  }
   // The caches, each its own process (started when needed, closed after a long idle time)
-  var CACHE_ORDER = ['pages', 'covers', 'works', 'search', 'catworks', 'catthumbs'];
+  var CACHE_ORDER =['pages', 'covers', 'works', 'search', 'catworks', 'catthumbs'];
   // The catalog thumbnails cache: what it keeps on disk, and the covers it's fetching ahead
   function catThumbsNote(s) {
     var out = [];
@@ -3956,7 +3983,7 @@
   }
 
   // The Processes page, in this order
-  var PROC_SECTIONS = [procServer, procScan, procMetadata, procFiles, procCatalog, procCaches];
+  var PROC_SECTIONS = [procServer, procScan, procMetadata, procFiles, procCatalog, procDownloads, procCaches];
 
   var processes = {
     title: function () { return t('nav.processes'); },

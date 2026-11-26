@@ -66,6 +66,13 @@ const site = http.createServer((req, res) => {
     const items = Array.from({ length: 30 }, (_, i) => ({ number: 30 - i, slug: `chapter-${30 - i}`, title: `Chapter ${30 - i}`, created_at: '2026-01-' + String(1 + (i % 28)).padStart(2, '0'), isLocked: i === 0 })).slice(skip, skip + take);
     res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ data: items, skip, take, total: 30 }));
   }
+  // (like MangaNato: an address with no paging in it, 50 chapters an answer; one site pages with offset= and says
+  // the total, the other with page= and says nothing)
+  const natoPage = (slug, n) => `<h1>${slug}</h1><div id="chapter-list-container" data-comic-slug="${slug}" data-api-url="/api/manga/__SLUG__/chapters" data-chapter-url-template="/series/${slug}/__CHAPTER__"><p>Loading chapters...</p></div>`;
+  const natoItems = (n, from, count) => Array.from({ length: n }, (_, i) => ({ chapter_num: n - i, chapter_slug: `chapter-${n - i}`, chapter_name: `Chapter ${n - i}` })).slice(from, from + count);
+  if (u.pathname === '/series/nato-a' || u.pathname === '/series/nato-b') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(natoPage(u.pathname.split('/').pop())); }
+  if (u.pathname === '/api/manga/nato-a/chapters') { const off = Number(u.searchParams.get('offset')) || 0; res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ chapters: natoItems(120, off, 50), total: 120 })); }
+  if (u.pathname === '/api/manga/nato-b/chapters') { const pg = Number(u.searchParams.get('page')) || 1; res.writeHead(200, { 'Content-Type': 'application/json' }); return res.end(JSON.stringify({ chapters: natoItems(75, (pg - 1) * 50, 50) })); }
   if (u.pathname === '/series/next') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Next</h1><ul class="ch">${recent('next')}</ul><script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { series: { chapters: Array.from({ length: 30 }, (_, i) => ({ id: i + 1, chapter_number: i + 1, chapter_slug: 'chapter-' + (i + 1), chapter_name: '' })) } } } })}</script>`); }
   if (u.pathname === '/series/own') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(`<h1>Own</h1><ul class="ch">${recent('own')}</ul>`); }
   if (u.pathname === '/full/own') { res.writeHead(200, { 'Content-Type': 'text/html' }); return res.end(Array.from({ length: 30 }, (_, i) => `<a href="/series/own/chapter-${i + 1}">Chapter ${i + 1}</a>`).join('')); }
@@ -162,6 +169,8 @@ const site = http.createServer((req, res) => {
   check(tpl.chapters.length === 30 && tpl.chaptersVia === 'script address' && tpl.chapters.find(c => c.n === '30').pr, 'an address template in the page (data-api-url + data-comic-slug), paged with skip/take, premium flags kept', tpl.chapters.length + ' ' + tpl.chaptersVia);
   const nx = await readWork('next');
   check(nx.chapters.length === 30 && nx.chaptersVia === 'page data' && nx.chapters.some(c => c.u === BASE + '/series/next/chapter-1'), 'chapters in the page\'s Next.js data (addresses learned from the links shown)', nx.chapters.length + ' ' + nx.chaptersVia);
+  const na = await readWork('nato-a'), nb = await readWork('nato-b');
+  check(na.chapters.length === 120 && nb.chapters.length === 75, `an address with no paging in it: the next pages found by the name the site takes (offset= with a total: ${na.chapters.length} of 120; page= with nothing said: ${nb.chapters.length} of 75)`);
   const own = await readWork('own', { chaptersUrl: BASE + '/full/{slug}' });
   check(own.chapters.length === 30 && own.chaptersVia === 'setting', 'the source\'s "Full chapter list URL" ({slug})');
   const off = await readWork('tpl', { fullChapters: false });

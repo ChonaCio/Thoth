@@ -10,7 +10,7 @@
 // Paging is followed the way such answers say it: a next link, offset/limit (skip/take) with a total or has_more,
 // page/last_page, or a cursor. Every request goes through ctx.get (robots.txt of each host, the site's pace).
 // complete(ctx, { doc, html, url, have }) → { chapters: [{ id, n, t, u, d, pr }], via } or null
-const MAX_REQUESTS = 30;
+const MAX_REQUESTS = 60; // (per work: 50 chapters a page → 3000 chapters, guesses included)
 
 const abs = (u, base) => { try { return new URL(String(u).replace(/\\\//g, '/'), base).href; } catch { return ''; } };
 const uniq = list => [...new Set(list.filter(Boolean))];
@@ -94,6 +94,9 @@ function jsonPaging(data) {
   const set = (k, v) => { if (out[k] == null && v != null) out[k] = v; };
   const visit = (o, depth) => {
     if (!o || typeof o !== 'object' || Array.isArray(o) || depth > 3) return;
+    // (which name the answer uses for it: the next request asks with the same one)
+    if (out.offsetKey == null) out.offsetKey = ['offset', 'skip', 'start'].find(k => int(o[k]) != null) || null;
+    if (out.limitKey == null) out.limitKey = ['limit', 'per_page', 'perPage', 'pageSize', 'take'].find(k => int(o[k]) != null) || null;
     set('offset', int(o.offset != null ? o.offset : o.skip != null ? o.skip : o.start));
     set('limit', int(o.limit != null ? o.limit : o.per_page != null ? o.per_page : o.perPage != null ? o.perPage : o.pageSize != null ? o.pageSize : o.take));
     set('page', int(o.current_page != null ? o.current_page : o.currentPage != null ? o.currentPage : o.page));
@@ -201,13 +204,22 @@ function hints(doc, html, url) {
 }
 
 /* ---------------- reading a list address, page after page ---------------- */
+// Paging parameters an address may already carry
+const PAGING = ['skip', 'offset', 'start', 'page', 'p', 'cursor'];
 async function readList(ctx, first, { seriesUrl, sample, chapterUrl = '', budget }) {
   const all = new Map();
   let url = first;
   const seen = new Set();
+  // When an answer says there's more (a total above what came, "has more", or a full round page) but not how to
+  // ask for it: the usual ways, one after the other, until one brings new chapters (each request counted)
+  let guesses = null, pageSize = 0, followFull = false;
+  const nextGuess = () => {
+    while (guesses && guesses.length) { const g = guesses.shift(); if (!seen.has(g)) return g; }
+    return '';
+  };
   while (url && budget.left-- > 0 && !seen.has(url)) {
     seen.add(url);
-    let res; try { res = await ctx.get(url, { accept: 'application/json,text/html;q=0.8,*/*;q=0.5', headers: { 'X-Requested-With': 'XMLHttpRequest' } }); } catch (e) { if (e.code === 'stopped') throw e; break; }
+    let res; try { res = await ctx.get(url, { accept: 'application/json,text/html;q=0.8,*/*;q=0.5', headers: { 'X-Requested-With': 'XMLHttpRequest' } }); } catch (e) { if (e.code === 'stopped') throw e; url = nextGuess(); continue; }
     let data = null; try { data = JSON.parse(res.text); } catch { /* HTML */ }
     let got = [];
     if (data) got = chaptersFromJson(data, { seriesUrl, sample, urlTemplate: chapterUrl });
@@ -219,19 +231,32 @@ async function readList(ctx, first, { seriesUrl, sample, chapterUrl = '', budget
     }
     const before = all.size;
     for (const c of got) if (!all.has(c.id)) all.set(c.id, c);
-    if (all.size === before) break; // (nothing new: the end)
+    if (all.size === before) { url = nextGuess(); continue; } // (nothing new: the end — or a guess the site ignores)
+    if (guesses) followFull = true; // (a guessed parameter worked: full pages say there may be more)
+    guesses = null;
     url = '';
     if (!data) break;
+    if (!pageSize) pageSize = got.length;
     const p = jsonPaging(data);
     const u = new URL(res.url);
     if (p.next) url = abs(p.next, res.url);
     else if (p.cursor && (p.hasMore || p.cursor)) { u.searchParams.set('cursor', p.cursor); url = u.href; }
     else if (p.page != null && p.lastPage != null && p.page < p.lastPage) { u.searchParams.set('page', String(p.page + 1)); url = u.href; }
     else if (p.offset != null && p.limit && (p.hasMore || (p.total != null && p.offset + p.limit < p.total))) {
-      const key = ['skip', 'offset', 'start'].find(k => u.searchParams.has(k)) || 'skip';
-      u.searchParams.set(key, String(p.offset + p.limit)); url = u.href;
-    } else if (p.hasMore || (p.total != null && all.size < p.total)) {
+      // (the name the address already uses, else the one the answer used, else skip)
+      const key = ['skip', 'offset', 'start'].find(k => u.searchParams.has(k)) || p.offsetKey || 'skip';
+      u.searchParams.set(key, String(p.offset + p.limit));
+      if (p.limitKey && !u.searchParams.has(p.limitKey)) u.searchParams.set(p.limitKey, String(p.limit));
+      url = u.href;
+    } else if (PAGING.some(k => u.searchParams.has(k)) && (p.hasMore || (p.total != null && all.size < p.total) || (followFull && got.length >= pageSize))) {
       for (const k of ['page', 'p']) if (u.searchParams.has(k)) { u.searchParams.set(k, String(Number(u.searchParams.get(k)) + 1)); url = u.href; break; }
+      for (const k of ['skip', 'offset', 'start']) if (!url && u.searchParams.has(k)) { u.searchParams.set(k, String(Number(u.searchParams.get(k)) + got.length)); url = u.href; }
+    } else if (!PAGING.some(k => u.searchParams.has(k)) && (p.hasMore || (p.total != null && all.size < p.total) || (p.total == null && got.length >= 20 && got.length === pageSize && got.length % 10 === 0))) {
+      // More than came, and no word on how: offset=, skip=, page=, start= (the limit kept as the size that came)
+      const at = String(all.size), size = String(pageSize);
+      const make = (k, v, withLimit) => { const x = new URL(u.href); x.searchParams.set(k, v); if (withLimit) x.searchParams.set('limit', size); return x.href; };
+      guesses = [make('offset', at, false), make('offset', at, true), make('skip', at, false), make('page', '2', false), make('start', at, false)];
+      url = nextGuess();
     }
   }
   return [...all.values()];

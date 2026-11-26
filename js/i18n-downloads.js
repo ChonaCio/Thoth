@@ -149,7 +149,19 @@
     'dl.pickJob': 'Download job',
     'dl.addToJob': 'Add to job',
     'dl.addedToJob': 'Added to the job',
-    'dl.newJobWith': 'New job with this work…'
+    'dl.newJobWith': 'New job with this work…',
+    'cat.inJob': "In a job",
+    'cat.inJobsAs': "Download jobs: {jobs}",
+    'dl.browseHint': "Tick sites above to list their works here, or search the whole catalog.",
+    'dl.browseCount': "Works on the ticked sites: {count}",
+    'dl.searchCount': "Found: {count}",
+    'dl.addShown': "Add all shown ({count})",
+    'dl.planning': "Working out what to download",
+    'proc.dl.jobs': "Download jobs",
+    'proc.dl.atOnce': "Runs at once",
+    'proc.dl.next': "Next scheduled",
+    'proc.dl.none': "No download running.",
+    'proc.dl.help': "Each run of a download job is its own process, apart from the server: it works out what to download (reading the library and the catalog from disk), then downloads it. It keeps going if the server restarts."
   });
 
   add('es', {
@@ -299,7 +311,19 @@
     'dl.pickJob': 'Tarea de descarga',
     'dl.addToJob': 'Añadir a la tarea',
     'dl.addedToJob': 'Añadida a la tarea',
-    'dl.newJobWith': 'Nueva tarea con esta obra…'
+    'dl.newJobWith': 'Nueva tarea con esta obra…',
+    'cat.inJob': "En una tarea",
+    'cat.inJobsAs': "Tareas de descarga: {jobs}",
+    'dl.browseHint': "Marca sitios arriba para listar aquí sus obras, o busca en todo el catálogo.",
+    'dl.browseCount': "Obras de los sitios marcados: {count}",
+    'dl.searchCount': "Encontradas: {count}",
+    'dl.addShown': "Añadir todas las mostradas ({count})",
+    'dl.planning': "Calculando qué descargar",
+    'proc.dl.jobs': "Tareas de descarga",
+    'proc.dl.atOnce': "Ejecuciones a la vez",
+    'proc.dl.next': "Próxima programada",
+    'proc.dl.none': "No hay ninguna descarga en curso.",
+    'proc.dl.help': "Cada ejecución de una tarea de descarga es su propio proceso, aparte del servidor: calcula qué descargar (leyendo la biblioteca y el catálogo del disco) y luego lo descarga. Sigue aunque el servidor se reinicie."
   });
 
   add('fr', {
@@ -449,7 +473,19 @@
     'dl.pickJob': 'Tâche de téléchargement',
     'dl.addToJob': 'Ajouter à la tâche',
     'dl.addedToJob': 'Ajoutée à la tâche',
-    'dl.newJobWith': 'Nouvelle tâche avec cette œuvre…'
+    'dl.newJobWith': 'Nouvelle tâche avec cette œuvre…',
+    'cat.inJob': "Dans une tâche",
+    'cat.inJobsAs': "Tâches de téléchargement : {jobs}",
+    'dl.browseHint': "Cochez des sites ci-dessus pour lister ici leurs œuvres, ou cherchez dans tout le catalogue.",
+    'dl.browseCount': "Œuvres des sites cochés : {count}",
+    'dl.searchCount': "Trouvées : {count}",
+    'dl.addShown': "Ajouter toutes celles affichées ({count})",
+    'dl.planning': "Calcul de ce qu’il faut télécharger",
+    'proc.dl.jobs': "Tâches de téléchargement",
+    'proc.dl.atOnce': "Exécutions à la fois",
+    'proc.dl.next': "Prochaine planifiée",
+    'proc.dl.none': "Aucun téléchargement en cours.",
+    'proc.dl.help': "Chaque exécution d’une tâche de téléchargement est un processus à part, distinct du serveur : il calcule ce qu’il faut télécharger (en lisant la bibliothèque et le catalogue sur le disque), puis le télécharge. Il continue si le serveur redémarre."
   });
 
   add('de', {
@@ -599,7 +635,19 @@
     'dl.pickJob': 'Download-Auftrag',
     'dl.addToJob': 'Zum Auftrag hinzufügen',
     'dl.addedToJob': 'Zum Auftrag hinzugefügt',
-    'dl.newJobWith': 'Neuer Auftrag mit diesem Werk…'
+    'dl.newJobWith': 'Neuer Auftrag mit diesem Werk…',
+    'cat.inJob': "In einem Auftrag",
+    'cat.inJobsAs': "Download-Aufträge: {jobs}",
+    'dl.browseHint': "Hake oben Seiten an, um hier ihre Werke aufzulisten, oder durchsuche den ganzen Katalog.",
+    'dl.browseCount': "Werke der angehakten Seiten: {count}",
+    'dl.searchCount': "Gefunden: {count}",
+    'dl.addShown': "Alle angezeigten hinzufügen ({count})",
+    'dl.planning': "Ermittelt, was heruntergeladen wird",
+    'proc.dl.jobs': "Download-Aufträge",
+    'proc.dl.atOnce': "Läufe gleichzeitig",
+    'proc.dl.next': "Nächster geplanter",
+    'proc.dl.none': "Kein Download läuft.",
+    'proc.dl.help': "Jeder Lauf eines Download-Auftrags ist ein eigener Prozess, getrennt vom Server: Er ermittelt, was heruntergeladen wird (liest Bibliothek und Katalog von der Festplatte), und lädt es dann herunter. Er läuft weiter, wenn der Server neu startet."
   });
 
   add('pt', {
@@ -749,6 +797,18 @@
     'dl.pickJob': 'Tarefa de download',
     'dl.addToJob': 'Adicionar à tarefa',
     'dl.addedToJob': 'Adicionada à tarefa',
-    'dl.newJobWith': 'Nova tarefa com esta obra…'
+    'dl.newJobWith': 'Nova tarefa com esta obra…',
+    'cat.inJob': "Em uma tarefa",
+    'cat.inJobsAs': "Tarefas de download: {jobs}",
+    'dl.browseHint': "Marque sites acima para listar aqui as obras deles, ou busque no catálogo inteiro.",
+    'dl.browseCount': "Obras dos sites marcados: {count}",
+    'dl.searchCount': "Encontradas: {count}",
+    'dl.addShown': "Adicionar todas as exibidas ({count})",
+    'dl.planning': "Calculando o que baixar",
+    'proc.dl.jobs': "Tarefas de download",
+    'proc.dl.atOnce': "Execuções ao mesmo tempo",
+    'proc.dl.next': "Próxima agendada",
+    'proc.dl.none': "Nenhum download em andamento.",
+    'proc.dl.help': "Cada execução de uma tarefa de download é um processo próprio, separado do servidor: calcula o que baixar (lendo a biblioteca e o catálogo do disco) e depois baixa. Continua se o servidor reiniciar."
   });
 })();

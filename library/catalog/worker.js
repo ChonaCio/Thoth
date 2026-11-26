@@ -179,7 +179,11 @@ async function crawl(msg, send) {
     say(`${stats.listed} work(s) listed (${stats.added} new)` + (sc ? `; sitemaps: ${sc.files} read, ${sc.unchanged} unchanged, ${sc.notRead} not downloaded (same date)` + (sc.chapters ? `; ${sc.chapters} chapter addresses in them` : '') : ''));
     // An update also reads ongoing works that are due for a check (a site's sitemap seldom changes when a chapter
     // is added): about half their usual gap between chapters, at least every 7 days and at most every 12 hours
-    if (incremental && listingComplete && src.checkOngoing !== false && src.includeChapters !== false) {
+    // Not when the sitemaps date (nearly) every work: a new chapter changes its work's date there, so the works
+    // read above are already every one that changed (MangaNato: thousands of ongoing works, hours of requests)
+    const datedBySitemaps = src.listing === 'sitemap' && sc && sc.datedShare != null && sc.datedShare >= 0.9;
+    if (incremental && datedBySitemaps && src.checkOngoing !== false) say('ongoing works not checked one by one: the sitemaps date every work, so the ones with new chapters were listed as changed');
+    if (incremental && listingComplete && !datedBySitemaps && src.checkOngoing !== false && src.includeChapters !== false) {
       const inQueue = new Set(queue), now = Date.now();
       let due = 0;
       for (const [sid, w] of Object.entries(works)) {

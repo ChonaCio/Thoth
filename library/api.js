@@ -262,7 +262,12 @@ function workIndex(user, library, { deleted = false } = {}) {
   workIndexMemo.set(key, { gen, entries, facets: new Map() });
   return entries;
 }
-const textOf = e => e._text || (e._text = searchable([e.v.title, e.v.publisher].concat(e.v.tags, e.v.genres, e.v.altTitles, e.v.authors.map(a => a.name)).join('\n')));
+// (the work's title and other titles — every version's too — publisher, tags, genres and people)
+const textOf = e => e._text || (e._text = searchable([e.v.title, e.v.publisher].concat(e.v.tags, e.v.genres, e.v.altTitles, e.v.authors.map(a => a.name),
+  (e.list || []).flatMap(v => [v.title].concat(v.altTitles || []))).filter(Boolean).join('\n')));
+// Punctuation ignored: "solo leveling ragnarok" finds "Solo Leveling: Ragnarok" (one title per line kept)
+const loose = s => String(s || '').replace(/[^\p{L}\p{N}\n]+/gu, ' ').replace(/ ?\n ?/g, '\n').trim();
+const textMatches = (e, term) => { if (textOf(e).includes(term)) return true; const lt = loose(term); return Boolean(lt) && (e._loose || (e._loose = loose(textOf(e)))).includes(lt); };
 const termKey = v => terms.keyOf(terms.canonical(v));
 const genreKeys = e => e._genres || (e._genres = new Set(e.v.genres.map(termKey)));
 const tagKeys = e => e._tags || (e._tags = new Set(e.v.tags.map(termKey)));
@@ -292,7 +297,7 @@ const SORTERS = {
 function listSeries(user, q) {
   let items = workIndex(user, q.get('library'), { deleted: isAdmin(user) && q.get('deleted') === '1' });
   const term = searchable(q.get('q'));
-  if (term) items = items.filter(e => textOf(e).includes(term));
+  if (term) items = items.filter(e => textMatches(e, term));
   const read = q.get('read');
   if (read) items = items.filter(e => readState(store.seriesCounts(db.series[e.v.id], user)) === read);
   // Advanced search: include/exclude any number of values (repeated parameters; x… = exclude).
@@ -487,9 +492,12 @@ async function sendFile(req, res, book, download) {
  * an answer counts only for the data version it was built for (the data generation — any save/reindex — and
  * the reading-progress version). If that process can't answer, the request is simply built here. */
 const RESPONSE_ROUTES = /^\/api\/(series|series\/facets|series\/[\w-]+|home)$/;
-// (saved to disk with the data's fingerprint; taken back when its process starts, for the version current then)
+// (saved to disk with the data's fingerprint — and the running code's: answers an older version of the server built
+// may have another shape — taken back when its process starts, for the version current then)
+const CODE_SIG = (() => { try { return require('../updater').serverCodeFingerprint(); } catch { return ''; } })();
+const dataSig = () => store.dataSig() + '|' + CODE_SIG;
 const worksCache = cacheService('works', { label: 'Works', idleMs: 30 * 60 * 1000,
-  persist: { save: () => ({ sig: store.dataSig(), ver: responseVersion() }), restore: () => ({ sig: store.dataSig(), ver: responseVersion() }) } });
+  persist: { save: () => ({ sig: dataSig(), ver: responseVersion() }), restore: () => ({ sig: dataSig(), ver: responseVersion() }) } });
 function responseVersion() { return store.generation() + ':' + store.progressVersion(); }
 function responseKey(user, p, q) {
   const sorted = [...q.entries()].sort((a, b) => (a[0] + '=' + a[1]).localeCompare(b[0] + '=' + b[1]));
@@ -501,7 +509,7 @@ function cacheInfo() { const i = worksCache.info(); return Object.assign({ pid: 
  * merges and settings, the library (catalog.dataVersion). Administrators only, like the routes themselves. */
 const CATALOG_ROUTES = /^\/api\/catalog(\/facets|\/work)?$/;
 // (its fingerprint: the library's and each source's crawled file — the durable part of catalog.dataVersion)
-const catalogSig = () => store.dataSig() + '|' + String(catalog.dataVersion()).split(':').slice(1).join(':');
+const catalogSig = () => dataSig() + '|' + String(catalog.dataVersion()).split(':').slice(1).join(':');
 const catalogCache = cacheService('catworks', { label: 'Catalog works', idleMs: 30 * 60 * 1000,
   persist: { save: () => ({ sig: catalogSig(), ver: catalog.dataVersion() }), restore: () => ({ sig: catalogSig(), ver: catalog.dataVersion(), memMb: catalogCacheMb() }) } });
 const catalogCacheMb = () => Number(require('../config').get().catalogWorksCacheMb) || 32;
@@ -514,8 +522,20 @@ function catalogKey(p, q) {
  * An index of every work (titles, genres, tags, people, types, libraries) lives in the Search cache process
  * (cache/search.js). It's sent again when the data changed (checked on each search: its loaded generation
  * against the current one), and answers only count works in the libraries the asker may see. */
-const searchCache = cacheService('search', { label: 'Search', idleMs: 30 * 60 * 1000,
-  persist: { save: () => ({ sig: store.dataSig(), gen: store.generation() }), restore: () => ({ sig: store.dataSig(), gen: store.generation() }) } });
+// (both indexes saved to disk: the library's with the library's fingerprint, the catalog's with the catalog's)
+const searchSnapArgs = () => { const a = { sig: dataSig(), gen: store.generation() }; try { a.catSig = catalogSig(); a.catGen = catalog.dataVersion(); } catch { /* no catalog */ } return a; };
+const searchCache = cacheService('search', { label: 'Search', idleMs: 30 * 60 * 1000, persist: { save: searchSnapArgs, restore: searchSnapArgs } });
+// The catalog's index in the Search cache: sent again when the catalog's data changed (its data version)
+let catalogSearchLoading = null;
+async function searchCatalog(text) {
+  const gen = catalog.dataVersion();
+  const st = await searchCache.call('status', { ns: 'catalog' });
+  if (st.gen !== gen) {
+    if (!catalogSearchLoading) catalogSearchLoading = searchCache.call('load', { ns: 'catalog', gen, docs: catalog.searchDocs() }).finally(() => { catalogSearchLoading = null; });
+    await catalogSearchLoading;
+  }
+  return searchCache.call('query', { ns: 'catalog', q: text, limit: 1000000 });
+}
 const SEARCH_USER = { username: '\0search', role: 'admin' }; // sees every library (answers are filtered per user)
 let searchLoading = null;
 async function ensureSearch() {
@@ -814,12 +834,20 @@ async function handle(ctx) {
     // Administrators only (the catalog is a server tool, like file management)
     requireAdmin();
     // The works list's filters (also for its exports)
-    const catFilters = () => { const o = {}; for (const k of ['q', 'source', 'lacks', 'inLibrary', 'genre', 'merged', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'chapters', 'sort', 'offset', 'limit']) o[k] = q.get(k); return o; };
+    const catFilters = () => { const o = {}; for (const k of ['q', 'source', 'sources', 'lacks', 'inLibrary', 'genre', 'merged', 'type', 'status', 'sites', 'updated', 'with', 'without', 'author', 'chapters', 'sort', 'offset', 'limit']) o[k] = q.get(k); return o; };
     const sendFile = (name, type, body) => {
       res.writeHead(200, { 'Content-Type': type + '; charset=utf-8', 'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}`, 'Cache-Control': 'no-store' });
       res.end(body); return true;
     };
-    if (p === '/api/catalog' && method === 'GET') return send(200, catalog.list(catFilters()));
+    if (p === '/api/catalog' && method === 'GET') {
+      const f = catFilters();
+      // A search: the matching works from the Search cache's catalog index (else looked through here)
+      if (String(f.q || '').trim()) { try { f.keys = new Set(await searchCatalog(String(f.q))); } catch { /* answered without it */ } }
+      const out = catalog.list(f);
+      // (each work marked with the download jobs it's in)
+      try { require('./downloads').markItems(out.items); } catch (e) { console.error('[downloads] marks:', e.message); }
+      return send(200, out);
+    }
     // GET /api/catalog/export.csv|json?<filters>: the filtered list; /api/catalog/work/chapters.csv|json?key=: one work's combined chapter list
     if ((m = /^\/api\/catalog\/export\.(csv|json)$/.exec(p)) && method === 'GET') {
       return sendFile(`catalog-${new Date().toISOString().slice(0, 10)}.${m[1]}`, m[1] === 'csv' ? 'text/csv' : 'application/json', catalog.exportList(catFilters(), m[1]));

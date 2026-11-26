@@ -24,12 +24,12 @@ const writeJson = (f, data) => { const file = path.join(dir, f), tmp = `${file}.
 
 function main() {
   const run = read('run.json', null);
-  if (!run || !Array.isArray(run.chapters)) { console.error('[downloads] no run.json in', dir); process.exit(2); }
+  if (!run || (!Array.isArray(run.chapters) && !run.plan)) { console.error('[downloads] no run.json in', dir); process.exit(2); }
   try { os.setPriority(process.pid, os.constants.priority.PRIORITY_LOW); } catch { /* not allowed here */ }
   const state = read('state.json', { chapters: {} });
   if (!state.chapters) state.chapters = {};
-  const prog = { runId: run.runId, jobId: run.jobId, pid: process.pid, status: 'running', startedAt: new Date().toISOString(), heartbeatAt: null, finishedAt: null,
-    total: run.chapters.length, done: 0, ok: 0, failed: 0, locked: 0, bytes: 0, current: [], error: null };
+  const prog = { runId: run.runId, jobId: run.jobId, pid: process.pid, status: 'running', phase: run.plan ? 'planning' : 'downloading', full: Boolean(run.full), startedAt: new Date().toISOString(), heartbeatAt: null, finishedAt: null,
+    total: (run.chapters || []).length, done: 0, ok: 0, failed: 0, locked: 0, bytes: 0, current: [], error: null };
   const save = () => { prog.heartbeatAt = new Date().toISOString(); try { writeJson('progress.json', prog); } catch (e) { console.error('[downloads] progress:', e.message); } };
   let stopping = false;
   save();
@@ -152,6 +152,17 @@ function main() {
     saveState();
   }
 
+  // 1. What to download (in this process: the server only sent the job's settings): the library and the catalog
+  //    read from disk, read-only
+  if (run.plan) {
+    const t0 = Date.now();
+    log(`working out what to download for "${run.jobName}"${run.full ? ' (full pass)' : ''}…`);
+    try { run.chapters = require('./index').planFor(run.job, { full: Boolean(run.full) }); }
+    catch (e) { run.chapters = []; prog.error = 'planning: ' + e.message; log('could not work out what to download:', e.message); }
+    prog.total = run.chapters.length; prog.phase = 'downloading';
+    log(run.chapters.length ? `${run.chapters.length} chapter(s) to download (worked out in ${Math.round((Date.now() - t0) / 100) / 10} s)` : 'nothing new to download');
+    save();
+  }
   log(`download run of "${run.jobName}": ${run.chapters.length} chapter(s), ${run.concurrency} at a time, ${run.mode === 'quality' ? 'best quality' : 'in the job\'s source order'} (pid ${process.pid})`);
   const queue = run.chapters.slice();
   const lanes = Math.max(1, Math.min(6, Number(run.concurrency) || 2));
@@ -161,6 +172,7 @@ function main() {
       try { await chapter(ch); } catch (e) { log(`${ch.workTitle} ch. ${ch.n}: ${e.message}`); prog.done++; prog.failed++; }
     }
   })).then(() => {
+    if (prog.error) { prog.status = 'failed'; return; } // (couldn't work out what to download)
     prog.status = stopping ? 'stopped' : 'done';
     log(`${prog.status}: ${prog.ok} downloaded, ${prog.failed} failed, ${prog.locked} locked${stopping ? `, ${prog.total - prog.done} not started` : ''}`);
   }, e => { prog.status = 'failed'; prog.error = e.message; log('failed:', e.message); }).finally(() => {

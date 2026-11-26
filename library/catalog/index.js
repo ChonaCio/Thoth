@@ -688,7 +688,7 @@ function catalogItems() {
       const main = list[0];
       // The work as listed: its main version, found by any version's titles and sources
       main._text = null;
-      main._allTitles = [...new Set(list.flatMap(u => [u.title].concat(u.altTitles)))];
+      main._allTitles = [...new Set(list.flatMap(u => [u.title].concat(u._titles || u.altTitles)))];
       main._allSources = [...new Set(list.flatMap(u => u.sources.map(x => x.sourceId)))];
       main.inLibrary = main.inLibrary || (list.find(u => u.inLibrary) || {}).inLibrary || null;
       items.push(main);
@@ -751,6 +751,8 @@ function makeItem(primary, members, groupId) {
   const title = preferEnglish([primary.title].concat(members.map(m => m.title), primary.altTitles || [], ...members.map(m => m.altTitles || []))) || primary.title || '';
   const genres = terms.unify(...members.map(m => (m.genres || []).concat(m.tags || [])));
   return {
+    // (every title of every site, for searching: the altTitles shown are cut to 20, MangaDex works have more)
+    _titles: [...new Set(members.flatMap(m => [m.title, m.rawTitle].concat(m.altTitles || [], m.rawAltTitles || [])).filter(Boolean))],
     key: groupId ? 'g:' + groupId : primary.key, groupId, primaryKey: primary.key, title, altTitles: [...new Set(members.flatMap(m => [m.title].concat(m.altTitles || [])).filter(t => t && t !== title))].slice(0, 20),
     editions: primary.editions || [], edition: editionKey(primary.editions),
     cover: Boolean(members.find(m => m.cover)), coverKey: (members.find(m => m.key === primary.key && m.cover) || members.find(m => m.cover) || primary).key,
@@ -764,6 +766,8 @@ function makeItem(primary, members, groupId) {
   };
 }
 const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+// Punctuation and spacing ignored (line breaks kept: one title per line)
+const loose = s => String(s || '').replace(/[^\p{L}\p{N}\n]+/gu, ' ').replace(/ ?\n ?/g, '\n').trim();
 // Filters (all optional): q (words in titles/authors), source, lacks (a source that doesn't have it), inLibrary
 // (yes|no), genre, merged, type, status, sites ('1' | '2' | '3' = at least 3), updated ('day' | 'week' | 'month':
 // a chapter or change within), with/without (genres or tags it must have / must not have, comma separated),
@@ -771,8 +775,20 @@ const searchable = s => String(s || '').toLowerCase().normalize('NFD').replace(/
 function filtered(q) {
   let items = catalogItems();
   const term = searchable(q.q);
-  if (term) items = items.filter(it => (it._text || (it._text = searchable((it._allTitles || [it.title].concat(it.altTitles)).concat(it.authors).join('\n')))).includes(term));
+  // (every title of every site and version, and authors; also with punctuation ignored: "Solo Leveling Ragnarok"
+  // finds "Solo Leveling: Ragnarok")
+  // (the Search cache's answer when the server asked it: the works whose titles or authors match)
+  if (term && q.keys instanceof Set) items = items.filter(it => q.keys.has(it.key));
+  else if (term) {
+    const lt = loose(term);
+    items = items.filter(it => {
+      if (!it._text) { it._text = searchable((it._allTitles || [it.title].concat(it._titles || it.altTitles)).concat(it.authors).join('\n')); it._loose = loose(it._text); }
+      return it._text.includes(term) || (lt && it._loose.includes(lt));
+    });
+  }
   if (q.source) items = items.filter(it => (it._allSources || it.sources.map(s => s.sourceId)).includes(q.source));
+  // sources=a,b: on any of these sites (the download job editor's "Works from these sites")
+  if (q.sources) { const want = new Set(String(q.sources).split(',').filter(Boolean)); if (want.size) items = items.filter(it => (it._allSources || it.sources.map(s => s.sourceId)).some(id => want.has(id))); }
   if (q.inLibrary === 'yes') items = items.filter(it => it.inLibrary); else if (q.inLibrary === 'no') items = items.filter(it => !it.inLibrary);
   if (q.genre) { const k = terms.keyOf(terms.canonical(q.genre)); items = items.filter(it => it.genres.some(g => terms.keyOf(g) === k)); }
   if (q.merged === 'yes') items = items.filter(it => it.groupId);
@@ -805,7 +821,7 @@ function list(q) {
   const offset = Math.max(0, Number(q.offset) || 0), limit = Math.min(200, Math.max(1, Number(q.limit) || 60));
   return { total: items.length, offset, items: items.slice(offset, offset + limit).map(publicItem) };
 }
-const publicItem = it => { const o = Object.assign({}, it); delete o._text; delete o._allTitles; delete o._allSources; return o; };
+const publicItem = it => { const o = Object.assign({}, it); delete o._text; delete o._loose; delete o._titles; delete o._allTitles; delete o._allSources; return o; };
 const countBy = (items, fn) => { const m = new Map(); for (const it of items) { const v = fn(it); if (v) m.set(v, (m.get(v) || 0) + 1); } return [...m].map(([name, count]) => ({ name, count })).sort((a, b) => b.count - a.count); };
 // The filtered list as a file: CSV (one link column per source) or JSON (everything, with each source's latest chapter)
 function exportList(q, format) {
@@ -840,6 +856,11 @@ function facets() {
   };
 }
 // One work in full: every source's metadata and chapters; for a work the library has, which chapters it lacks
+// The catalog's works for the Search cache's catalog index: every title of every site and version, and authors
+function searchDocs() {
+  return catalogItems().map(it => ({ id: it.key, title: it.title, sort: it.title,
+    text: (it._allTitles || [it.title].concat(it._titles || it.altTitles)).concat(it.authors).join('\n') }));
+}
 // The catalog entry (one version of a work; merged sites once) a key is: its own key or one of its sites' entries
 function itemByKey(key) { catalogItems(); return itemsMemo.byKey.get(String(key || '')) || null; }
 function detail(key) {
@@ -1202,4 +1223,4 @@ require('../../config').onChange(changed => {
 });
 
 module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, siteTemplates, saveSiteTemplate, removeSiteTemplate, exportSiteTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
-  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, mergeSuggestions, merge, mergePlan, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
+  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, searchDocs, mergeSuggestions, merge, mergePlan, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

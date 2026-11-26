@@ -160,6 +160,24 @@ const finished = async id => until(async () => { const j = (await call('GET', `/
   const sch = (await call('GET', `/api/downloads/jobs/${q.id}/work?key=${encodeURIComponent(starKey)}`)).data.work.versions[0].chapters[0];
   ok(sch.status === 'done' && sch.source === 'Site B' && sch.width === 200, `best quality: the wider copy (site B, 200 px) over the first site in the order (${sch.source}, ${sch.width}px)`);
 
+  // ---- what's on disk already isn't downloaded again (another job put it there) ----
+  hits.length = 0;
+  const other = (await call('POST', '/api/downloads/jobs', { name: 'Other', libraryId: L, sourceOrder: [B.id], works: [starKey] })).data.job;
+  const otherCh = (await call('GET', `/api/downloads/jobs/${other.id}/work?key=${encodeURIComponent(starKey)}`)).data.work.versions[0].chapters[0];
+  ok(otherCh.status === 'done', `a chapter whose file is in the folder already counts as there for another job (${otherCh.status})`);
+  await call('POST', `/api/downloads/jobs/${other.id}/run`, {});
+  const od = await finished(other.id);
+  ok(/nothing new/.test(od.lastStatus) && !hits.some(h => /\/cdn\//.test(h)), `…so its run downloads nothing (${od.lastStatus})`);
+
+  // ---- the catalog knows the jobs; works of several sites listed ----
+  const marked = (await call('GET', '/api/catalog?q=star%20road')).data.items[0];
+  ok(marked.inJobs && marked.inJobs.map(j => j.name).sort().join() === 'Best,Other', `catalog works carry the jobs they are in (${marked.inJobs && marked.inJobs.map(j => j.name).join(', ')})`);
+  const both = (await call('GET', `/api/catalog?sources=${A.id},${B.id}&limit=50`)).data, onlyB = (await call('GET', `/api/catalog?sources=${B.id}&limit=50`)).data;
+  ok(both.total === 2 && onlyB.total === 2 && onlyB.items.every(it => it.sources.some(s => s.sourceId === B.id)), 'the works of several sites at once (sources=a,b)');
+  // (planning happens in the run's own process: its phase is reported)
+  const prog = JSON.parse(fs.readFileSync(path.join(DATA, 'downloads', other.id, 'progress.json'), 'utf8'));
+  ok(prog.phase === 'downloading' && prog.total === 0 && prog.status === 'done', 'the run worked out what to download in its own process (nothing, here)');
+
   // ---- editing, removing ----
   const ed = (await call('PATCH', `/api/downloads/jobs/${job.id}`, { name: 'Moon (edited)', versions: ['base', 'colored'], minChapter: 2 })).data.job;
   ok(ed.name === 'Moon (edited)' && ed.versions.join() === 'base,colored' && ed.minChapter === 2 && ed.worksCount === 1, 'a job edited (name, versions, chapter range)');
