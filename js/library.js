@@ -438,17 +438,69 @@
       note: t('sel.catNote'),
       onSubmit: function (v) {
         var main = items.filter(function (it) { return it.key === v.primary; })[0] || items[0];
-        var all = [];
-        items.forEach(function (it) { it.sources.forEach(function (s) { if (all.indexOf(s.key) === -1) all.push(s.key); }); });
-        return api('POST', '/api/catalog/merge', { keys: all, primary: main.primaryKey || main.sources[0].key }).then(function () {
-          A().toast(t('sel.merged', { count: items.length }));
-          sel = { scope: null, items: {} };
-          cache.catMerge = null;
-          var st = catState(); st.items = null;
-          fetchCatalog();
-          A().renderPage();
-        });
+        // The dialog closes at once; the works being merged stay where they are, locked, until the merged work
+        // takes the place of the first of them (the rest of the list stays as it is, no reload)
+        sel = { scope: null, items: {} };
+        $$('[data-lib="sel-toggle"]:not(#select-bar *)').forEach(function (b) { b.outerHTML = selButton(b.dataset.scope); });
+        renderIcons($('#content'));
+        markSelection();
+        catMergeInPlace(items, main);
+        return Promise.resolve();
       }
+    });
+  }
+  // Catalog works being merged (keys of the listed items): locked (no click, no selecting) until it's done
+  var catMerging = {};
+  function catCardsOf(key) { return $$('#cat-grid .cat-card, #cat-grid .cat-row').filter(function (c) { return selIdOf(c) === key; }); }
+  function lockCatCards() {
+    $$('#cat-grid .cat-card, #cat-grid .cat-row').forEach(function (c) {
+      var on = Boolean(catMerging[selIdOf(c)]);
+      c.classList.toggle('is-merging', on);
+      if (on) c.setAttribute('aria-busy', 'true'); else c.removeAttribute('aria-busy');
+      if (on && !$('.merge-lock', c)) c.insertAdjacentHTML('beforeend', '<span class="merge-lock" role="status"><span class="spinner"></span><span>' + esc(t('sel.merging')) + '</span></span>');
+      if (!on) { var l = $('.merge-lock', c); if (l) l.remove(); }
+    });
+  }
+  function catMergeInPlace(items, main) {
+    var st = catState();
+    var keys = items.map(function (it) { return it.key; });
+    var all = [];
+    items.forEach(function (it) { it.sources.forEach(function (s) { if (all.indexOf(s.key) === -1) all.push(s.key); }); });
+    keys.forEach(function (k) { catMerging[k] = true; });
+    lockCatCards();
+    var unlock = function () { keys.forEach(function (k) { delete catMerging[k]; }); lockCatCards(); };
+    return api('POST', '/api/catalog/merge', { keys: all, primary: main.primaryKey || main.sources[0].key }).then(function (r) {
+      unlock();
+      cache.catMerge = null; // (merge suggestions and saved merges: asked again when opened)
+      var merged = r.item;
+      if (!merged || !st.items) { A().toast(t('sel.merged', { count: items.length })); if (st.items) fetchCatalog(); return; }
+      // Absorbed: the merged works, and any other listed work now part of the result (a group it joined, a version)
+      var srcKeys = {};
+      merged.sources.forEach(function (s) { srcKeys[s.key] = true; });
+      (merged.versions || []).forEach(function (v) { srcKeys[v.key] = true; });
+      var gone = function (it) { return keys.indexOf(it.key) !== -1 || it.key === merged.key || it.sources.some(function (s) { return srcKeys[s.key]; }); };
+      var first = -1, removed = 0;
+      var next = [];
+      st.items.forEach(function (it, i) {
+        if (!gone(it)) { next.push(it); return; }
+        var isFirst = first === -1;
+        if (isFirst) { first = i; next.push(merged); } else removed++;
+        // (on screen: the first one becomes the merged work, the others leave; the rest move up into their places)
+        catCardsOf(it.key).forEach(function (c, j) {
+          if (isFirst && j === 0) c.outerHTML = st.view === 'list' ? catalogRow(merged) : catalogCard(merged);
+          else c.remove();
+        });
+      });
+      st.items = next;
+      st.total = Math.max(next.length, st.total - removed);
+      var cnt = $('#cat-grid .grid-count');
+      if (cnt) cnt.textContent = t('cat.count', { count: st.total });
+      var grid = $('#cat-grid');
+      if (grid) { renderIcons(grid); markSelection(); lockCatCards(); }
+      A().toast(t('sel.merged', { count: items.length }));
+    }, function (e) {
+      unlock();
+      A().toast(A().errMsg(e));
     });
   }
   // Clicks on cards while selecting pick them (and don't open them); leaving the page ends selecting
@@ -461,6 +513,7 @@
       var card = e.target.closest && e.target.closest(SEL_CARDS);
       if (!card) return;
       e.preventDefault(); e.stopPropagation();
+      if (card.classList.contains('is-merging')) return; // (being merged: locked)
       selPick(card);
     }, true);
     window.addEventListener('hashchange', function () { if (sel.scope && sel.scope !== selScope()) { sel = { scope: null, items: {} }; } drawSelectBar(); });
@@ -1764,6 +1817,7 @@
     el.classList.toggle('is-loading', false);
     renderIcons(el);
     markSelection();
+    lockCatCards(); // (works being merged stay locked when the list is drawn again, e.g. Load more)
     A().restoreScroll();
   }
   // Works with or without chapters found (Browse and Merge)
@@ -5186,7 +5240,7 @@
       case 'merge-go': return btn.dataset.key === 'manual' ? startMerge('manual') : startBoardMerge(btn.dataset.key, btn);
       case 'sel-toggle': return selToggle(btn.dataset.scope);
       case 'sel-clear': sel.items = {}; return markSelection();
-      case 'sel-all': $$(SEL_CARDS).forEach(function (c) { var sid = selIdOf(c); if (sid && !sel.items[sid]) selPick(c); }); return markSelection();
+      case 'sel-all': $$(SEL_CARDS).forEach(function (c) { var sid = selIdOf(c); if (sid && !sel.items[sid] && !c.classList.contains('is-merging')) selPick(c); }); return markSelection();
       case 'sel-merge': return selMerge();
       case 'merge-split': {
         var sp = btn.closest('.merge-group');

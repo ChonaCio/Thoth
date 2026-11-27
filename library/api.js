@@ -945,7 +945,14 @@ async function handle(ctx) {
       catalog.dismiss(body.key);
       return send(200, { ok: true });
     }
-    if (p === '/api/catalog/merge' && method === 'POST') return send(200, catalog.merge(body.keys, body.primary));
+    // → { groupId, keys, item }: item is the merged work as the list shows it (the page puts it in place of the
+    // works it absorbed, without loading the list again)
+    if (p === '/api/catalog/merge' && method === 'POST') {
+      const r = catalog.merge(body.keys, body.primary);
+      const item = catalog.listedItem(r.keys.includes(body.primary) ? body.primary : r.keys[0]);
+      if (item) try { require('./downloads').markItems([item]); } catch { /* marks are optional */ }
+      return send(200, Object.assign(r, { item }));
+    }
     // POST /api/catalog/merge-plan { merges: [{ keys, primary }] }: several merges out of one suggestion, kept apart
     if (p === '/api/catalog/merge-plan' && method === 'POST') return send(200, catalog.mergePlan(body.merges));
     if ((m = /^\/api\/catalog\/merge\/([\w-]+)$/.exec(p)) && method === 'DELETE') { catalog.unmerge(m[1]); return send(200, { ok: true }); }

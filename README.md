@@ -536,7 +536,10 @@ sites added as **sources**, with its metadata and chapter list.
   (works kept apart, suggestions marked *not the same*) with *Undo*; works split apart are never merged
   automatically again. Both tabs can be **filtered by source** and by chapters.
 - **Merging by hand from the catalog:** *Select* on the Catalog tab turns the cards into checkboxes; pick works,
-  then *Merge…* asks which one is the main entry and merges them. (The Library page has the same *Select*: its
+  then *Merge…* asks which one is the main entry and merges them. The list isn't loaded again: the picked works
+  stay locked ("Merging…") while it's done, then the merged work takes the place of the first of them, the others
+  leave and the rest of the works move up into their places, everything already loaded kept (e.g. Work1 · Work2 ·
+  Work3 · Work1 · Work4 · Work1 → Work1 · Work2 · Work3 · Work4). (The Library page has the same *Select*: its
   *Merge…* opens File management → Merge works with the picked works ready, to choose the one to keep.)
 - **Adding a source: a name and the site's address, nothing else.** Thoth works out the rest, when the source is
   added and again at **every crawl** (so new sitemaps and changed addresses are picked up): it reads the site's

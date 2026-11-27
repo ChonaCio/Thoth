@@ -1108,6 +1108,13 @@ body.is-reading { overflow: hidden; }
 .is-selected .sel-check { background: var(--primary); border-color: var(--primary); color: var(--on-primary); }
 .is-selecting .is-selected .cover, .is-selecting .cat-row.is-selected { outline: 3px solid var(--primary); outline-offset: 2px; border-radius: 8px; }
 .is-selecting .cat-row .sel-check { position: static; flex: none; align-self: center; margin-right: 4px; }
+/* Works being merged: locked (no opening, no selecting) with a note over them until the merged work replaces them */
+.cat-card.is-merging, .cat-row.is-merging { position: relative; pointer-events: none; }
+.cat-card.is-merging > :not(.merge-lock), .cat-row.is-merging > :not(.merge-lock) { opacity: .45; filter: grayscale(.6); }
+.merge-lock { position: absolute; inset: 0; z-index: 4; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px;
+  font-size: 13px; font-weight: 600; color: var(--text); text-align: center; padding: 8px; }
+.merge-lock .spinner { width: 24px; height: 24px; }
+.cat-row .merge-lock { flex-direction: row; }
 .select-bar { position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px;
   width: min(720px, calc(100vw - 32px)); box-sizing: border-box; padding: 10px 14px; border-radius: 14px; background: var(--surface); border: 1px solid var(--border); box-shadow: var(--shadow); }
 .select-bar[hidden] { display: none; }

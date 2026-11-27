@@ -867,6 +867,14 @@ function searchDocs() {
 }
 // The catalog entry (one version of a work; merged sites once) a key is: its own key or one of its sites' entries
 function itemByKey(key) { catalogItems(); return itemsMemo.byKey.get(String(key || '')) || null; }
+// The work as the list shows it (its main version) for a work's or source's key; null when not listed
+function listedItem(key) {
+  const items = catalogItems();
+  const u = itemsMemo.byKey.get(String(key || ''));
+  if (!u) return null;
+  const it = items.find(x => x === u || (x.versions || []).some(v => v.key === u.key));
+  return it ? publicItem(it) : null;
+}
 function detail(key) {
   catalogItems();
   const it = itemsMemo.byKey.get(key);
@@ -1229,4 +1237,4 @@ require('../../config').onChange(changed => {
 });
 
 module.exports = { corrections, undoApart, undoDismiss, templates, findTemplate, siteTemplates, saveSiteTemplate, removeSiteTemplate, exportSiteTemplate, clearCatalog, exportList, exportChapters, titleCleanup, setTitleCleanup, siteFiles, readSiteFile, previewPage, listSources, createSource, updateSource, removeSource, crawl, stopCrawl, testSource, detectSource, sourceIcon, startSchedule, checkSchedule,
-  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, searchDocs, mergeSuggestions, merge, mergePlan, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };
+  list, facets, detail, dataVersion, warmCovers, items: catalogItems, itemByKey, listedItem,searchDocs, mergeSuggestions, merge, mergePlan, unmerge, splitOff, autoMerge, mergedGroups, dismiss, cover, info, types, jobs, libraryMatch, pumpCrawls };

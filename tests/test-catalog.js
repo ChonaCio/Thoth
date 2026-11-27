@@ -450,6 +450,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const mg = (await call('POST', '/api/catalog/merge', { keys: g.works.map(w => w.key), primary: blue.key })).data;
   cat = (await call('GET', '/api/catalog?q=blue%20moon')).data;
   ok(cat.total === 1 && cat.items[0].sources.length === 2 && cat.items[0].chapters === 4, 'merged: one catalog entry with both sources');
+  ok(mg.item && mg.item.key === cat.items[0].key && mg.item.sources.length === 2 && mg.item.title === cat.items[0].title && !('_text' in mg.item),
+    'the merge answers with the merged work as the list shows it (the page puts it in place without reloading)');
   det = (await call('GET', `/api/catalog/work?key=${encodeURIComponent(cat.items[0].key)}`)).data.work;
   ok(det.sources.length === 2 && det.missing.chapters.map(c => c.n).join() === '3,4,5,6', 'its chapters come from both sites (missing: 3–6)');
   ok(det.allChapters.length === 6 && det.allChapters[0].n === '6' && det.allChapters.every(c => c.links.length === 1 && c.links[0].u) && det.allChapters.find(c => c.n === '4').links[0].name === 'Madara site',
