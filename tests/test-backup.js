@@ -83,6 +83,41 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
   const lib = await until(async () => { const l = (await call('GET', '/api/libraries', null, admin)).data.libraries[0]; return !l.scanning && l.scanError && l; });
   ok(lib.scanError === 'folderEmpty' && (await call('GET', '/api/series?limit=10', null, admin)).data.total === 3, `an empty library folder: the scan stops (${lib.scanError}) and keeps every work`);
   fs.rmdirSync(MEDIA); fs.renameSync(MEDIA + '-away', MEDIA);
+  await call('POST', `/api/libraries/${L}/scan`, { full: true }, admin);
+  await wait(400); await scanned();
+
+  // ---- the search box finds a work by any title it's known by ----
+  await call('PATCH', `/api/series/${id('Alpha')}`, { title: 'Zeta Shown', altTitles: ['Alfa Otra'] }, admin);
+  await wait(600); // (saved a moment after the change)
+  await stop();
+  // (as an Identify pick leaves it: a match picked by hand on a site, its title, and what was fetched)
+  const libFile = path.join(DATA, 'library.json');
+  const lj = JSON.parse(fs.readFileSync(libFile, 'utf8'));
+  lj.series[id('Alpha')].provider = { locked: [{ provider: 'anilist', id: '777' }], matches: [{ provider: 'anilist', id: '777', title: 'Alpha no Kiseki', locked: true }],
+    merged: { summary: 'Fetched summary', altTitles: ['Alpha Kanji'] }, fetchedAt: new Date().toISOString() };
+  fs.writeFileSync(libFile, JSON.stringify(lj));
+  await start(DATA);
+  const found = async (term, cookie = ana) => {
+    const list = (await call('GET', `/api/series?limit=10&q=${encodeURIComponent(term)}`, null, cookie)).data.items.map(w => w.id);
+    const box = (await call('GET', `/api/search?q=${encodeURIComponent(term)}`, null, cookie)).data.series.map(w => w.id);
+    return list.includes(id('Alpha')) && box.includes(id('Alpha'));
+  };
+  ok(await found('alfa otra') && await found('alpha kanji') && await found('kiseki') && await found('alpha') && await found('zeta'),
+    'library list and search box (Search cache): a work found by its alternative titles, a matched site\'s title, its folder name and the title shown');
+  // ---- a work folder gone for a while: the Identify picks and the fetched metadata wait for it ----
+  fs.renameSync(path.join(MEDIA, 'Alpha'), path.join(TMP, 'Alpha-away'));
+  await call('POST', `/api/libraries/${L}/scan`, { full: true }, admin);
+  await wait(400); await scanned();
+  ok(!(await call('GET', '/api/series?limit=10', null, admin)).data.items.some(w => w.id === id('Alpha')), 'its folder gone: the work leaves the library');
+  fs.renameSync(path.join(TMP, 'Alpha-away'), path.join(MEDIA, 'Alpha'));
+  await call('POST', `/api/libraries/${L}/scan`, { full: true }, admin);
+  await wait(400); await scanned();
+  await wait(600);
+  const back = JSON.parse(fs.readFileSync(libFile, 'utf8')).series[id('Alpha')];
+  const backView = (await call('GET', `/api/series/${id('Alpha')}`, null, admin)).data.series;
+  ok(back && back.provider && back.provider.locked[0].id === '777' && back.provider.merged.summary === 'Fetched summary' && backView.title === 'Zeta Shown' && backView.summary === 'Fetched summary',
+    'back: its Identify picks, fetched metadata and edits are there again (nothing to look up again)');
+  ok(await found('kiseki'), '…and it is found by those titles again');
 
   // ---- backup ----
   await call('PATCH', '/api/config', { scanWorkers: 2, comicVineApiKey: 'secretkey123' }, admin);

@@ -15,6 +15,37 @@ const { publicUrl, refererFor, UA } = require('../catalog/fetcher');
 
 const DATA_DIR = path.resolve(process.env.THOTH_DATA_DIR || path.join(__dirname, '..', '..', 'data'));
 const DIR = path.join(DATA_DIR, 'cache', 'catalog-covers');
+// Work covers are kept for good (keep: true): data/catalog-covers/, never counted against the cache's disk limit
+// nor emptied with the cache or a clean crawl — a cover already fetched is never fetched again (deleted only when
+// its source is removed: forget). Site icons and anything else stay in the cache folder.
+const KEEP_DIR = path.join(DATA_DIR, 'catalog-covers');
+const keepStats = { files: null, bytes: null, moved: 0 };
+async function keepGet(name) {
+  const buf = await fs.promises.readFile(path.join(KEEP_DIR, name)).catch(() => null);
+  if (!buf) return null;
+  const type = await fs.promises.readFile(path.join(KEEP_DIR, name + '.type'), 'utf8').catch(() => 'image/jpeg');
+  return { buf, type: type.trim() || 'image/jpeg' };
+}
+async function keepSet(name, v) {
+  await fs.promises.mkdir(KEEP_DIR, { recursive: true });
+  const had = await fs.promises.stat(path.join(KEEP_DIR, name)).catch(() => null);
+  await fs.promises.writeFile(path.join(KEEP_DIR, name), v.buf);
+  await fs.promises.writeFile(path.join(KEEP_DIR, name + '.type'), v.type);
+  if (keepStats.files != null) { if (!had) keepStats.files++; keepStats.bytes += v.buf.length - (had ? had.size : 0); }
+}
+// (a cover moved to the kept folder: out of the cache folder, its count updated)
+async function removeCached(name) {
+  const st = await fs.promises.stat(path.join(DIR, name)).catch(() => null);
+  await fs.promises.rm(path.join(DIR, name), { force: true });
+  await fs.promises.rm(path.join(DIR, name + '.type'), { force: true });
+  if (st && disk) { disk.files--; disk.bytes -= st.size; }
+}
+async function keepCount() {
+  const names = (await fs.promises.readdir(KEEP_DIR).catch(() => [])).filter(n => !n.endsWith('.type'));
+  let bytes = 0;
+  for (const n of names) { const st = await fs.promises.stat(path.join(KEEP_DIR, n)).catch(() => null); if (st) bytes += st.size; }
+  Object.assign(keepStats, { files: names.length, bytes });
+}
 const ALLOW_LOCAL = process.env.THOTH_CATALOG_ALLOW_LOCAL === '1'; // tests only
 const MAX_IMAGE = 5 * 1024 * 1024;
 const FAIL_MS = 30 * 60 * 1000;
@@ -139,15 +170,23 @@ async function download(url, referer) {
   throw err(404, 'noCover');
 }
 // → { buf, type, etag, fetched } ; fromWarm: not counted as a request
-async function image({ url, referer }, { warming = false } = {}) {
+// keep: a work's cover (kept for good in KEEP_DIR; one found in the cache folder is moved there)
+async function image({ url, referer, keep = false }, { warming = false } = {}) {
   if (!warming) stats.requests++;
   url = String(url || '');
   if (!publicUrl(url, ALLOW_LOCAL)) throw err(404, 'noCover');
   const name = nameOf(url), etag = etagOf(name);
   const m = lru.get(name);
   if (m) { if (!warming) stats.memoryHits++; return Object.assign({ etag, fetched: false }, m); }
+  const k = keep ? await keepGet(name) : null;
+  if (k) { if (!warming) stats.diskHits++; lru.set(name, k); return Object.assign({ etag, fetched: false }, k); }
   const d = await diskGet(name);
-  if (d) { if (!warming) stats.diskHits++; lru.set(name, d); return Object.assign({ etag, fetched: false }, d); }
+  if (d) {
+    if (!warming) stats.diskHits++;
+    lru.set(name, d);
+    if (keep) { keepSet(name, d).then(() => { keepStats.moved++; return removeCached(name); }).catch(() => {}); }
+    return Object.assign({ etag, fetched: false }, d);
+  }
   const until = failedUntil.get(url);
   if (until && until > Date.now()) { stats.skippedFailed++; throw err(404, 'noCover'); }
   if (inflight.has(name)) return inflight.get(name);
@@ -157,7 +196,7 @@ async function image({ url, referer }, { warming = false } = {}) {
     failedUntil.delete(url);
     if (started !== epoch) return Object.assign({ etag, fetched: true }, v); // (emptied meanwhile: not kept)
     lru.set(name, v);
-    await diskSet(name, v).catch(e => console.error('[catalog thumbnails] could not save an image:', e.message));
+    await (keep ? keepSet(name, v) : diskSet(name, v)).catch(e => console.error('[catalog thumbnails] could not save an image:', e.message));
     return Object.assign({ etag, fetched: true }, v);
   }, e => {
     stats.failed++;
@@ -181,7 +220,7 @@ function warmAdd(items) {
     let host; try { host = new URL(url).host; } catch { continue; }
     warm.seen.add(url);
     if (!warm.queue.has(host)) warm.queue.set(host, []);
-    warm.queue.get(host).push({ url, referer: it.referer || '' });
+    warm.queue.get(host).push({ url, referer: it.referer || '', keep: !!it.keep });
     n++;
   }
   warm.total += n;
@@ -232,7 +271,22 @@ const handlers = {
   },
   stopWarm() { warm.queue.clear(); warm.seen.clear(); return true; },
   configure({ cfg: c }) { configure(c); return true; },
-  // Emptied: memory (and the disk with { disk: true }); failures forgotten
+  // Kept covers no longer needed (their source removed): { urls } → how many were deleted
+  async forget({ urls } = {}) {
+    let n = 0;
+    for (const url of Array.isArray(urls) ? urls : []) {
+      const name = nameOf(String(url || ''));
+      lru.delete && lru.delete(name);
+      const st = await fs.promises.stat(path.join(KEEP_DIR, name)).catch(() => null);
+      if (!st) continue;
+      await fs.promises.rm(path.join(KEEP_DIR, name), { force: true });
+      await fs.promises.rm(path.join(KEEP_DIR, name + '.type'), { force: true });
+      if (keepStats.files != null) { keepStats.files--; keepStats.bytes -= st.size; }
+      n++;
+    }
+    return { forgotten: n };
+  },
+  // Emptied: memory (and the cache folder with { disk: true }; the kept covers stay); failures forgotten
   async clear({ disk: all } = {}) {
     epoch++;
     lru = createLru({ maxBytes: Math.max(4, cfg.memMb) * 1024 * 1024 });
@@ -242,9 +296,11 @@ const handlers = {
   }
 };
 diskCount().catch(() => {});
+keepCount().catch(() => {});
 const info = () => Object.assign({}, lru.info(), stats, {
   disk: disk ? { files: disk.files, bytes: disk.bytes, maxBytes: cfg.diskMb * 1024 * 1024 } : null,
+  kept: keepStats.files != null ? { files: keepStats.files, bytes: keepStats.bytes, moved: keepStats.moved } : null,
   failedNow: [...failedUntil.values()].filter(t => t > Date.now()).length,
   warm: { running: warm.running, total: warm.total, done: warm.done, added: warm.added, failed: warm.failed, waiting: [...warm.queue.values()].reduce((a, l) => a + l.length, 0), perMin: cfg.perMin, finishedAt: warm.finishedAt }
 });
-module.exports = { handlers, info, DIR };
+module.exports = { handlers, info, DIR, KEEP_DIR };

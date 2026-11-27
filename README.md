@@ -35,7 +35,10 @@ No dependencies — plain HTML/CSS/JS plus a small Node server (Node.js 18+).
   after scans), **Works** and **Search**. If a cache process can't start, that cache runs inside the server.
 - **Search cache:** an index of every work's titles, genres (categories), tags and people answers the search box
   and the *Search & filters* panel's find boxes (any genre, tag or person, not only those listed), counting only
-  works in the libraries the user may see; recent answers are kept.
+  works in the libraries the user may see; recent answers are kept. A work is found by **any title it's known
+  by**: the one shown, its alternative titles (edits, `ComicInfo.xml`, folder JSON, every matched site), each
+  matched site's own title, its folder name and the titles of works merged into it — in every library, in the
+  search box and in the library list's search alike.
 - **Works are cached too**: work lists, filters, work pages and Home are answered from a key-value cache of
   ready answers (per user, `THOTH_RESPONSE_CACHE_MB`, default 32) until something changes (any edit, scan or
   metadata update, or that user's reading progress). After every scan the **covers of every work are read
@@ -257,7 +260,9 @@ order them with the arrows.
   work page has **Refresh metadata**, **Identify** (search the sites and pick the right match, one per site;
   you can pick several sites at once, e.g. AniList *and* Kitsu, which then runs **in the background as a task**
   (Processes → Tasks) while you keep using the app, and the page updates when it's done; the picks stick for
-  future refreshes) and
+  future refreshes, and they're kept even while the work's folder is unavailable: when a scan doesn't find a
+  folder, the work's Identify picks, edits, fetched metadata and cover are set aside for up to 180 days and given
+  back as soon as a scan finds it again, with nothing looked up again) and
   **Clear metadata**. *Update metadata* (and *Refresh all*) first re-matches the library's folder-source JSON
   files, so fixed or new JSON files are picked up right away.
 - **Links.** A work keeps the web addresses of its matches and shows one line per source on its page
@@ -358,8 +363,11 @@ all accounts) and start it again to get the *Create the first user* screen back.
 copied into the container image, and never touched by updates. Sessions are HttpOnly cookies that last
 30 days. After 10 failed sign-ins from one address, sign-in is blocked for that address for 15 minutes.
 
+`data/catalog-covers/` keeps the covers of the external catalog's works for good (fetched once, kept through
+clean crawls, deleted only with their source).
+
 `data/cache/` holds caches that can always be rebuilt (deleting it is safe): work covers (`thumbs/`), catalog
-covers (`catalog-covers/`) and **snapshots** (`snapshots/`) of the caches that otherwise live in memory: Pages,
+source icons (`catalog-covers/`) and **snapshots** (`snapshots/`) of the caches that otherwise live in memory: Pages,
 Works, Search and Catalog works. Each saves what it keeps every 5 minutes while it's used, before its process closes
 when idle, and when the server stops; when it starts again it takes it back at once, so after a restart the first
 pages, lists and searches are answered without being built again. Saved answers are only used while the data is
@@ -770,7 +778,11 @@ sites added as **sources**, with its metadata and chapter list.
   what the old settings found.
 - **English titles first:** a work's title is its English one when the site gives several (tagged by language,
   or the one that reads as English), also for works merged across sources.
-- Covers are fetched by the server and cached (`data/cache/catalog-covers/`): browsers never contact the sites.
+- Covers are fetched by the server, once: browsers never contact the sites. A work's cover is **saved for good**
+  (`data/catalog-covers/`, not counted against the thumbnails cache's disk limit and kept through clean crawls, so
+  the works that come back reuse it); it's deleted only when its source is removed. The works' metadata (titles,
+  genres, chapters…) is saved too (`data/catalog/<source>/`), so nothing is fetched again until the next crawl.
+  Site icons stay in the thumbnails cache (`data/cache/catalog-covers/`).
 - **Catalog caches** (each its own process, on the Processes page, sizes in Server settings → External catalog):
   - *Catalog works* keeps ready answers for the catalog's list, filters and work pages (default 32 MB). An answer
     counts only while the catalog's data is the same: a crawl writing new works (every 30 s and at the end), a

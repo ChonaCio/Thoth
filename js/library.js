@@ -3941,6 +3941,7 @@
   function catThumbsNote(s) {
     var out = [];
     if (s.disk) out.push(t('proc.cache.disk', { files: s.disk.files, size: fmtBytes(s.disk.bytes || 0), max: fmtBytes(s.disk.maxBytes) }));
+    if (s.kept && s.kept.files) out.push(t('proc.cache.catKept', { files: s.kept.files, size: fmtBytes(s.kept.bytes || 0) }));
     var w = s.warm;
     if (w && w.running) out.push(t('proc.cache.catWarmRunning', { done: w.done, total: w.total, added: w.added, perMin: w.perMin }));
     else if (w && w.finishedAt) out.push(t('proc.cache.catWarmDone', { total: w.total, added: w.added, failed: w.failed }));

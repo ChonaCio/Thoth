@@ -206,8 +206,23 @@ function computeSeriesMeta(s) {
     authors: Array.isArray(m.authors) && m.authors.length ? m.authors : fromBooks(s).authors,
     // (plus the titles of works merged into this one: s.mergedTitles)
     altTitles: withMergedTitles(Array.isArray(m.altTitles) ? m.altTitles : [], s.mergedTitles, title),
+    // Every title the work has anywhere, for searching (not shown): its folder's name, its files' ComicInfo series,
+    // every folder source's and online site's title and other titles (also when an edit replaced the list shown),
+    // the titles of works merged into it
+    searchTitles: searchTitlesOf(s, title, m.altTitles),
     links: linksOf(s).map(l => l.url)
   };
+}
+function searchTitlesOf(s, title, shownAlt) {
+  const out = [], seen = new Set();
+  const add = t => { if (typeof t !== 'string') return; const k = titleKey(t); if (k && !seen.has(k)) { seen.add(k); out.push(t); } };
+  const addAll = list => { if (Array.isArray(list)) list.forEach(add); };
+  add(title); add(s.name); add(splitEdition(s.name).title);
+  addAll(shownAlt);
+  for (const src of [s.overrides, s.meta, s.local && s.local.merged, s.provider && s.provider.merged]) if (src) { add(src.title); add(src.series); addAll(src.altTitles); }
+  for (const x of (s.provider && s.provider.matches) || []) add(x.title); // (each matched site's own main title)
+  addAll(s.mergedTitles);
+  return out;
 }
 // Other titles + the titles works merged into this one had, once each and never the main title
 const titleKey = t => String(t || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\p{L}\p{N}]+/gu, ' ').trim();

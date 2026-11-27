@@ -262,9 +262,11 @@ function workIndex(user, library, { deleted = false } = {}) {
   workIndexMemo.set(key, { gen, entries, facets: new Map() });
   return entries;
 }
-// (the work's title and other titles — every version's too — publisher, tags, genres and people)
+// (every title the work has anywhere — every version's: folder names, ComicInfo, folder sources, each matched
+// site's title and other titles, merged works' — publisher, tags, genres and people)
+const titlesOf = v => { const s = db.series[v.id]; return s ? store.seriesMeta(s).searchTitles || [] : [v.title].concat(v.altTitles || []); };
 const textOf = e => e._text || (e._text = searchable([e.v.title, e.v.publisher].concat(e.v.tags, e.v.genres, e.v.altTitles, e.v.authors.map(a => a.name),
-  (e.list || []).flatMap(v => [v.title].concat(v.altTitles || []))).filter(Boolean).join('\n')));
+  (e.list || [e.v]).flatMap(titlesOf)).filter(Boolean).join('\n')));
 // Punctuation ignored: "solo leveling ragnarok" finds "Solo Leveling: Ragnarok" (one title per line kept)
 const loose = s => String(s || '').replace(/[^\p{L}\p{N}\n]+/gu, ' ').replace(/ ?\n ?/g, '\n').trim();
 const textMatches = (e, term) => { if (textOf(e).includes(term)) return true; const lt = loose(term); return Boolean(lt) && (e._loose || (e._loose = loose(textOf(e)))).includes(lt); };
@@ -976,7 +978,7 @@ async function handle(ctx) {
     for (const s of pool) {
       if (s.hidden && !ids.length) continue;
       const m = store.seriesMeta(s);
-      if (!ids.length && !searchable(m.title).includes(term) && !searchable(s.relPath).includes(term) && !m.altTitles.some(x => searchable(x).includes(term))) continue;
+      if (!ids.length && !searchable(m.title).includes(term) && !searchable(s.relPath).includes(term) && !(m.searchTitles || m.altTitles).some(x => searchable(x).includes(term))) continue;
       works.push({ id: s.id, title: m.title, edition: m.edition, library: (db.libraries[s.libraryId] || {}).name || '', libraryId: s.libraryId,
         path: String(s.relPath || '').split(/[\\/]/).join('/'), books: store.booksOf(s.id).length, oneshot: Boolean(s.oneshot) });
       if (!ids.length && works.length >= 30) break;

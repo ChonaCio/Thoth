@@ -940,7 +940,9 @@ function info() {
   };
 }
 // Remove a deleted library's or series' covers
-function forgetSeries(s) { removeCover(s); const i = queue.indexOf(s.id); if (i !== -1) { queue.splice(i, 1); batch.done++; } }
+// A work removed: out of the queue, its downloaded cover deleted — unless kept (keepCover: a scan found its folder
+// missing; its metadata and cover are set aside for when it's back, see backup.setAside)
+function forgetSeries(s, { keepCover = false } = {}) { if (!keepCover) removeCover(s); const i = queue.indexOf(s.id); if (i !== -1) { queue.splice(i, 1); batch.done++; } }
 
 module.exports = {
   TYPES, COVER_MODES, MATCH_MODES: local.MATCH_MODES, providerList, librarySettings, parseLibrarySettings,

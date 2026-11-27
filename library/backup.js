@@ -46,7 +46,14 @@ function workEdits() {
   for (const b of Object.values(db.books)) if (b.overrides && Object.keys(b.overrides).length) books[b.id] = { overrides: clone(b.overrides) };
   // (edits waiting for works not scanned yet stay in the backup too)
   const pending = db.pendingEdits || {};
-  for (const [id, e] of Object.entries(pending.series || {})) if (!series[id]) series[id] = clone(e);
+  // (works set aside by a scan: their own edits and Identify picks — not the fetched metadata, fetched again)
+  for (const [id, e] of Object.entries(pending.series || {})) {
+    if (series[id]) continue;
+    const o = clone(e);
+    if (o.provider) { if (o.provider.locked) o.locked = o.provider.locked; delete o.provider; }
+    delete o.setAsideAt; delete o.customCover; delete o.created;
+    if (Object.keys(o).length) series[id] = o;
+  }
   for (const [id, e] of Object.entries(pending.books || {})) if (!books[id]) books[id] = clone(e);
   return { series, books };
 }
@@ -190,7 +197,45 @@ function applySeriesEdit(s, e) {
   if (e.overrides) s.overrides = clone(e.overrides);
   if (e.hidden) s.hidden = clone(e.hidden); else if ('hidden' in e && !e.hidden) delete s.hidden;
   if (e.mergedTitles) s.mergedTitles = clone(e.mergedTitles);
-  if (e.locked) s.provider = Object.assign(s.provider || {}, { locked: clone(e.locked) });
+  if (e.customCover) s.customCover = clone(e.customCover);
+  if (e.created) s.created = e.created;
+  // (set aside by a scan: everything that was fetched — no new lookup — with the Identify picks)
+  if (e.provider) s.provider = clone(e.provider);
+  else if (e.locked) s.provider = Object.assign(s.provider || {}, { locked: clone(e.locked) });
+}
+// A scan didn't find a work's folder (gone for good, or a drive/share unavailable for now): what can't be read
+// from the files again — the Identify picks, edits, hidden, titles from merges, and the metadata already fetched
+// with its cover — is kept by its id (from its path), and given back when a scan finds the work again. Kept 180
+// days at most (then its cover file goes too). → true when something was kept (its cover file stays).
+const SET_ASIDE_DAYS = 180, SET_ASIDE_MAX = 20000;
+function setAside(s) {
+  const e = {};
+  if (s.overrides && Object.keys(s.overrides).length) e.overrides = clone(s.overrides);
+  if (s.hidden) e.hidden = clone(s.hidden);
+  if (s.mergedTitles && s.mergedTitles.length) e.mergedTitles = clone(s.mergedTitles);
+  if (s.customCover) e.customCover = clone(s.customCover);
+  if (s.provider) e.provider = clone(s.provider);
+  if (!Object.keys(e).length) return false;
+  if (s.created) e.created = s.created; // (back with its first "added" date: not "recently added" again)
+  e.setAsideAt = new Date().toISOString();
+  const p = db.pendingEdits || (db.pendingEdits = { series: {}, books: {} });
+  if (!p.series) p.series = {};
+  p.series[s.id] = e;
+  pruneSetAside();
+  return true;
+}
+function pruneSetAside() {
+  const p = db.pendingEdits && db.pendingEdits.series;
+  if (!p) return;
+  const limit = Date.now() - SET_ASIDE_DAYS * 86400000;
+  const entries = Object.entries(p).filter(([, e]) => e.setAsideAt);
+  const old = entries.filter(([, e]) => Date.parse(e.setAsideAt) < limit);
+  const over = entries.length - old.length - SET_ASIDE_MAX;
+  const drop = old.concat(over > 0 ? entries.filter(x => !old.includes(x)).sort((a, b) => String(a[1].setAsideAt).localeCompare(String(b[1].setAsideAt))).slice(0, over) : []);
+  for (const [id, e] of drop) {
+    if (e.provider && e.provider.coverFile) try { require('./metadata').forgetSeries({ id, provider: e.provider }); } catch { /* gone */ }
+    delete p[id];
+  }
 }
 // The scanner, when it adds a work or a book: edits a backup had for it
 function applyPending(kind, item) {
@@ -201,4 +246,4 @@ function applyPending(kind, item) {
   return true;
 }
 
-module.exports = { exportAll, importAll, summary, check, applyPending, SECTIONS, FORMAT, VERSION };
+module.exports = { exportAll, importAll, summary, check, applyPending, setAside, SECTIONS, FORMAT, VERSION };

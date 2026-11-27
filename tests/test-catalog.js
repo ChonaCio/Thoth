@@ -79,7 +79,7 @@ const site = http.createServer((req, res) => {
     if (u.searchParams.get('p') !== '1') return send(200, '<div class="list"></div>');
     return send(200, `<div class="list"><div class="item"><a href="/custom/w/blue-moon">Blue Moon</a></div><div class="item"><a href="/custom/private/secret">Secret</a></div></div>`);
   }
-  if (u.pathname === '/custom/w/blue-moon') return send(200, `<h1 class="t">Blue Moon</h1><div class="genres"><span>Fantasy</span><span>Science Fiction</span></div><ol class="chs"><li><a href="/custom/w/blue-moon/6">Ep. 6</a></li><li><a href="/custom/w/blue-moon/5">Ep. 5</a></li></ol>`);
+  if (u.pathname === '/custom/w/blue-moon') return send(200, `<meta property="og:image" content="/img/custom-blue-moon.png"><h1 class="t">Blue Moon</h1><div class="genres"><span>Fantasy</span><span>Science Fiction</span></div><ol class="chs"><li><a href="/custom/w/blue-moon/6">Ep. 6</a></li><li><a href="/custom/w/blue-moon/5">Ep. 5</a></li></ol>`);
   // Chapters behind a tab that loads them; genres in a tab that's only hidden
   if (u.pathname === '/tabs/list') return send(200, '<div class="w"><a href="/tabs/work">Tabbed Work</a></div>');
   if (u.pathname === '/tabs-sitemap.xml') return send(200, `<?xml version="1.0"?><urlset><url><loc>${SITE}/tabs/work</loc><lastmod>2025-01-01</lastmod></url></urlset>`, 'application/xml');
@@ -416,7 +416,7 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(det.sources[0].chapterList.length === 4 && det.sources[0].chapterList[0].u.endsWith('/chapter-4/') && det.missing.have === 2 && det.missing.chapters.map(c => c.n).join() === '3,4',
     'a work’s page: chapter list with links; the chapters the library lacks (3, 4)');
   const cover = await fetch(`${BASE}/api/catalog/cover?key=${encodeURIComponent(blue.key)}`, { headers: { Cookie: cookie } });
-  ok(cover.status === 200 && cover.headers.get('content-type') === 'image/png' && fs.readdirSync(path.join(DATA, 'cache', 'catalog-covers')).length >= 1, 'covers come through the server (cached), never straight from the site to the browser');
+  ok(cover.status === 200 && cover.headers.get('content-type') === 'image/png' && fs.readdirSync(path.join(DATA, 'catalog-covers')).length >= 1, 'covers come through the server (kept in data/catalog-covers/), never straight from the site to the browser');
   {
     const imgBefore = imgHits;
     const again = await fetch(`${BASE}/api/catalog/cover?key=${encodeURIComponent(blue.key)}`, { headers: { Cookie: cookie } });
@@ -522,8 +522,16 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   ok(det.sources[0].chapterList.length === 5 && det.sources[0].chapterList[0].n === '5' && hits.some(h => h.includes('m_orderby=latest')), 'an update reads the recently updated works first and adds the new chapter');
 
   // ---- removing a source ----
+  const keptN = () => fs.readdirSync(path.join(DATA, 'catalog-covers')).filter(n => !n.endsWith('.type')).length;
+  {
+    const cw = (await call('GET', `/api/catalog?source=${custom.id}&limit=50`)).data.items.find(it => it.cover);
+    if (cw) await fetch(`${BASE}/api/catalog/cover?key=${encodeURIComponent(cw.sources[0].key)}`, { headers: { Cookie: cookie } }).then(r => r.arrayBuffer());
+  }
+  const keptBefore = keptN();
   await call('DELETE', `/api/catalog/sources/${custom.id}`);
+  await new Promise(r => setTimeout(r, 300));
   ok((await call('GET', '/api/catalog')).data.total === 3 && !fs.existsSync(path.join(DATA, 'catalog', custom.id)), 'removing a source removes its works');
+  ok(keptN() < keptBefore && keptN() >= 1, `and its kept covers (${keptBefore} → ${keptN()}); other sources' covers stay`);
 
   // ---- clean crawl of one source: its crawled data removed, a full crawl started; manual merges kept or not ----
   ok((await call('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: 'all' })).status === 400 && (await call('POST', '/api/catalog/clear', { confirm: 'CLEAR', sources: ['nope'] })).status === 404,
@@ -547,7 +555,8 @@ const crawled = async id => until(async () => { const s = (await call('GET', '/a
   const nSources = (await call('GET', '/api/catalog/sources')).data.sources.length;
   const cl = (await call('POST', '/api/catalog/clear', { confirm: 'CLEAR' })).data;
   ok(cl.removed === 3 && (await call('GET', '/api/catalog')).data.total === 0 && (await call('GET', '/api/catalog/sources')).data.sources.length === nSources && !fs.existsSync(path.join(DATA, 'cache', 'catalog-covers')),
-    'clearing removes every crawled work and cached cover; the sources stay');
+    'clearing removes every crawled work and cached image; the sources stay');
+  ok(keptN() >= 1, 'the works\' kept covers stay (a clean crawl brings the works back with the same covers: not fetched again)');
 
   // ---- site templates: complete settings for a site, added in one step (no detection: nothing is fetched) ----
   const tpls = (await call('GET', '/api/catalog/site-templates')).data.templates;

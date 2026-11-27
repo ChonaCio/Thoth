@@ -215,6 +215,9 @@ function removeSource(id) {
   // A crawl of it runs in its own process: it has to end first (it would write its folder again)
   if (liveCrawl(id)) throw err(409, 'catalogCrawling');
   stopCrawl(id);
+  // Its works' kept covers go too (other sources' works never share them: a cover is kept by its own address)
+  let covers = []; try { covers = sourceWorks(id).map(w => w.cover).filter(Boolean); } catch {}
+  if (covers.length) thumbs.call('forget', { urls: covers }).catch(e => console.error('[catalog] removing covers:', e.message));
   delete db.catalogSources[id];
   // Its works leave the merge groups
   for (const [gid, g] of Object.entries(db.catalogMerges.groups)) {
@@ -264,7 +267,8 @@ function clearCatalog({ sources = null, keepMerges = false, crawl: recrawl = fal
     }
   }
   store.saveLibrary();
-  // (every source: the thumbnails cache emptied too — its memory, what it was fetching ahead, its folder)
+  // (every source: the thumbnails cache emptied too — its memory, what it was fetching ahead, its folder; the works'
+  // kept covers stay in data/catalog-covers/, used again when the crawl brings the works back)
   if (whole) { fs.rmSync(COVER_DIR, { recursive: true, force: true }); thumbs.call('clear', { disk: true }).catch(() => {}); }
   catalogVersion++;
   console.log(`[catalog] cleared ${whole ? 'every source' : ids.length + ' source(s)'}: ${removed} works removed (sources kept${keepMerges ? ', manual merges kept' : ''})`);
@@ -1154,7 +1158,7 @@ async function cover(key) {
   let last = err(404, 'noCover');
   for (const x of tries) {
     if (!x.cover) continue;
-    try { return await cachedImage(x.cover, coverReferer(x)); } catch (e) { last = e; }
+    try { return await cachedImage(x.cover, coverReferer(x), { keep: true }); } catch (e) { last = e; }
   }
   throw last;
 }
@@ -1185,10 +1189,12 @@ async function declaredIcon(page) {
   }
   return null;
 }
-// Covers and icons come from the catalog thumbnails cache (a process of its own: memory, then disk, then the site)
-async function cachedImage(imageUrl, referer) {
+// Covers and icons come from the catalog thumbnails cache (a process of its own: memory, then disk, then the site).
+// keep: a work's cover, saved for good (data/catalog-covers/: not fetched again, kept through clean crawls; deleted
+// with its source)
+async function cachedImage(imageUrl, referer, { keep = false } = {}) {
   if (!publicUrl(imageUrl, ALLOW_LOCAL)) throw err(404, 'noCover');
-  const r = await thumbs.call('image', { url: imageUrl, referer: referer || '', cfg: thumbCfg() });
+  const r = await thumbs.call('image', { url: imageUrl, referer: referer || '', keep, cfg: thumbCfg() });
   return { buf: r.buf, type: r.type, etag: r.etag };
 }
 // Covers of these sources' works fetched ahead by the thumbnails cache (the ones it doesn't have; at the pace set
@@ -1201,7 +1207,7 @@ function warmCovers(ids) {
     const s = db.catalogSources[id];
     if (!s || s.enabled === false) continue;
     let list; try { list = sourceWorks(id); } catch { continue; }
-    for (const w of list) if (w.cover && publicUrl(w.cover, ALLOW_LOCAL)) items.push({ url: w.cover, referer: coverReferer(Object.assign({ sourceId: id }, w)) });
+    for (const w of list) if (w.cover && publicUrl(w.cover, ALLOW_LOCAL)) items.push({ url: w.cover, referer: coverReferer(Object.assign({ sourceId: id }, w)), keep: true });
   }
   if (items.length) thumbs.call('warm', { items, cfg }).catch(e => console.error('[catalog] reading covers ahead:', e.message));
   return items.length;

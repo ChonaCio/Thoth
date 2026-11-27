@@ -404,7 +404,9 @@ async function runScan(job) {
       if (b.libraryId === libraryId && !seenBooks.has(b.id)) { delete store.db.books[b.id]; removed++; }
     }
     for (const s of Object.values(store.db.series)) {
-      if (s.libraryId === libraryId && !seenSeries.has(s.id)) { metadata.forgetSeries(s); delete store.db.series[s.id]; anyChange = true; }
+      // (its folder is gone — maybe only for now: its Identify picks, edits, fetched metadata and cover are set
+      // aside and given back if a scan finds it again)
+      if (s.libraryId === libraryId && !seenSeries.has(s.id)) { const kept = backup.setAside(s); metadata.forgetSeries(s, { keepCover: kept }); delete store.db.series[s.id]; anyChange = true; }
     }
     // (collections and read lists keep the works and books that went: their ids come from their paths, so when a
     // folder that was unavailable comes back they're in them again. Only deleting works or a library removes them.)
