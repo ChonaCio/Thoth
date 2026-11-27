@@ -257,7 +257,9 @@ order them with the arrows.
   whose files changed since their last check, matched works missing a cover, and works not checked for 30 days)
   and **Refresh all metadata** (every work again). A check that finds the same data doesn't mark the work as
   updated (so "Recently updated" only shows real changes). Every
-  work page has **Refresh metadata**, **Identify** (search the sites and pick the right match, one per site;
+  work page has **Refresh metadata**, **Identify** (search the sites and pick the right match, one per site; it
+  searches the online sites enabled for the work's library in *Manage libraries*, and the checkboxes under the
+  search box add or remove any sites — *This library's sources*, *All*, *None* — searching again as you tick them;
   you can pick several sites at once, e.g. AniList *and* Kitsu, which then runs **in the background as a task**
   (Processes → Tasks) while you keep using the app, and the page updates when it's done; the picks stick for
   future refreshes, and they're kept even while the work's folder is unavailable: when a scan doesn't find a

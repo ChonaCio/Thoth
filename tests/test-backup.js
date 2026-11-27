@@ -119,6 +119,19 @@ async function until(fn, ms = 30000) { const t0 = Date.now(); while (Date.now() 
     'back: its Identify picks, fetched metadata and edits are there again (nothing to look up again)');
   ok(await found('kiseki'), '…and it is found by those titles again');
 
+  // ---- Identify: by default the library's enabled sites; any sites can be picked (offline: only Comic Vine, which
+  // has no API key here, so nothing is fetched) ----
+  {
+    const provs = (await call('GET', '/api/metadata/providers', null, admin)).data.providers.filter(p => p.kind !== 'folder');
+    await call('PATCH', `/api/libraries/${L}`, { metadata: { providers: provs.map(p => ({ id: p.id, enabled: p.id === 'comicvine' })) } }, admin);
+    const def = (await call('GET', `/api/series/${id('Beta')}/metadata/search?q=beta`, null, admin)).data;
+    ok(def.providers.join() === 'comicvine' && def.errors.length === 1 && !def.results.length, `Identify searches the sites enabled for the work's library by default (${def.providers.join()})`);
+    const two = (await call('GET', `/api/series/${id('Beta')}/metadata/search?q=beta&providers=comicvine,nope,comicvine`, null, admin)).data;
+    ok(two.providers.join() === 'comicvine', 'picked sites: unknown ones ignored, each once');
+    await call('PATCH', `/api/libraries/${L}`, { metadata: { providers: provs.map(p => ({ id: p.id, enabled: false })) } }, admin);
+    ok(!(await call('GET', `/api/series/${id('Beta')}/metadata/search?q=beta`, null, admin)).data.providers.length, 'none enabled: none searched');
+  }
+
   // ---- backup ----
   await call('PATCH', '/api/config', { scanWorkers: 2, comicVineApiKey: 'secretkey123' }, admin);
   await call('PATCH', `/api/series/${id('Gamma')}`, { summary: 'Edited by hand' }, admin);

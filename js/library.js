@@ -4722,9 +4722,9 @@
     ((d.series.metadata && d.series.metadata.locked) || []).forEach(function (l) { identifyPicks[l.provider] = { provider: l.provider, id: l.id, title: '' }; });
     var lib = (A().state.libraries || []).filter(function (l) { return l.id === d.series.libraryId; })[0];
     loadProviders().then(function (all) {
-      var order = libraryProviders(lib, all).filter(function (p) { return p.kind !== 'folder'; }); // Identify searches online sites
-      $('#identify-provider').innerHTML = '<option value="">' + esc(t('meta.allEnabled')) + '</option>' +
-        order.map(function (p) { return '<option value="' + esc(p.id) + '"' + (p.needsKey && !p.keySet ? ' disabled' : '') + '>' + esc(p.name) + '</option>'; }).join('');
+      // Identify searches online sites: the ones enabled for this work's library are ticked; any can be added
+      identifySources = libraryProviders(lib, all).filter(function (p) { return p.kind !== 'folder'; });
+      renderIdentifySources('library');
       $('#identify-q').value = d.workTitle || d.series.title;
       $('#identify-error').hidden = true;
       $('#identify-results').innerHTML = '';
@@ -4733,13 +4733,38 @@
       searchIdentify();
     });
   }
+  // The sites to search, as checkboxes. which: 'library' (the library's enabled ones) | 'all' | 'none'
+  var identifySources = [], identifySeq = 0, identifyTimer = null;
+  function usableSource(p) { return !(p.needsKey && !p.keySet); }
+  function renderIdentifySources(which) {
+    $('#identify-sources').innerHTML = '<span class="identify__sources-label" id="identify-sources-label">' + esc(t('meta.searchIn')) + '</span>' +
+      identifySources.map(function (p) {
+        var ok = usableSource(p);
+        var on = ok && (which === 'all' || (which === 'library' && p.enabled));
+        return '<label class="identify__src' + (ok ? '' : ' is-off') + '"' + (ok ? '' : ' title="' + esc(t('meta.needsKey')) + '"') + '>' +
+          '<input type="checkbox" data-src="' + esc(p.id) + '"' + (on ? ' checked' : '') + (ok ? '' : ' disabled') + ' />' + esc(p.name) + '</label>';
+      }).join('') +
+      '<span class="identify__src-actions">' +
+        '<button type="button" class="btn btn--text btn--small" data-src-set="library">' + esc(t('meta.librarySources')) + '</button>' +
+        '<button type="button" class="btn btn--text btn--small" data-src-set="all">' + esc(t('meta.allSources')) + '</button>' +
+        '<button type="button" class="btn btn--text btn--small" data-src-set="none">' + esc(t('meta.noSources')) + '</button>' +
+      '</span>';
+    $('#identify-sources').setAttribute('aria-labelledby', 'identify-sources-label');
+  }
+  function identifyChecked() {
+    return $$('#identify-sources input[data-src]').filter(function (c) { return c.checked; }).map(function (c) { return c.dataset.src; });
+  }
+  function searchIdentifySoon() { clearTimeout(identifyTimer); identifyTimer = setTimeout(searchIdentify, 500); }
   function searchIdentify() {
+    clearTimeout(identifyTimer);
     var box = $('#identify-results');
-    var id = identifyFor;
-    box.innerHTML = spinner;
+    var id = identifyFor, seq = ++identifySeq;
+    var picked = identifyChecked();
     $('#identify-error').hidden = true;
-    api('GET', '/api/series/' + id + '/metadata/search?' + Store.qs({ q: $('#identify-q').value.trim(), provider: $('#identify-provider').value })).then(function (r) {
-      if (identifyFor !== id) return;
+    if (!picked.length) { box.innerHTML = '<p class="muted">' + esc(t('meta.pickSource')) + '</p>'; updateIdentifyPicks(); return; }
+    box.innerHTML = spinner;
+    api('GET', '/api/series/' + id + '/metadata/search?' + Store.qs({ q: $('#identify-q').value.trim(), providers: picked.join(',') })).then(function (r) {
+      if (identifyFor !== id || seq !== identifySeq) return;
       box.innerHTML = (r.errors.length ? '<p class="notice small">' + esc(r.errors.join('; ')) + '</p>' : '') +
         (r.results.length ? '<ul class="identify__list">' + r.results.map(function (x) {
           return '<li class="identify__item">' +
@@ -4753,7 +4778,7 @@
           '</li>';
         }).join('') + '</ul>' : '<p class="muted">' + esc(t('meta.noResults')) + '</p>');
       updateIdentifyPicks();
-    }, function (e) { box.innerHTML = ''; $('#identify-error').textContent = A().errMsg(e); $('#identify-error').hidden = false; });
+    }, function (e) { if (seq !== identifySeq) return; box.innerHTML = ''; $('#identify-error').textContent = A().errMsg(e); $('#identify-error').hidden = false; });
   }
 
   // Show which results are picked (one per site) and how many will be applied
@@ -5364,6 +5389,14 @@
     $('#form-dialog-cancel').addEventListener('click', function () { $('#form-dialog').close(); });
 
     $('#identify-form').addEventListener('submit', function (e) { e.preventDefault(); searchIdentify(); });
+    // Sources ticked or unticked: searched again a moment later (several can be changed first)
+    $('#identify-sources').addEventListener('change', function (e) { if (e.target.closest('input[data-src]')) searchIdentifySoon(); });
+    $('#identify-sources').addEventListener('click', function (e) {
+      var b = e.target.closest('[data-src-set]');
+      if (!b) return;
+      renderIdentifySources(b.dataset.srcSet);
+      searchIdentify();
+    });
     $('#identify-close').addEventListener('click', function () { $('#identify-dialog').close(); });
     // Picking matches: one per site, several sites at once; "Use selected" applies them together
     $('#identify-results').addEventListener('click', function (e) {

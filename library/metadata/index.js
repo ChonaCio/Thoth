@@ -769,13 +769,16 @@ async function refreshSeries(seriesId, cur) {
   }
 }
 
-// Search every enabled provider (or one) for the Identify dialog
-async function searchForSeries(seriesId, query, onlyProvider) {
+// Search for the Identify dialog: by default the online sites enabled for the work's library (Manage libraries);
+// only: one site or a list of them (any online site, in the library's order) → { query, providers, results, errors }
+async function searchForSeries(seriesId, query, only) {
   const s = db.series[seriesId];
   if (!s) throw Object.assign(new Error('Series not found'), { status: 404, code: 'notFound' });
   const settings = librarySettings(db.libraries[s.libraryId]);
   const q = String(query || '').trim() || queryFor(s);
-  const ids = onlyProvider ? [onlyProvider] : settings.providers.filter(p => p.enabled).map(p => p.id);
+  const picked = new Set([].concat(only || []).map(String).filter(id => BY_ID[id]));
+  const ids = picked.size ? settings.providers.map(p => p.id).filter(id => picked.has(id)).concat([...picked].filter(id => !settings.providers.some(p => p.id === id)))
+    : settings.providers.filter(p => p.enabled && BY_ID[p.id]).map(p => p.id);
   const results = [], errors = [];
   await Promise.all(ids.map(async pid => {
     const p = BY_ID[pid];
@@ -789,7 +792,7 @@ async function searchForSeries(seriesId, query, onlyProvider) {
   }));
   const order = Object.fromEntries(ids.map((id, i) => [id, i]));
   results.sort((a, b) => b.score - a.score || order[a.provider] - order[b.provider]);
-  return { query: q, results: results.slice(0, 40), errors };
+  return { query: q, providers: ids, results: results.slice(0, 40), errors };
 }
 
 // The sources page's "Try a search" for one online site

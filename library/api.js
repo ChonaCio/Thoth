@@ -1191,8 +1191,9 @@ async function handle(ctx) {
       return send(200, { series: store.seriesView(db.series[s.id] || s, user, { admin }) });
     }
     if (action === '/search' && method === 'GET') {
-      const provider = q.get('provider') || '';
-      return send(200, await metadata.searchForSeries(s.id, clean(q.get('q'), 200), provider || null));
+      // ?providers=a,b (or the older ?provider=a): these sites; none: the library's enabled ones
+      const only = String(q.get('providers') || q.get('provider') || '').split(',').map(x => x.trim()).filter(Boolean).slice(0, 20);
+      return send(200, await metadata.searchForSeries(s.id, clean(q.get('q'), 200), only.length ? only : null));
     }
     if (action === '/identify' && method === 'POST') {
       // { matches: [{ provider, id }, …] } (several sites at once), or the older { provider, id }

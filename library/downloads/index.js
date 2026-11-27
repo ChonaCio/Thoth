@@ -228,12 +228,14 @@ function targetOf(job, unit, edition) {
   return { folder, have: onDisk(folder), seriesId: null };
 }
 // The chapter numbers of the book files in a folder as they are on disk now (downloaded by another job, copied by
-// hand, not scanned into the library yet): those aren't downloaded again. Read once per folder for a few seconds.
-const diskMemo = new Map(); // folder → { at, set }
+// hand, not scanned into the library yet): those aren't downloaded again. Read once per folder for a few seconds,
+// and again as soon as the folder changes (its modification time: a file added by another job's run)
+const diskMemo = new Map(); // folder → { at, mtime, set }
 const BOOK_FILE = /\.(cbz|cbr|zip|rar|cb7|7z|pdf|epub)$/i;
 function onDisk(folder) {
   const m = diskMemo.get(folder);
-  if (m && Date.now() - m.at < 5000) return new Set(m.set);
+  let mtime = null; try { mtime = fs.statSync(folder).mtimeMs; } catch { /* not there yet */ }
+  if (m && m.mtime === mtime && Date.now() - m.at < 5000) return new Set(m.set);
   const set = new Set();
   let names = [];
   try { names = fs.readdirSync(folder); } catch { /* not there yet */ }
@@ -245,7 +247,7 @@ function onDisk(folder) {
     if (n) set.add(n);
   }
   if (diskMemo.size > 2000) diskMemo.clear();
-  diskMemo.set(folder, { at: Date.now(), set });
+  diskMemo.set(folder, { at: Date.now(), mtime, set });
   return new Set(set);
 }
 const readState = id => { try { return JSON.parse(fs.readFileSync(path.join(jobDir(id), 'state.json'), 'utf8')); } catch { return { chapters: {} }; } };
