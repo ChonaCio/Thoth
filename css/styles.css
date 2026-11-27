@@ -1121,6 +1121,9 @@ body.is-reading { overflow: hidden; }
 .select-bar__count { font-weight: 600; }
 .select-bar__gap { flex: 1; }
 .select-bar svg { width: 18px; height: 18px; fill: currentColor; }
+.sel-fab { position: fixed; right: 16px; bottom: 16px; z-index: 49; display: inline-flex; align-items: center; gap: 6px; border-radius: 999px; padding: 10px 16px; box-shadow: var(--shadow); }
+.sel-fab[hidden] { display: none; }
+.sel-fab svg { width: 18px; height: 18px; fill: currentColor; }
 
 /* ================= Collections / read lists: owner, public ================= */
 .list-card__meta { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; min-height: 1.2em; }

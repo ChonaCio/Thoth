@@ -384,9 +384,30 @@
     });
     drawSelectBar();
   }
+  // A floating Select button: once the toolbar's Select is scrolled out of sight, selecting can start from anywhere
+  // on the page (Catalog and Library pages, administrators; hidden while selecting — the bar is there then)
+  function drawSelFab() {
+    var fab = $('#sel-fab');
+    var scope = selScope();
+    var tb = scope ? $('#content [data-lib="sel-toggle"][data-scope="' + scope + '"]') : null;
+    var show = Boolean(tb && sel.scope !== scope && tb.getBoundingClientRect().bottom < 56);
+    if (!show) { if (fab) fab.hidden = true; return; }
+    if (!fab) { document.body.insertAdjacentHTML('beforeend', '<button type="button" class="btn btn--primary sel-fab" id="sel-fab" data-lib="sel-start"></button>'); fab = $('#sel-fab'); }
+    var lang = (A().state && A().state.lang) || '';
+    if (fab.dataset.scope !== scope || fab.dataset.lang !== lang) {
+      fab.dataset.scope = scope; fab.dataset.lang = lang;
+      fab.innerHTML = icon('done_all') + '<span>' + esc(t('sel.select')) + '</span>';
+      fab.title = t('sel.help');
+      renderIcons(fab);
+    }
+    fab.hidden = false;
+  }
+  var selFabFrame = 0;
+  function drawSelFabSoon() { if (!selFabFrame) selFabFrame = requestAnimationFrame(function () { selFabFrame = 0; drawSelFab(); }); }
   function drawSelectBar() {
     var bar = $('#select-bar');
     var on = Boolean(sel.scope && sel.scope === selScope());
+    drawSelFab();
     if (!on) { if (bar) bar.hidden = true; return; }
     if (!bar) { document.body.insertAdjacentHTML('beforeend', '<div class="select-bar" id="select-bar" role="region"></div>'); bar = $('#select-bar'); }
     var n = Object.keys(sel.items).length;
@@ -516,7 +537,9 @@
       if (card.classList.contains('is-merging')) return; // (being merged: locked)
       selPick(card);
     }, true);
-    window.addEventListener('hashchange', function () { if (sel.scope && sel.scope !== selScope()) { sel = { scope: null, items: {} }; } drawSelectBar(); });
+    window.addEventListener('hashchange', function () { if (sel.scope && sel.scope !== selScope()) { sel = { scope: null, items: {} }; } drawSelectBar(); drawSelFabSoon(); });
+    window.addEventListener('scroll', drawSelFabSoon, { passive: true });
+    window.addEventListener('resize', drawSelFabSoon);
   }
 
   var filterTimer;
@@ -5239,6 +5262,7 @@
       case 'merge-check': mergeState().result = null; return loadMergeSuggestions();
       case 'merge-go': return btn.dataset.key === 'manual' ? startMerge('manual') : startBoardMerge(btn.dataset.key, btn);
       case 'sel-toggle': return selToggle(btn.dataset.scope);
+      case 'sel-start': return sel.scope === btn.dataset.scope ? null : selToggle(btn.dataset.scope); // (the floating Select)
       case 'sel-clear': sel.items = {}; return markSelection();
       case 'sel-all': $$(SEL_CARDS).forEach(function (c) { var sid = selIdOf(c); if (sid && !sel.items[sid] && !c.classList.contains('is-merging')) selPick(c); }); return markSelection();
       case 'sel-merge': return selMerge();
@@ -5423,7 +5447,7 @@
     bindSelection();
     document.addEventListener('click', function (e) {
       var btn = e.target.closest('[data-lib]');
-      if (btn && !btn.disabled && ($('#content').contains(btn) || btn.closest('#select-bar'))) { e.preventDefault(); handleAction(btn); }
+      if (btn && !btn.disabled && ($('#content').contains(btn) || btn.closest('#select-bar') || btn.id === 'sel-fab')) { e.preventDefault(); handleAction(btn); }
     });
     // Broken cover image → show the placeholder underneath
     document.addEventListener('error', function (e) {

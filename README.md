@@ -535,7 +535,9 @@ sites added as **sources**, with its metadata and chapter list.
   entry can be **split off** (also from the work's page) or the whole group separated, and the other corrections
   (works kept apart, suggestions marked *not the same*) with *Undo*; works split apart are never merged
   automatically again. Both tabs can be **filtered by source** and by chapters.
-- **Merging by hand from the catalog:** *Select* on the Catalog tab turns the cards into checkboxes; pick works,
+- **Merging by hand from the catalog:** *Select* on the Catalog tab turns the cards into checkboxes (once the
+  toolbar is scrolled out of sight, a floating *Select* button in the bottom corner starts it from anywhere, also on
+  the Library page); pick works,
   then *Merge…* asks which one is the main entry and merges them. The list isn't loaded again: the picked works
   stay locked ("Merging…") while it's done, then the merged work takes the place of the first of them, the others
   leave and the rest of the works move up into their places, everything already loaded kept (e.g. Work1 · Work2 ·
